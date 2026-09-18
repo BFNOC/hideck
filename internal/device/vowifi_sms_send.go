@@ -81,7 +81,7 @@ func (p *Pool) SendRoutedSMS(
 		return routedSMSSendResult{}, errors.New("sms route: worker is nil")
 	}
 	deviceID := worker.ID
-	destination := smsDestinationForRegion(phone, phoneNumberRegionForWorker(worker))
+	destination := strings.TrimSpace(phone)
 	p.mu.RLock()
 	sendVoWiFiHook := p.routedVoWiFiSMSSend
 	sendCSHook := p.routedCSSMSSend

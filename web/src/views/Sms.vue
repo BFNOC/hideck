@@ -647,9 +647,7 @@ async function handleSendModal() {
     })
     if (!result.ok) throw new Error(result.error.message || '发送失败')
     const parts = result.data.partsTotal
-    const normalizedTo = result.data.destination && result.data.destination !== sendForm.value.phone
-      ? `至 ${result.data.destination}` : ''
-    ElMessage.success(`短信已提交${normalizedTo}${parts > 1 ? `（${parts}段）` : ''}`)
+    ElMessage.success(`短信已提交${parts > 1 ? `（${parts}段）` : ''}`)
     showSendModal.value = false
     setTimeout(async () => {
       await fetchMessagesAndThread()
@@ -675,9 +673,6 @@ async function sendToCurrentThread() {
   try {
     const result = await smsStore.send({ iccid: t.iccid, phone: t.peer, message: text })
     if (!result.ok) throw new Error(result.error.message || '发送失败')
-    if (result.data.destination && result.data.destination !== t.peer) {
-      ElMessage.success(`短信已按本卡地区提交至 ${result.data.destination}`)
-    }
     composer.value = ''
     if (viewingTarget.value && selectedThreadKey.value === t.key) {
       showLatestMessages()
@@ -900,6 +895,7 @@ async function confirmDeleteThread(thread: SmsThread) {
               联系人
             </el-button>
           </div>
+          <small class="text-xs text-[var(--ui-text-muted)]">号码会原样提交；发送国际号码时请明确输入 + 国家码。</small>
         </el-form-item>
         <el-form-item label="短信内容">
           <el-input

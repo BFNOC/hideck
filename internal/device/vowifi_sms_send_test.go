@@ -150,7 +150,7 @@ func TestShouldRouteSMSViaVoWiFiDuringConfiguredRecovery(t *testing.T) {
 	}
 }
 
-func TestSendRoutedSMSUsesSameRegionalDestinationForBothLegs(t *testing.T) {
+func TestSendRoutedSMSDoesNotGuessCountryCodeForEitherLeg(t *testing.T) {
 	pool := NewPool(&config.Config{})
 	defer pool.cancel()
 	worker := &Worker{ID: "wwan0", Config: config.DeviceConfig{VoWiFiEnabled: true, PhoneMode: "wifi"}}
@@ -165,12 +165,28 @@ func TestSendRoutedSMSUsesSameRegionalDestinationForBothLegs(t *testing.T) {
 		},
 		func(_, to, _ string) error { csTo = to; return nil },
 	)
-	result, err := pool.SendRoutedSMS(context.Background(), worker, "13800138000", "hello", smscodec.SubmitOptions{})
-	if err != nil || !result.FellBackToCS || result.Destination != "+8613800138000" {
+	result, err := pool.SendRoutedSMS(context.Background(), worker, "13123456789", "hello", smscodec.SubmitOptions{})
+	if err != nil || !result.FellBackToCS || result.Destination != "13123456789" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	if imsTo != result.Destination || csTo != result.Destination {
 		t.Fatalf("VoWiFi destination=%q, CS destination=%q", imsTo, csTo)
+	}
+}
+
+func TestSendRoutedSMSKeepsExplicitInternationalDestination(t *testing.T) {
+	pool := NewPool(&config.Config{})
+	defer pool.cancel()
+	worker := &Worker{ID: "wwan0", Config: config.DeviceConfig{VoWiFiEnabled: true, PhoneMode: "wifi"}}
+	pool.workers[worker.ID] = worker
+	var sentTo string
+	pool.SetRoutedSMSTestSenders(func(_ context.Context, _, to, _ string, _ smscodec.SubmitOptions) (messaging.SendOutcome, error) {
+		sentTo = to
+		return messaging.SendOutcome{}, nil
+	}, nil)
+	result, err := pool.SendRoutedSMS(context.Background(), worker, " +8613123456789 ", "hello", smscodec.SubmitOptions{})
+	if err != nil || sentTo != "+8613123456789" || result.Destination != sentTo {
+		t.Fatalf("result=%+v sentTo=%q err=%v", result, sentTo, err)
 	}
 }
 

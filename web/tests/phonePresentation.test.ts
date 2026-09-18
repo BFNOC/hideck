@@ -41,6 +41,9 @@ test('dialer offers the selected SIM calling code without forcing it onto local 
   assert.match(phoneView, /selected\?\.phone_country_code/)
   assert.match(phoneView, /if \(\(!callee\.value \|\| callee\.value === '\+'\) && selected\.value\?\.phone_country_code\)/)
   assert.match(phoneView, /if \(digit === '\+'\) \{[\s\S]*if \(!callee\.value\) callee\.value = '\+'/)
+  assert.match(phoneView, /dialNumberError\(callee\.value, selected\.value\?\.phone_region\)/)
+  assert.match(phoneView, /id="callee-error" role="alert"/)
+  assert.match(phoneView, /:aria-invalid="!!calleeError"/)
   assert.doesNotMatch(phoneView, /callee\.value = '\+86'/)
 })
 

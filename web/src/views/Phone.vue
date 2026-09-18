@@ -25,9 +25,7 @@ import { devicesService } from '../services/devices'
 import { usePhoneStore } from '../stores/phone'
 import { usePhoneIdentity } from '../composables/usePhoneIdentity'
 import { phoneContactsService } from '../services/phone-contacts'
-import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
-
-const CALLEE_PATTERN = /^\+?[0-9]{1,32}$/
+import { dialNumberError, formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
 const phone = usePhoneStore()
 const identities = usePhoneIdentity()
@@ -46,7 +44,8 @@ const incoming = computed(() => call.value?.direction === 'inbound'
 const waitingCall = computed(() => phone.calls.find((item) =>
   item.status === 'waiting' && item.call_id !== call.value?.call_id))
 const selected = computed(() => phone.devices.find((device) => device.id === selectedDevice.value))
-const canPlaceCall = computed(() => CALLEE_PATTERN.test(callee.value)
+const calleeError = computed(() => dialNumberError(callee.value, selected.value?.phone_region))
+const canPlaceCall = computed(() => !!callee.value && !calleeError.value
   && !!selected.value
   && (isDeviceReady(selected.value) || selected.value.phone_mode === 'cellular' || selected.value.phone_mode === 'volte')
   && !isDeviceBusy(selected.value))
@@ -62,7 +61,7 @@ watch(() => phone.history.map((item) => `${item.device_id}\u0000${item.peer}`).j
   }
 }, { immediate: true })
 watch([callee, selectedDevice], ([value, deviceId]) => {
-  if (CALLEE_PATTERN.test(value)) void identities.resolve(value, deviceId)
+  if (value && !dialNumberError(value, selected.value?.phone_region)) void identities.resolve(value, deviceId)
 })
 
 onMounted(async () => {
@@ -653,12 +652,14 @@ async function sendDTMF(digit: string) {
                 maxlength="33"
                 autocomplete="tel"
                 placeholder="输入号码"
+                :aria-invalid="!!calleeError"
+                :aria-describedby="calleeError ? 'callee-error' : undefined"
               />
               <button type="button" aria-label="删除末位号码" :disabled="!callee" @click="eraseDigit">
                 <el-icon><Backspace24Regular /></el-icon>
               </button>
             </div>
-            <small v-if="callee && !CALLEE_PATTERN.test(callee)">号码只能包含可选的前导 + 和 1–32 位数字</small>
+            <small v-if="calleeError" id="callee-error" role="alert">{{ calleeError }}</small>
             <small v-else-if="identities.subtitleFor(callee, selectedDevice)" class="callee-hint">{{ identities.titleFor(callee, selectedDevice) }}{{ identities.subtitleFor(callee, selectedDevice) ? ` · ${identities.subtitleFor(callee, selectedDevice)}` : '' }}</small>
           </div>
 
