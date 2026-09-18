@@ -1208,6 +1208,7 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 				"message":        "VoWiFi 短信发送失败: " + err.Error(),
 				"device":         deviceID,
 				"phone":          req.Phone,
+				"destination":    routed.Destination,
 				"message_id":     messageID,
 				"parts_total":    partsTotal,
 				"delivery_state": deliveryState,
@@ -1220,10 +1221,11 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 			}
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "发送失败: " + err.Error(),
-			"device":  deviceID,
-			"phone":   req.Phone,
+			"status":      "error",
+			"message":     "发送失败: " + err.Error(),
+			"device":      deviceID,
+			"phone":       req.Phone,
+			"destination": routed.Destination,
 		})
 		return
 	}
@@ -1240,9 +1242,10 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":         "ok",
-		"message":        "短信发送成功",
+		"message":        "短信已提交",
 		"device":         deviceID,
 		"phone":          req.Phone,
+		"destination":    routed.Destination,
 		"message_id":     messageID,
 		"parts_total":    partsTotal,
 		"delivery_state": deliveryState,

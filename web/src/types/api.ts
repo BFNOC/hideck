@@ -401,7 +401,7 @@ export type SMSMessage = {
   recipient?: string
   content: string
   type: number
-  status?: number // 0=未读, 1=已读, 2=发送成功, 3=发送失败
+  status?: number // 0=未读, 1=已读, 2=已提交, 3=发送失败
   timestamp: string
   device_name?: string
 }

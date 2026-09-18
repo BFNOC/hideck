@@ -32,6 +32,16 @@ test('dial pad is an explicit fixed 3 by 4 control with accessible buttons', () 
   for (const digit of ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#']) {
     assert.match(dialPad, new RegExp(`digit: '${digit.replace('*', '\\*')}'`))
   }
+  assert.match(dialPad, /v-if="allowPlus"[\s\S]*@click="\$emit\('digit', '\+'\)"/)
+  assert.match(phoneView, /<PhoneDialPad allow-plus :plus-disabled="!!callee" @digit="appendDigit"/)
+  assert.match(phoneView, /<PhoneDialPad :disabled="!!action \|\| callEnding" @digit="appendDigit"/)
+})
+
+test('dialer offers the selected SIM calling code without forcing it onto local or short numbers', () => {
+  assert.match(phoneView, /selected\?\.phone_country_code/)
+  assert.match(phoneView, /if \(\(!callee\.value \|\| callee\.value === '\+'\) && selected\.value\?\.phone_country_code\)/)
+  assert.match(phoneView, /if \(digit === '\+'\) \{[\s\S]*if \(!callee\.value\) callee\.value = '\+'/)
+  assert.doesNotMatch(phoneView, /callee\.value = '\+86'/)
 })
 
 test('phone view exposes explicit listen-only and microphone call actions without hiding the limitation', () => {

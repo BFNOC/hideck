@@ -241,7 +241,7 @@ paths:
               $ref: '#/components/schemas/SMSSendRequest'
       responses:
         '200':
-          description: 发送成功
+          description: 已提交到短信发送通道，不代表收件手机已收到
           content:
             application/json:
               schema:
@@ -4601,12 +4601,16 @@ components:
           type: string
         phone:
           type: string
+        destination:
+          type: string
+          description: 实际提交的收件地址，可能按发送 SIM 归属地区转为国际号码
         message_id:
           type: string
         parts_total:
           type: integer
         delivery_state:
           type: string
+          description: 通道发送状态；acked 仅表示发送端已受理，不保证收件手机已收到
 
     SMSDeliveryResponse:
       type: object

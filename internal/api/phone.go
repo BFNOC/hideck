@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nyaruka/phonenumbers/v2"
 	"github.com/yibaiba/hideck/internal/device"
 	"github.com/yibaiba/hideck/internal/phone"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -98,6 +99,9 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 			}
 			if region := s.phoneNumberRegion(worker.ID); region != "" {
 				item["phone_region"] = region
+				if code := phonenumbers.GetCountryCodeForRegion(region); code != 0 {
+					item["phone_country_code"] = code
+				}
 			}
 			if recoverSnap := s.pool.LebaraUKIdentityRecoverSnapshot(worker.ID); recoverSnap.Status != "" {
 				item["lebara_identity_status"] = recoverSnap.Status

@@ -227,7 +227,17 @@ function appendDigit(digit: string) {
     void sendDTMF(digit)
     return
   }
-  if (callee.value.length < 32) callee.value += digit
+  if (digit === '+') {
+    if (!callee.value) callee.value = '+'
+    return
+  }
+  if (callee.value.length < (callee.value.startsWith('+') ? 33 : 32)) callee.value += digit
+}
+
+function insertDevicePrefix() {
+  if ((!callee.value || callee.value === '+') && selected.value?.phone_country_code) {
+    callee.value = `+${selected.value.phone_country_code}`
+  }
 }
 
 function eraseDigit() {
@@ -624,14 +634,23 @@ async function sendDTMF(digit: string) {
           </div>
 
           <div class="number-field">
-            <label for="callee">电话号码</label>
-            <div>
+            <div class="number-field-heading">
+              <label for="callee">电话号码</label>
+              <button
+                v-if="selected?.phone_country_code"
+                type="button"
+                :disabled="!!callee && callee !== '+'"
+                :aria-label="`填入本卡国际区号 +${selected.phone_country_code}`"
+                @click="insertDevicePrefix"
+              >本卡区号 +{{ selected.phone_country_code }}</button>
+            </div>
+            <div class="number-input">
               <input
                 id="callee"
                 v-model.trim="callee"
                 type="tel"
                 inputmode="tel"
-                maxlength="32"
+                maxlength="33"
                 autocomplete="tel"
                 placeholder="输入号码"
               />
@@ -643,7 +662,7 @@ async function sendDTMF(digit: string) {
             <small v-else-if="identities.subtitleFor(callee, selectedDevice)" class="callee-hint">{{ identities.titleFor(callee, selectedDevice) }}{{ identities.subtitleFor(callee, selectedDevice) ? ` · ${identities.subtitleFor(callee, selectedDevice)}` : '' }}</small>
           </div>
 
-          <PhoneDialPad @digit="appendDigit" />
+          <PhoneDialPad allow-plus :plus-disabled="!!callee" @digit="appendDigit" />
 
           <div class="call-mode-actions" aria-label="呼叫模式">
             <button

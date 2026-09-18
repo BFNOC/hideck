@@ -12,6 +12,7 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 func TestSendVoWiFiSMSWhenReadySendsImmediately(t *testing.T) {
@@ -146,6 +147,30 @@ func TestShouldRouteSMSViaVoWiFiDuringConfiguredRecovery(t *testing.T) {
 				t.Fatalf("ShouldRouteSMSViaVoWiFi() = %t, want %t", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSendRoutedSMSUsesSameRegionalDestinationForBothLegs(t *testing.T) {
+	pool := NewPool(&config.Config{})
+	defer pool.cancel()
+	worker := &Worker{ID: "wwan0", Config: config.DeviceConfig{VoWiFiEnabled: true, PhoneMode: "wifi"}}
+	worker.state.Identity.NativeMCC = "460"
+	worker.state.Identity.Ready = true
+	pool.workers[worker.ID] = worker
+	var imsTo, csTo string
+	pool.SetRoutedSMSTestSenders(
+		func(_ context.Context, _, to, _ string, _ smscodec.SubmitOptions) (messaging.SendOutcome, error) {
+			imsTo = to
+			return messaging.SendOutcome{}, messaging.ErrSMSNotReady
+		},
+		func(_, to, _ string) error { csTo = to; return nil },
+	)
+	result, err := pool.SendRoutedSMS(context.Background(), worker, "13800138000", "hello", smscodec.SubmitOptions{})
+	if err != nil || !result.FellBackToCS || result.Destination != "+8613800138000" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if imsTo != result.Destination || csTo != result.Destination {
+		t.Fatalf("VoWiFi destination=%q, CS destination=%q", imsTo, csTo)
 	}
 }
 

@@ -22,6 +22,7 @@ type routedSMSSendResult struct {
 	Via          string
 	Outcome      messaging.SendOutcome
 	FellBackToCS bool
+	Destination  string
 }
 
 // ShouldFallbackVoWiFiSMSToCS reports whether IMS never accepted the MESSAGE.
@@ -80,25 +81,28 @@ func (p *Pool) SendRoutedSMS(
 		return routedSMSSendResult{}, errors.New("sms route: worker is nil")
 	}
 	deviceID := worker.ID
+	destination := smsDestinationForRegion(phone, phoneNumberRegionForWorker(worker))
 	p.mu.RLock()
 	sendVoWiFiHook := p.routedVoWiFiSMSSend
 	sendCSHook := p.routedCSSMSSend
 	p.mu.RUnlock()
-	return sendRoutedSMS(
+	result, err := sendRoutedSMS(
 		p.ShouldRouteSMSViaVoWiFi(deviceID),
 		func() (messaging.SendOutcome, error) {
 			if sendVoWiFiHook != nil {
-				return sendVoWiFiHook(ctx, deviceID, phone, message, opts)
+				return sendVoWiFiHook(ctx, deviceID, destination, message, opts)
 			}
-			return p.SendVoWiFiSMSWithOptions(ctx, deviceID, phone, message, opts)
+			return p.SendVoWiFiSMSWithOptions(ctx, deviceID, destination, message, opts)
 		},
 		func() error {
 			if sendCSHook != nil {
-				return sendCSHook(deviceID, phone, message)
+				return sendCSHook(deviceID, destination, message)
 			}
-			return worker.SendSMSWithOptions(phone, message, opts)
+			return worker.SendSMSWithOptions(destination, message, opts)
 		},
 	)
+	result.Destination = destination
+	return result, err
 }
 
 // AttachWorkerForTest registers a worker for tests in other packages.

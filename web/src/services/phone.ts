@@ -29,6 +29,7 @@ export type PhoneDevice = {
   vowifi_active?: boolean
   software_ims_blocked?: boolean
   phone_region?: string
+  phone_country_code?: number
   rf_lock?: string
   lebara_identity_status?: string
   lebara_identity_message?: string
