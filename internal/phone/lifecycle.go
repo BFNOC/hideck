@@ -301,7 +301,7 @@ func (s *Service) finishCall(event voicehost.CallEvent) {
 	mediaID := call.mediaID
 	deviceID, peer, direction := call.view.DeviceID, call.view.Peer, call.view.Direction
 	s.mu.Unlock()
-	call.terminalOnce.Do(func() { close(call.terminalDone) })
+	defer call.terminalOnce.Do(func() { close(call.terminalDone) })
 	s.stopMixedRecording(call)
 	if mediaID != "" {
 		s.media.Remove(mediaID)

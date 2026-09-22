@@ -106,6 +106,9 @@ func testController(t *testing.T, route *testRoute) (*Controller, *testPort) {
 func TestOutboundRequiresRealAudioAndCLCCAnswer(t *testing.T) {
 	route := &testRoute{}
 	c, p := testController(t, route)
+	events := make(chan voicehost.CallEvent, 8)
+	unsubscribe := c.SubscribeCallEvents(func(event voicehost.CallEvent) { events <- event })
+	defer unsubscribe()
 	relayConn, err := listenTest()
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +130,24 @@ func TestOutboundRequiresRealAudioAndCLCCAnswer(t *testing.T) {
 	}
 	if !route.closed.Load() || c.ActiveCall("d") != nil {
 		t.Fatal("media or call leaked")
+	}
+	ended := false
+finalized:
+	for {
+		select {
+		case event := <-events:
+			if event.Type == "CallEnded" {
+				ended = true
+			}
+			if event.Type == "CallFinalized" {
+				if !ended || event.CallID != snap.CallID || event.AudioCodec != "PCMU" {
+					t.Fatalf("invalid finalization order or metadata: %+v", event)
+				}
+				break finalized
+			}
+		case <-time.After(time.Second):
+			t.Fatal("call recording was not finalized")
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()

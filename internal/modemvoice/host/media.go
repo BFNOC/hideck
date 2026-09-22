@@ -113,5 +113,8 @@ func (c *Controller) endMedia(d *device, reason string) error {
 		event.RecordingError = err.Error()
 	}
 	c.publish(notification{event: event})
+	event.Type = "CallFinalized"
+	event.AudioCodec = "PCMU"
+	c.publish(notification{event: event})
 	return err
 }

@@ -59,6 +59,28 @@ type recordingTranscoder struct {
 	err   error
 }
 
+func TestFinalizeRecordingWaitsForTerminalCleanup(t *testing.T) {
+	service := newPhoneTestService(t, newFakeVoiceGateway(), newMemoryCallStore(), time.Second)
+	call := recordingTestCall(service, "concurrent-finish")
+	call.terminalDone = make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		service.finalizeRecording(voicehost.CallEvent{Type: "CallFinalized", CallID: call.view.CallID})
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("recording finalized before terminal cleanup")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(call.terminalDone)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("recording did not finalize after terminal cleanup")
+	}
+}
+
 func (transcoder *recordingTranscoder) ToMP3(_ context.Context, input string) (string, error) {
 	transcoder.input = input
 	if transcoder.err != nil {
@@ -76,6 +98,7 @@ func recordingTestCall(service *Service, callID string) *activeCall {
 		},
 		terminal: true, terminalDone: make(chan struct{}), finalizedDone: make(chan struct{}),
 	}
+	close(call.terminalDone)
 	service.mu.Lock()
 	service.calls[callID] = call
 	service.mu.Unlock()
