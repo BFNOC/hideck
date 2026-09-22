@@ -16,11 +16,11 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/warthog618/sms/encoding/gsm7"
 	"github.com/yibaiba/hideck/internal/apduarbiter"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/yibaiba/hideck/pkg/smscodec"
-	"github.com/warthog618/sms/encoding/gsm7"
 
 	"go.bug.st/serial"
 )
@@ -39,6 +39,8 @@ type rxMsg struct {
 
 // commandRequest AT 命令请求结构
 type commandRequest struct {
+	barrier      bool            // Queue fence: completes without writing to the modem.
+	ctx          context.Context // Optional cancellation before the serial write; sent commands are drained.
 	cmd          string
 	respChan     chan string
 	errChan      chan error
@@ -77,11 +79,12 @@ type Manager struct {
 	reqPool sync.Pool
 
 	// 状态
-	running  bool
-	busy     bool
-	busyMu   sync.Mutex
-	healthy  bool
-	eofCount int // readLoop 中连续 EOF 计数，用于检测设备断开
+	lifecycleStateMu sync.RWMutex // Protects running and healthy after construction.
+	running          bool
+	busy             bool
+	busyMu           sync.Mutex
+	healthy          bool
+	eofCount         int // readLoop 中连续 EOF 计数，用于检测设备断开
 
 	atTimeoutMu     sync.Mutex
 	atTimeoutStreak int
@@ -136,8 +139,10 @@ type Manager struct {
 	ussdChan chan USSDResult
 
 	// RDY 事件订阅（模组重启后广播）
-	rdyMu   sync.Mutex
-	rdySubs []chan struct{}
+	rdyMu        sync.Mutex
+	rdySubs      []chan struct{}
+	voiceURCMu   sync.Mutex
+	voiceURCSubs map[chan struct{}]struct{}
 
 	// APDU 仲裁（设备级全局）
 	apduArbiter  *apduarbiter.Arbiter
@@ -487,7 +492,7 @@ func (m *Manager) recordATTimeout(req commandRequest) (int, bool) {
 }
 
 func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
-	if !m.running {
+	if !m.isRunning() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 连续超时达到阈值，触发控制面恢复", m.cfg.ID),
@@ -495,7 +500,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 		"port", m.atPort,
 		"failures", failures,
 		"threshold", atTimeoutWatchdogThreshold)
-	m.healthy = false
+	m.markUnhealthy()
 	m.Stop()
 	m.notifyDisconnect("at_timeout_threshold")
 }
@@ -504,7 +509,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 func (m *Manager) Start() error {
 	if !m.runsATRuntime() {
 		logger.Info(fmt.Sprintf("[%s] 纯 QMI 模式，跳过 AT 管理器启动", m.cfg.ID), "at_port", m.atPort)
-		m.running = false
+		m.setRunning(false)
 		m.markReady()
 		return nil
 	}
@@ -531,7 +536,7 @@ func (m *Manager) Start() error {
 	}
 
 	m.port.SetReadTimeout(100 * time.Millisecond)
-	m.running = true
+	m.setRunning(true)
 
 	// 启动读取协程
 	m.loopWG.Add(1)
@@ -591,12 +596,12 @@ func (m *Manager) handleFatalSerialRuntimeErr(err error, phase string, cmd strin
 	if !isFatalSerialRuntimeErr(err) {
 		return
 	}
-	if !m.running {
+	if !m.isRunning() {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 串口运行期失效，触发恢复", m.cfg.ID),
 		"phase", phase, "cmd", cmd, "port", m.atPort, "err", err)
-	m.healthy = false
+	m.markUnhealthy()
 	m.Stop()
 	m.notifyDisconnect("serial_runtime_error")
 }
@@ -606,10 +611,11 @@ func (m *Manager) Stop() {
 	m.stopOnce.Do(func() {
 		m.releaseAllAPDULeases("stop")
 		close(m.stop)
+		m.closeVoiceChanges()
 		if m.port != nil {
 			m.port.Close()
 		}
-		m.running = false
+		m.setRunning(false)
 	})
 }
 
@@ -678,6 +684,14 @@ func (m *Manager) runLoop() {
 
 // handleCommand 处理单个 AT 命令
 func (m *Manager) handleCommand(req commandRequest) {
+	if req.ctx != nil && req.ctx.Err() != nil {
+		req.errChan <- req.ctx.Err()
+		return
+	}
+	if req.barrier {
+		req.respChan <- ""
+		return
+	}
 	startTime := time.Now()
 
 	// 发送命令
@@ -713,6 +727,12 @@ RespLoop:
 			}
 
 			line := msg.Data
+			if isVoiceCommandFailure(req.cmd, line) {
+				m.resetATTimeoutWatchdog()
+				m.handleURC(line)
+				req.errChan <- fmt.Errorf("voice command rejected: %s", line)
+				return
+			}
 
 			if line == "OK" {
 				m.resetATTimeoutWatchdog()
@@ -1357,6 +1377,7 @@ func (m *Manager) handleURC(line string) {
 	if s == "" {
 		return
 	}
+	m.notifyVoiceURC(s)
 
 	fr := m.formatURC(s)
 	msg := fmt.Sprintf("[%s] %s", m.cfg.ID, fr.Msg)
@@ -1792,7 +1813,7 @@ func (m *Manager) executeAT(cmd string, timeout time.Duration, silent, highPrior
 	if !m.CanExecuteAT() {
 		return "", errors.New("AT 管理器未启动或不可用")
 	}
-	if !m.healthy {
+	if !m.IsHealthy() {
 		return "", errors.New("设备异常")
 	}
 
@@ -1867,6 +1888,8 @@ func (m *Manager) IsBusy() bool {
 
 // IsHealthy 返回健康状态
 func (m *Manager) IsHealthy() bool {
+	m.lifecycleStateMu.RLock()
+	defer m.lifecycleStateMu.RUnlock()
 	return m.healthy && m.running
 }
 
@@ -1882,7 +1905,7 @@ func (m *Manager) ATPort() string {
 
 // CanExecuteAT 返回当前管理器是否已启动，可接受 AT 命令。
 func (m *Manager) CanExecuteAT() bool {
-	return m.runsATRuntime() && m.HasATPort() && m.running
+	return m.runsATRuntime() && m.HasATPort() && m.isRunning()
 }
 
 func (m *Manager) SetAPDUArbiter(arbiter *apduarbiter.Arbiter) {

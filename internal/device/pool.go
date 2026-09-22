@@ -206,7 +206,8 @@ type Pool struct {
 	nativeVoLTEScheduleMu sync.Mutex
 	nativeVoLTEScheduled  map[string]struct{}
 	atPortMu              sync.Mutex
-	atPortLocks           map[string]*sync.Mutex
+	atPortLocks           map[string]chan struct{}
+	openATSession         func(string) (atSerialSession, error)
 
 	// VoWiFi host 侧整合（多实例）
 	vowifiHost         *vowifihost.Manager
@@ -287,7 +288,8 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		runtimeQMIAttachments:  make(map[string]config.DeviceConfig),
 		vowifiMWI:              make(map[string]VoWiFiMWIState),
 		smscCache:              make(map[string]string),
-		atPortLocks:            make(map[string]*sync.Mutex),
+		atPortLocks:            make(map[string]chan struct{}),
+		openATSession:          openDeviceATSession,
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)

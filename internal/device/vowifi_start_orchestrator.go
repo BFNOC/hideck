@@ -152,6 +152,9 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, fmt.Errorf("设备 %s 不存在", deviceID)
 	}
 	startCtx.worker = w
+	if IsModemVoiceMode(w.Config.PhoneMode) {
+		return startCtx, ErrModemVoiceSoftwareIMS
+	}
 	w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
 
 	if w.Config.PhoneMode == "cellular" {

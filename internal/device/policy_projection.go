@@ -144,7 +144,7 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		p.scheduleNativeVoLTE(worker.ID, reason)
 	} else {
 		p.stopNativeVoLTE(worker.ID, reason)
-		if PhoneServiceEnabled(effective) && !cellularSoftwarePhoneHeld(worker, pol) {
+		if PhoneServiceEnabled(effective) && !UsesModemPhoneControl(effective.PhoneMode) && !cellularSoftwarePhoneHeld(worker, pol) {
 			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 		} else {
 			p.clearDesiredVoWiFiRecoverState(worker.ID)

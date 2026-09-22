@@ -1764,23 +1764,6 @@ var openManualATSession = func(port string) (manualATSession, error) {
 	return modem.NewSerialAT(port, 115200, 8, 1, "N")
 }
 
-func executeManualATOnPort(port, cmd string, timeout time.Duration) (string, error) {
-	port = strings.TrimSpace(port)
-	if port == "" {
-		return "", fmt.Errorf("当前设备没有可用 AT 端口")
-	}
-	session, err := openManualATSession(port)
-	if err != nil {
-		return "", fmt.Errorf("打开 AT 端口 %s 失败: %w", port, err)
-	}
-	defer session.Close()
-	return session.Execute(cmd, timeout)
-}
-
-func manualATPortForWorker(worker *device.Worker) string {
-	return worker.ResolvedATPort()
-}
-
 func (s *Server) handleDeviceMgmtExecuteAT(c *gin.Context) {
 	id := deviceIDParam(c)
 	var req executeATRequest
@@ -1812,38 +1795,16 @@ func (s *Server) handleDeviceMgmtExecuteAT(c *gin.Context) {
 		timeout = 60 * time.Second
 	}
 
-	if worker.Backend != nil && isTransientATBackend(worker.Backend.Mode()) {
-		resp, err := executeManualATOnPort(manualATPortForWorker(worker), cmd, timeout)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "response": resp})
-		return
-	}
-
-	if worker.Modem == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有可用 AT 管理器"})
-		return
-	}
-	if !worker.Modem.HasATPort() {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备没有可用 AT 端口"})
-		return
-	}
-	if !worker.Modem.CanExecuteAT() {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "AT 管理器未启动或不可用"})
-		return
-	}
-	resp, err := worker.Modem.ExecuteAT(cmd, timeout)
+	resp, err := s.pool.ExecuteATContext(c.Request.Context(), device.ATRequest{DeviceID: id, Command: cmd, Timeout: timeout})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, device.ErrATUnavailable) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "response": resp})
-}
-
-func isTransientATBackend(mode string) bool {
-	return mode == backend.BackendQMI
 }
 
 type setUSBNetModeRequest struct {

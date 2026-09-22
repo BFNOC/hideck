@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
-	"github.com/yibaiba/hideck/internal/modem"
 	"github.com/yibaiba/hideck/internal/volte"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
@@ -170,40 +168,6 @@ func (p *Pool) stopNativeVoLTE(deviceID, reason string) {
 	}
 	p.volteCtl.Disable(deviceID)
 	logger.Debug("已停止原生 VoLTE 会话", "device", deviceID, "reason", reason)
-}
-
-func (p *Pool) ExecuteAT(deviceID, cmd string, timeout time.Duration) (string, error) {
-	w := p.GetWorker(deviceID)
-	if w == nil {
-		return "", fmt.Errorf("设备 %s 不存在", deviceID)
-	}
-	port := strings.TrimSpace(w.ResolvedATPort())
-	if port == "" {
-		return "", fmt.Errorf("设备 %s 没有 AT 口", deviceID)
-	}
-	unlock := p.lockDeviceAT(deviceID)
-	defer unlock()
-	session, err := modem.NewSerialAT(port, 115200, 8, 1, "N")
-	if err != nil {
-		return "", fmt.Errorf("打开 AT 口 %s: %w", port, err)
-	}
-	defer session.Close()
-	return session.Execute(cmd, timeout)
-}
-
-func (p *Pool) lockDeviceAT(deviceID string) func() {
-	p.atPortMu.Lock()
-	if p.atPortLocks == nil {
-		p.atPortLocks = map[string]*sync.Mutex{}
-	}
-	mu := p.atPortLocks[deviceID]
-	if mu == nil {
-		mu = &sync.Mutex{}
-		p.atPortLocks[deviceID] = mu
-	}
-	p.atPortMu.Unlock()
-	mu.Lock()
-	return mu.Unlock
 }
 
 func (p *Pool) StopSoftwareIMS(deviceID string) error {
