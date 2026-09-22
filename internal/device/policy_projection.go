@@ -110,6 +110,11 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		return policyApplyResult{ICCID: iccid, Reason: "apply_failed", Err: err}
 	}
 	effective := worker.Config
+	if !IsModemVoiceMode(effective.PhoneMode) || !PhoneServiceEnabled(effective) || effective.AirplaneEnabled {
+		if err := p.stopModemVoice(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "modem_voice_stop_failed", Err: err}
+		}
+	}
 	logger.Info("已投影卡策略", "device", worker.ID, "iccid", iccid,
 		"network", effective.NetworkEnabled, "vowifi", effective.VoWiFiEnabled,
 		"airplane", effective.AirplaneEnabled, "reason", reason)
@@ -149,6 +154,9 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		} else {
 			p.clearDesiredVoWiFiRecoverState(worker.ID)
 		}
+	}
+	if err := p.reconcileModemVoice(worker); err != nil {
+		return policyApplyResult{ICCID: iccid, Reason: "modem_voice_failed", Err: err}
 	}
 	return policyApplyResult{Applied: true, ICCID: iccid, Reason: reason}
 }

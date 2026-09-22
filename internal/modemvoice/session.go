@@ -23,8 +23,9 @@ type Port interface {
 // discovered before a rejected command. Consumers must publish them on errors
 // too. Accepted only means the AT command returned OK, never remote answer.
 type Update struct {
-	Changes  []Change
-	Accepted bool
+	Changes   []Change
+	Accepted  bool
+	Attempted bool // False when validation/CLCC rejected before issuing control.
 }
 
 type Session struct {

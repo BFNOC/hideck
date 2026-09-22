@@ -284,6 +284,13 @@ func (s *Service) attachCurrentMedia(callID string, media *MediaSession) error {
 	if remoteSDP == "" {
 		return errors.New("phone: call media endpoint is not negotiated yet")
 	}
+	if updater, ok := s.gateway.(interface {
+		UpdateCallMedia(string, string, string) error
+	}); ok {
+		if err := updater.UpdateCallMedia(deviceID, callID, media.PlainSDP()); err != nil {
+			return err
+		}
+	}
 	return media.Attach(remoteSDP)
 }
 

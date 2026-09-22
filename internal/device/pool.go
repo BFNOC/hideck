@@ -22,6 +22,7 @@ import (
 	"github.com/yibaiba/hideck/internal/esim"
 	mbimcore "github.com/yibaiba/hideck/internal/mbim"
 	"github.com/yibaiba/hideck/internal/modem"
+	modemvoicehost "github.com/yibaiba/hideck/internal/modemvoice/host"
 	"github.com/yibaiba/hideck/internal/pcsc"
 	"github.com/yibaiba/hideck/internal/proxy/server"
 	qmicore "github.com/yibaiba/hideck/internal/qmi"
@@ -203,6 +204,7 @@ type Pool struct {
 
 	voiceGateway          *voicehost.Gateway
 	volteCtl              *volte.Controller
+	modemVoiceCtl         *modemvoicehost.Controller
 	nativeVoLTEScheduleMu sync.Mutex
 	nativeVoLTEScheduled  map[string]struct{}
 	atPortMu              sync.Mutex
@@ -296,6 +298,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 	p.voWiFiHost().ConfigureRuntimeRecycleHandler(p.handleVoWiFiRuntimeRecycle)
 	p.voWiFiHost().ConfigureRuntimeDependencies(p.GetVoiceGateway(), vowifiDeliveryStore{}, poolVoWiFiRuntimeDispatcher{pool: p})
 	p.volteCtl = volte.NewController(p)
+	p.modemVoiceCtl = p.newModemVoiceController()
 
 	return p
 }
@@ -1162,6 +1165,9 @@ func (p *Pool) AbandonDevice(deviceID string) {
 }
 
 func (p *Pool) RemoveWorker(deviceID string) error {
+	if err := p.stopModemVoice(deviceID); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	worker := p.workers[deviceID]
 	alreadyRebuilding := p.rebuilding[deviceID]
@@ -2474,7 +2480,13 @@ func (p *Pool) ShutdownContext(ctx context.Context) error {
 		_ = p.stopVoWiFiAppForTeardown(ctx, devID, "shutdown")
 	}
 
-	mappingErr := p.removeAllDynamicInterfaceMappings(ctx)
+	var voiceErr error
+	if p.modemVoiceCtl != nil {
+		for _, worker := range p.GetAllWorkers() {
+			voiceErr = errors.Join(voiceErr, p.modemVoiceCtl.Disable(ctx, worker.ID))
+		}
+	}
+	mappingErr := errors.Join(voiceErr, p.removeAllDynamicInterfaceMappings(ctx))
 	p.mu.RLock()
 	for _, w := range p.workers {
 		w.stopOnce.Do(func() {

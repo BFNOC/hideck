@@ -25,7 +25,10 @@ func (b *Bridge) fromRelay() {
 			b.stop(fmt.Errorf("modem media: read RTP: %w", err))
 			return
 		}
-		if !sameEndpoint(from, b.remote) {
+		b.remoteMu.RLock()
+		matches := sameEndpoint(from, b.remote)
+		b.remoteMu.RUnlock()
+		if !matches {
 			b.rejectedPeer.Add(1)
 			continue
 		}
@@ -42,7 +45,14 @@ func (b *Bridge) fromRelay() {
 			b.otherPayload.Add(1)
 			continue
 		}
-		if err := b.consumePCMU(packet.Payload); err != nil {
+		b.remoteMu.RLock()
+		if !sameEndpoint(from, b.remote) {
+			b.remoteMu.RUnlock()
+			continue
+		}
+		err = b.consumePCMU(packet.Payload)
+		b.remoteMu.RUnlock()
+		if err != nil {
 			b.stop(err)
 			return
 		}
@@ -97,7 +107,6 @@ func (b *Bridge) fromPCM() {
 	defer b.workers.Done()
 	ticker := time.NewTicker(FrameDuration)
 	defer ticker.Stop()
-	remote := net.UDPAddrFromAddrPort(b.remote)
 	for {
 		select {
 		case <-b.closed:
@@ -120,7 +129,9 @@ func (b *Bridge) fromPCM() {
 			b.stop(fmt.Errorf("modem media: encode RTP: %w", err))
 			return
 		}
-		n, err := b.conn.WriteTo(data, remote)
+		b.remoteMu.RLock()
+		n, err := b.conn.WriteTo(data, net.UDPAddrFromAddrPort(b.remote))
+		b.remoteMu.RUnlock()
 		if err == nil && n != len(data) {
 			err = io.ErrShortWrite
 		}

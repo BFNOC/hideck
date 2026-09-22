@@ -119,6 +119,29 @@ func receiveAudio(t *testing.T, relay *net.UDPConn) []byte {
 	return packet.Payload
 }
 
+func TestBridgeRebindRejectsOldRelayAndPreservesCapture(t *testing.T) {
+	pcm := newTestPCM()
+	b, conn, oldRelay := testBridge(t, pcm, false)
+	newRelay := udpSocket(t)
+	if err := b.SetRemote(newRelay.LocalAddr().(*net.UDPAddr).AddrPort()); err != nil {
+		t.Fatal(err)
+	}
+	sendAudio(t, oldRelay, conn, tone(1000))
+	sendAudio(t, newRelay, conn, tone(7000))
+	select {
+	case got := <-pcm.playback:
+		if !reflect.DeepEqual(got, g711.Decode(g711.Encode(tone(7000)))) {
+			t.Fatal("old relay injected audio")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("new relay audio missing")
+	}
+	pcm.capture <- captureFrame{samples: tone(3000)}
+	if got := receiveAudio(t, newRelay); !bytes.Equal(got, g711.Encode(tone(3000))) {
+		t.Fatal("capture did not follow relay")
+	}
+}
+
 func TestBridgeDirectionsAndListenOnly(t *testing.T) {
 	for _, listen := range []bool{false, true} {
 		t.Run(map[bool]string{false: "duplex", true: "listen_only"}[listen], func(t *testing.T) {

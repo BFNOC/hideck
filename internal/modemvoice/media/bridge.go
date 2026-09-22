@@ -47,6 +47,7 @@ type Stats struct {
 type Bridge struct {
 	conn         net.PacketConn
 	remote       netip.AddrPort
+	remoteMu     sync.RWMutex
 	pcm          PCM
 	sendMu       sync.Mutex
 	listenOnly   bool
@@ -130,6 +131,26 @@ func (b *Bridge) SetListenOnly(enabled bool) error {
 func (b *Bridge) Stats() Stats {
 	return Stats{FromModem: b.fromModem.Load(), ToModem: b.toModem.Load(), Muted: b.muted.Load(),
 		RejectedPeer: b.rejectedPeer.Load(), OtherPayload: b.otherPayload.Load()}
+}
+
+// SetRemote accepts only a relay authorized by the phone control lease.
+// No packet can change this endpoint; sends to the previous relay finish first.
+func (b *Bridge) SetRemote(remote netip.AddrPort) error {
+	if !remote.IsValid() || remote.Port() == 0 || !remote.Addr().IsLoopback() {
+		return errors.New("modem media: remote must be the local phone relay")
+	}
+	b.remoteMu.Lock()
+	defer b.remoteMu.Unlock()
+	b.sendMu.Lock()
+	defer b.sendMu.Unlock()
+	select {
+	case <-b.closed:
+		return net.ErrClosed
+	default:
+	}
+	b.pending = nil
+	b.remote = netip.AddrPortFrom(remote.Addr().Unmap(), remote.Port())
+	return nil
 }
 
 func (b *Bridge) Done() <-chan struct{} { return b.done }

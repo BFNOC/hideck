@@ -69,7 +69,9 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 				logger.Warn("电话设备列表识别 Lebara UK 射频策略失败", "device", worker.ID, "err", err)
 			}
 			voice := map[string]interface{}{}
-			if s.pool.IsNativeVoLTE(worker.ID) {
+			if s.pool.IsModemVoice(worker.ID) {
+				voice = s.pool.ModemVoiceController().DeviceStatus(worker.ID)
+			} else if s.pool.IsNativeVoLTE(worker.ID) {
 				if ctl := s.pool.NativeVoLTEController(); ctl != nil {
 					for key, value := range ctl.DeviceStatus(worker.ID) {
 						voice[key] = value

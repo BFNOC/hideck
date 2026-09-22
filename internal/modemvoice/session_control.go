@@ -83,6 +83,7 @@ func containsCallID(calls []TrackedCall, id string) bool {
 }
 
 func (s *Session) execute(ctx context.Context, command string, update Update) (Update, error) {
+	update.Attempted = true
 	_, err := s.port.ExecuteATContext(ctx, command, callCommandTimeout)
 	update.Accepted = err == nil
 	// Even a timed-out dial may have created a call; wake a fresh poll, never

@@ -17,6 +17,9 @@
 .device-selector :deep(.el-select) { width: 100%; }
 .device-selector :deep(.el-select__wrapper) { min-height: 44px; background: var(--ui-surface); }
 .phone-mode-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.phone-mode-bar :deep(.el-radio-group) { display: flex; flex-wrap: wrap; gap: 4px; }
+.phone-mode-bar :deep(.el-radio-button__inner) { min-height: 44px; display: inline-flex; align-items: center; border-radius: var(--ui-radius-md); border: 1px solid var(--ui-border); }
+.phone-mode-hint p { margin: 4px 0; }
 .phone-wifi-calling-switch {
   flex: 1 1 100%;
   min-height: 44px;
