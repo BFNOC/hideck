@@ -15,15 +15,22 @@ type modemVoicePort struct {
 }
 
 func (port *modemVoicePort) check(ctx context.Context) error {
+	if err := port.checkIdentity(ctx); err != nil {
+		return err
+	}
+	if !port.pool.IsModemVoice(port.worker.ID) || port.worker.Config.AirplaneEnabled {
+		return errors.New("模组直拨已关闭或设备处于飞行模式")
+	}
+	return nil
+}
+
+func (port *modemVoicePort) checkIdentity(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	w := port.worker
 	if port.pool.GetWorker(w.ID) != w || w.CurrentICCID() != port.iccid || port.pool.IsESIMSwitching(w.ID) {
 		return errors.New("模组或 SIM 已更换，模组直拨会话已失效")
-	}
-	if !port.pool.IsModemVoice(w.ID) || w.Config.AirplaneEnabled {
-		return errors.New("模组直拨已关闭或设备处于飞行模式")
 	}
 	class, err := ClassifyWorkerLebaraUK(w)
 	if err != nil {
@@ -46,7 +53,13 @@ func (port *modemVoicePort) ExecuteATContext(ctx context.Context, command string
 		return "", err
 	}
 	defer release()
-	if err := port.check(ctx); err != nil {
+	check := port.check
+	// Reading or ending the same SIM's call cannot enable RF or originate a
+	// new call. Keep these available after a mode change so teardown can finish.
+	if command == "AT+CLCC" || command == "AT+CHUP" {
+		check = port.checkIdentity
+	}
+	if err := check(ctx); err != nil {
 		return "", err
 	}
 	return port.pool.executeWorkerAT(ctx, port.worker, ATRequest{DeviceID: port.worker.ID, Command: command, Timeout: timeout})

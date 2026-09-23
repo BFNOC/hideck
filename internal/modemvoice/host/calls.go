@@ -28,6 +28,12 @@ func (c *Controller) lockReady(ctx context.Context, id string) (*device, error) 
 		d.op.Unlock()
 		return nil, err
 	}
+	if d.resources.CanCall != nil {
+		if err := d.resources.CanCall(ctx); err != nil {
+			d.op.Unlock()
+			return nil, err
+		}
+	}
 	return d, nil
 }
 
@@ -64,16 +70,7 @@ func (c *Controller) BeginCall(ctx context.Context, req voicehost.BeginCallReque
 	}
 	c.apply(d, update)
 	if dialErr != nil {
-		// ATD is never retried. Reconcile before returning because a timed-out
-		// command can have created a physical call despite the missing OK.
-		refresh, refreshErr := d.session.Refresh(d.ctx)
-		c.apply(d, refresh)
-		if refreshErr == nil && current.trackedID != "" {
-			ended, hangupErr := d.session.Hangup(d.ctx, current.trackedID)
-			c.apply(d, ended)
-			dialErr = errors.Join(dialErr, hangupErr)
-		}
-		return voicehost.CallSnapshot{}, errors.Join(dialErr, refreshErr, c.endMedia(d, "dial_failed"))
+		return c.recoverFailedDial(d, current, dialErr)
 	}
 	return current.snapshot, nil
 }
@@ -88,16 +85,20 @@ func (c *Controller) AnswerIncomingCall(ctx context.Context, req voicehost.Answe
 	if err != nil {
 		return voicehost.AnswerResult{}, err
 	}
-	if current.bridge != nil {
+	if current.snapshot.State == "connected" {
 		return voicehost.AnswerResult{}, errors.New("通话已接听或正在接听")
 	}
-	if err := c.openMedia(d.ctx, d, current, req.SDP); err != nil {
-		return voicehost.AnswerResult{}, errors.Join(err, c.endMedia(d, "audio_failed"))
+	if err := c.prepareAnswerMedia(d, current, req.SDP); err != nil {
+		return voicehost.AnswerResult{}, err
 	}
 	update, err := d.session.Answer(ctx, current.trackedID)
 	c.apply(d, update)
 	if err != nil {
-		return voicehost.AnswerResult{}, errors.Join(err, c.endMedia(d, "answer_failed"))
+		// ATA may have reached the modem despite losing its final response.
+		// Keep ownership unless a successful CLCC proves this call has ended.
+		refresh, refreshErr := d.session.Refresh(d.ctx)
+		c.apply(d, refresh)
+		return voicehost.AnswerResult{}, errors.Join(err, refreshErr)
 	}
 	return voicehost.AnswerResult{CallID: req.CallID, OfferSDP: current.snapshot.ClientSDP, State: "answering"}, nil
 }
@@ -122,23 +123,38 @@ func (c *Controller) HangupCall(ctx context.Context, id, callID string) error {
 	if err != nil {
 		return err
 	}
+	return c.hangup(ctx, d, current)
+}
+
+// Called with op held, including during Disable before canceling the session.
+func (c *Controller) hangup(ctx context.Context, d *device, current *call) error {
 	update, err := d.session.Refresh(ctx)
-	c.apply(d, update)
+	err = errors.Join(err, c.apply(d, update))
 	if err != nil {
 		return err
 	}
-	if c.ActiveCall(id) == nil {
+	if d.call != current {
 		return nil
 	}
 	if current.trackedID == "" {
 		return errors.New("尚未确认模组通话索引，请稍后重试挂断")
 	}
 	update, err = d.session.Hangup(ctx, current.trackedID)
-	c.apply(d, update)
+	err = errors.Join(err, c.apply(d, update))
 	if err != nil {
 		return err
 	}
-	return c.endMedia(d, "local_hangup")
+	// A command OK is not proof the modem has removed the physical call.
+	current.endReason = "local_hangup"
+	update, err = d.session.Refresh(ctx)
+	err = errors.Join(err, c.apply(d, update))
+	if err != nil {
+		return err
+	}
+	if d.call == current {
+		return errors.New("挂断命令已发送，但模组仍报告通话存在，请重试")
+	}
+	return nil
 }
 
 func (c *Controller) RejectIncomingCall(req voicehost.RejectRequest) error {
@@ -160,14 +176,16 @@ func (c *Controller) SwitchCall(string, string) error {
 	return errors.New("模组直拨暂不支持切换通话")
 }
 func (c *Controller) StartCallCapture(string, string, string) error {
-	return fmt.Errorf("模组直拨仅在网页接听后录音，不支持未接听录音")
+	return fmt.Errorf("模组直拨仅在网页接听后录音: %w", errors.ErrUnsupported)
 }
 
-func (c *Controller) apply(d *device, update modemvoice.Update) {
+func (c *Controller) apply(d *device, update modemvoice.Update) error {
+	var err error
 	for _, change := range update.Changes {
 		if change.Call.Call.Mode != 0 {
 			continue
 		}
-		c.applyCall(d, change)
+		err = errors.Join(err, c.applyCall(d, change))
 	}
+	return err
 }

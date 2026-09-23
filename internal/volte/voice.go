@@ -178,6 +178,19 @@ func (c *Controller) ensureLocked(deviceID string) *session {
 }
 
 func (c *Controller) BeginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
+	if c == nil {
+		return voicehost.CallSnapshot{}, errors.New("volte: controller is not configured")
+	}
+	var snapshot voicehost.CallSnapshot
+	err := c.withDevice(strings.TrimSpace(request.DeviceID), func() error {
+		var err error
+		snapshot, err = c.beginCall(ctx, request)
+		return err
+	})
+	return snapshot, err
+}
+
+func (c *Controller) beginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
 	deviceID := strings.TrimSpace(request.DeviceID)
 	if c == nil || c.host == nil {
 		return voicehost.CallSnapshot{}, errors.New("volte: controller is not configured")

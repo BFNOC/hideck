@@ -45,6 +45,36 @@ func relay(sdp string) (netip.AddrPort, error) {
 	return netip.AddrPortFrom(address, uint16(port)), nil
 }
 
+// A failed ATA keeps the incoming call owned. A later explicit answer may use
+// a new browser relay without allocating a second hardware audio route.
+func (c *Controller) prepareAnswerMedia(d *device, current *call, sdp string) error {
+	remote, err := relay(sdp)
+	if err != nil {
+		return err
+	}
+	if current.bridge != nil {
+		return current.bridge.SetRemote(remote)
+	}
+	if current.conn == nil {
+		conn, err := c.options.Listen()
+		if err != nil {
+			return err
+		}
+		d.mu.Lock()
+		current.conn, current.snapshot.ClientSDP = conn, offer(conn)
+		d.mu.Unlock()
+	}
+	if err := c.openMedia(d.ctx, d, current, sdp); err != nil {
+		closeErr := current.conn.Close()
+		current.conn = nil
+		if errors.Is(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+		return errors.Join(err, closeErr)
+	}
+	return nil
+}
+
 func (c *Controller) openMedia(ctx context.Context, d *device, current *call, sdp string) error {
 	remote, err := relay(sdp)
 	if err != nil {

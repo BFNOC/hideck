@@ -66,11 +66,23 @@ func (p *Pool) reconcileModemVoice(w *Worker) error {
 	if !p.IsModemVoice(w.ID) || w.Config.AirplaneEnabled {
 		return p.stopModemVoice(w.ID)
 	}
+	if err := p.stopNativeVoLTEForModemVoice(w.ID); err != nil {
+		return err
+	}
 	if err := p.StopSoftwareIMS(w.ID); err != nil {
 		return err
 	}
 	p.modemVoiceCtl.Enable(p.Context(), w.ID)
 	return nil
+}
+
+func (p *Pool) stopNativeVoLTEForModemVoice(id string) error {
+	if p.volteCtl == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(p.Context(), 90*time.Second)
+	defer cancel()
+	return p.volteCtl.DisableForHandoff(ctx, id)
 }
 
 // This constructor is the infrastructure boundary. Optional tools and bundles
@@ -137,7 +149,7 @@ func prepareQDC507(ctx context.Context, port *modemVoicePort, setup qdc507Setup)
 	if err != nil {
 		return nil, err
 	}
-	resources := &host.Resources{Port: port, Check: port.check, Close: manager.Shutdown,
+	resources := &host.Resources{Port: port, Check: port.checkIdentity, CanCall: port.check, Close: manager.Shutdown,
 		Route: nil}
 	alsa := audio.ALSA{CaptureProgram: setup.capture, PlaybackProgram: setup.playback}
 	resources.Route = func() (media.AudioRoute, error) {

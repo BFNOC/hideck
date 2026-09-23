@@ -7,7 +7,7 @@ import (
 	"github.com/yibaiba/hideck/internal/modemvoice"
 )
 
-func (c *Controller) applyCall(d *device, change modemvoice.Change) {
+func (c *Controller) applyCall(d *device, change modemvoice.Change) error {
 	d.mu.Lock()
 	current := d.call
 	d.mu.Unlock()
@@ -15,19 +15,24 @@ func (c *Controller) applyCall(d *device, change modemvoice.Change) {
 		if !change.Ended && change.Call.Call.Inbound {
 			c.incomingCall(d, change.Call)
 		}
-		return
+		return nil
 	}
 	if current.trackedID == "" && !change.Call.Call.Inbound && !change.Ended {
 		current.trackedID = change.Call.ID
 	}
 	if current.trackedID != change.Call.ID {
-		return
+		return nil
 	}
 	if change.Ended {
-		if err := c.endMedia(d, "remote_hangup"); err != nil {
-			d.setStatus("failed", err)
+		reason := current.endReason
+		if reason == "" {
+			reason = "remote_hangup"
 		}
-		return
+		if err := c.endMedia(d, reason); err != nil {
+			d.setStatus("failed", err)
+			return err
+		}
+		return nil
 	}
 	state, kind := "ringing", "CallRinging"
 	if change.Call.Call.State == modemvoice.Active || change.Call.Call.State == modemvoice.Held {
@@ -43,6 +48,7 @@ func (c *Controller) applyCall(d *device, change modemvoice.Change) {
 		c.publish(notification{event: voicehost.CallEvent{Type: kind, DeviceID: d.id, CallID: snapshot.CallID,
 			Direction: snapshot.Direction, State: state, Time: time.Now(), AudioCodec: "PCMU"}})
 	}
+	return nil
 }
 
 func (c *Controller) incomingCall(d *device, tracked modemvoice.TrackedCall) {

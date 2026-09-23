@@ -9,7 +9,34 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
+	modemhost "github.com/yibaiba/hideck/internal/modemvoice/host"
 )
+
+func TestIncomingCaptureCapabilityDoesNotMaskRealRecordingFailures(t *testing.T) {
+	unsupported := (&modemhost.Controller{}).StartCallCapture("dev-1", "incoming", "")
+	if !errors.Is(unsupported, errors.ErrUnsupported) {
+		t.Fatal(unsupported)
+	}
+	for _, failure := range []error{unsupported, errors.New("capture I/O failed")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
+			gateway.captureError = failure
+			service := newPhoneTestService(t, gateway, store, time.Second)
+			service.transcoder = &recordingTranscoder{}
+			service.handleIncoming(voicehost.IncomingCall{DeviceID: "dev-1", CallID: "incoming", Caller: "10010"})
+			call := service.calls["incoming"]
+			call.mixedAttempted, call.mixedAudioPath = true, filepath.Join(t.TempDir(), "mixed.wav")
+			call.view.Status = StatusConnected
+			service.finishCall(voicehost.CallEvent{Type: "CallEnded", CallID: "incoming"})
+			service.finalizeRecording(voicehost.CallEvent{Type: "CallFinalized", CallID: "incoming"})
+			record := store.record("incoming")
+			wantError := !errors.Is(failure, errors.ErrUnsupported)
+			if record.RecordingName != "mixed.mp3" || (record.RecordingError != "") != wantError {
+				t.Fatalf("recording result: %+v", record)
+			}
+		})
+	}
+}
 
 func TestFinalizeRecordingPublishesMixedMP3AndPCAPMetadata(t *testing.T) {
 	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()

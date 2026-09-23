@@ -60,7 +60,7 @@ func (s *Service) handleIncoming(incoming voicehost.IncomingCall) {
 	pending, alreadyEnded := s.takePendingLocked(incoming.CallID)
 	s.mu.Unlock()
 	if !alreadyEnded {
-		if err := s.gateway.StartCallCapture(incoming.DeviceID, incoming.CallID, call.recordingBase); err != nil {
+		if err := s.gateway.StartCallCapture(incoming.DeviceID, incoming.CallID, call.recordingBase); err != nil && !errors.Is(err, errors.ErrUnsupported) {
 			s.mu.Lock()
 			call.record.RecordingError = err.Error()
 			call.view.RecordingError = err.Error()

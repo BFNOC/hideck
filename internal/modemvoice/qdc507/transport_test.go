@@ -81,3 +81,35 @@ func TestADBDoesNotAcceptStatusAfterTransportFailure(t *testing.T) {
 		t.Fatal("ignored transport failure")
 	}
 }
+
+func TestADBDeviceAdditionAndReenumerationNeverSelectAnotherUSB(t *testing.T) {
+	const boot = "11111111-2222-3333-4444-555555555555"
+	listing := "(no serial number) device usb:3-2.1 transport_id:9"
+	var selected []string
+	a, _ := NewADB(execFunc(func(_ context.Context, in Invocation) (string, error) {
+		if in.Args[0] == "devices" {
+			return listing, nil
+		}
+		selected = append(selected, in.Args[1])
+		return boot + "\n" + shellStatus + "0\n", nil
+	}))
+	target, err := a.Bind(context.Background(), "3-2.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The other device appears first; both modules have the same empty serial.
+	listing = "(no serial number) device usb:3-2.2 transport_id:10\n(no serial number) device usb:3-2.1 transport_id:15"
+	if _, err := a.Shell(context.Background(), target, "id -u"); err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 2 || selected[1] != "15" {
+		t.Fatalf("wrong transport selected: %v", selected)
+	}
+	listing = "(no serial number) device usb:3-2.2 transport_id:10"
+	if _, err := a.Shell(context.Background(), target, "id -u"); err == nil {
+		t.Fatal("missing USB silently used another module")
+	}
+	if len(selected) != 2 {
+		t.Fatal("sent a command after original USB disappeared")
+	}
+}

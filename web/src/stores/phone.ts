@@ -146,8 +146,10 @@ export const usePhoneStore = defineStore('phone', {
       }
     },
 
-    async takeOver(call: PhoneCall) {
-      const prepared = await this.prepareMedia()
+    async takeOver(call: PhoneCall, mode: Exclude<PhoneMediaMode, 'none'> = 'two-way') {
+      const prepared = mode === 'listen-only'
+        ? await this.prepareReceiveOnlyMedia()
+        : await this.prepareMedia()
       try {
         const result = await phoneService.refreshMedia(call.call_id, prepared.mediaId, '', true)
         this.lease = result.lease
@@ -406,6 +408,7 @@ export const usePhoneStore = defineStore('phone', {
       mediaController = null
       this.mediaId = ''
       this.lease = ''
+      this.calls = this.calls.map((call) => normalizeCallOwnership(call, ''))
       this.mediaState = 'idle'
       this.mediaMode = 'none'
       this.muted = false

@@ -35,7 +35,9 @@ func (s *Service) StartCall(request StartCallRequest) (CallView, error) {
 		DeviceID: request.DeviceID, Callee: request.Callee, SDP: media.PlainSDP(),
 		CaptureBasePath: s.captureBase(request.DeviceID, startedAt),
 	})
-	if err != nil {
+	// A backend may retain a physical call after a failed dial/cleanup. Keep
+	// that call controllable while still returning the original failure.
+	if err != nil && snapshot.CallID == "" {
 		s.releaseDeviceReservation(request.DeviceID)
 		return CallView{}, err
 	}
@@ -53,7 +55,7 @@ func (s *Service) StartCall(request StartCallRequest) (CallView, error) {
 	for _, event := range pendingEvents {
 		s.dispatchCallEvent(event)
 	}
-	return s.callView(call.view.CallID, request.Lease), nil
+	return s.callView(call.view.CallID, request.Lease), err
 }
 
 func (s *Service) newOutboundCall(
@@ -93,11 +95,16 @@ func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView,
 		})
 		return CallView{}, errors.Join(err, rejectErr)
 	}
-	_, err = s.gateway.AnswerIncomingCall(ctx, voicehost.AnswerRequest{
+	answer, err := s.gateway.AnswerIncomingCall(ctx, voicehost.AnswerRequest{
 		DeviceID: deviceID, CallID: callID, SDP: media.PlainSDP(),
 	})
 	if err != nil {
 		return CallView{}, err
+	}
+	if answer.OfferSDP != "" && answer.OfferSDP != incomingSDP {
+		if err := media.Attach(answer.OfferSDP); err != nil {
+			return CallView{}, err
+		}
 	}
 	s.assignControl(call.view.CallID, request.Owner, request.MediaID, request.Lease)
 	s.startMixedRecording(call, media)
@@ -236,10 +243,6 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 	if err := s.attachCurrentMedia(request.CallID, media); err != nil {
 		return CallView{}, "", err
 	}
-	s.mu.RLock()
-	callForRecorder := s.calls[request.CallID]
-	s.mu.RUnlock()
-	s.attachMixedRecorder(callForRecorder, media)
 	s.mu.Lock()
 	call = s.calls[request.CallID]
 	if call == nil || call.terminal {
@@ -260,7 +263,11 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 		call.disconnectTimer.Stop()
 		call.disconnectTimer = nil
 	}
+	connected := call.view.Status == StatusConnected
 	s.mu.Unlock()
+	if connected {
+		s.startMixedRecording(call, media)
+	}
 	s.resumePendingMediaDrop(request.MediaID, pendingMediaDrop)
 	if oldMediaID != "" && oldMediaID != request.MediaID {
 		s.media.Remove(oldMediaID)

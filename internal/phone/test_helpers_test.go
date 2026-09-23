@@ -18,6 +18,7 @@ type fakeVoiceGateway struct {
 	unsubscribed    int
 	beginSnapshot   voicehost.CallSnapshot
 	beginEvents     []voicehost.CallEvent
+	answerSDP       string
 	rejectEmits     bool
 	hangupCalls     chan string
 	dtmfCalls       chan string
@@ -76,7 +77,7 @@ func (g *fakeVoiceGateway) ActiveCall(deviceID string) *voicehost.CallSnapshot {
 }
 
 func (g *fakeVoiceGateway) AnswerIncomingCall(_ context.Context, request voicehost.AnswerRequest) (voicehost.AnswerResult, error) {
-	return voicehost.AnswerResult{CallID: request.CallID, State: "Connected"}, nil
+	return voicehost.AnswerResult{CallID: request.CallID, State: "Connected", OfferSDP: g.answerSDP}, nil
 }
 
 func (g *fakeVoiceGateway) RejectIncomingCall(request voicehost.RejectRequest) error {

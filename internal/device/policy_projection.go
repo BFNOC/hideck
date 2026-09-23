@@ -105,16 +105,24 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		logger.Warn("解析卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
 		return policyApplyResult{ICCID: iccid, Reason: "resolve_failed", Err: err}
 	}
+	// Finish the old call before projecting a policy that disallows new calls.
+	// Failed hangup leaves the current session and policy available for retry.
+	if !IsModemVoiceMode(pol.PhoneMode) || !pol.VoWiFiEnabled || pol.AirplaneEnabled {
+		if err := p.stopModemVoice(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "modem_voice_stop_failed", Err: err}
+		}
+	}
+	modemVoiceHandoff := IsModemVoiceMode(pol.PhoneMode) && pol.VoWiFiEnabled && !pol.AirplaneEnabled
+	if modemVoiceHandoff {
+		if err := p.stopNativeVoLTEForModemVoice(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "native_volte_stop_failed", Err: err}
+		}
+	}
 	if err := applyPolicyToWorker(worker, pol); err != nil {
 		logger.Warn("投影卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
 		return policyApplyResult{ICCID: iccid, Reason: "apply_failed", Err: err}
 	}
 	effective := worker.Config
-	if !IsModemVoiceMode(effective.PhoneMode) || !PhoneServiceEnabled(effective) || effective.AirplaneEnabled {
-		if err := p.stopModemVoice(worker.ID); err != nil {
-			return policyApplyResult{ICCID: iccid, Reason: "modem_voice_stop_failed", Err: err}
-		}
-	}
 	logger.Info("已投影卡策略", "device", worker.ID, "iccid", iccid,
 		"network", effective.NetworkEnabled, "vowifi", effective.VoWiFiEnabled,
 		"airplane", effective.AirplaneEnabled, "reason", reason)
@@ -148,7 +156,9 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		p.clearDesiredVoWiFiRecoverState(worker.ID)
 		p.scheduleNativeVoLTE(worker.ID, reason)
 	} else {
-		p.stopNativeVoLTE(worker.ID, reason)
+		if !modemVoiceHandoff {
+			p.stopNativeVoLTE(worker.ID, reason)
+		}
 		if PhoneServiceEnabled(effective) && !UsesModemPhoneControl(effective.PhoneMode) && !cellularSoftwarePhoneHeld(worker, pol) {
 			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 		} else {

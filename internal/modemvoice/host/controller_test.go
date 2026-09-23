@@ -57,8 +57,9 @@ func (*testPCM) WriteFrame([]int16) error      { return nil }
 func (p *testPCM) Close() error                { p.once.Do(func() { close(p.done) }); return nil }
 
 type testRoute struct {
-	fail   bool
-	closed atomic.Bool
+	fail     bool
+	closed   atomic.Bool
+	closeErr error
 }
 
 func (r *testRoute) Start(context.Context) (io.Closer, error) {
@@ -67,7 +68,7 @@ func (r *testRoute) Start(context.Context) (io.Closer, error) {
 	}
 	return r, nil
 }
-func (r *testRoute) Close() error { r.closed.Store(true); return nil }
+func (r *testRoute) Close() error { r.closed.Store(true); return r.closeErr }
 func (*testRoute) OpenPCM(context.Context) (media.PCM, error) {
 	return &testPCM{done: make(chan struct{})}, nil
 }
@@ -137,6 +138,9 @@ finalized:
 		select {
 		case event := <-events:
 			if event.Type == "CallEnded" {
+				if event.Reason != "local_hangup" {
+					t.Fatalf("local hangup attributed to remote: %+v", event)
+				}
 				ended = true
 			}
 			if event.Type == "CallFinalized" {

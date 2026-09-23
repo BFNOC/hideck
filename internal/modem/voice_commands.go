@@ -35,13 +35,42 @@ func (m *Manager) WaitATIdle(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("AT context is required")
 	}
-	if m == nil || !m.CanExecuteAT() || !m.IsHealthy() {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m == nil {
+		return errors.New("AT 管理器未启动或不可用，无法确认队列已完成")
+	}
+	select {
+	case <-m.stop:
+		return m.waitStopped(ctx)
+	default:
+	}
+	if !m.CanExecuteAT() || !m.IsHealthy() {
 		return errors.New("AT 管理器未启动或不可用，无法确认队列已完成")
 	}
 	req := commandRequest{ctx: ctx, barrier: true,
 		respChan: make(chan string, 1), errChan: make(chan error, 1)}
 	_, err := m.enqueueContext(ctx, req)
+	// Stop can win while the queue fence is pending. Only the completed join
+	// proves that no old serial operation can overlap the replacement runtime.
+	if err != nil {
+		select {
+		case <-m.stop:
+			return m.waitStopped(ctx)
+		default:
+		}
+	}
 	return err
+}
+
+func (m *Manager) waitStopped(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.stopped:
+		return ctx.Err()
+	}
 }
 
 func (m *Manager) enqueueContext(ctx context.Context, req commandRequest) (string, error) {

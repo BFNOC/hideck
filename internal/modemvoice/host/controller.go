@@ -14,10 +14,11 @@ import (
 )
 
 type Resources struct {
-	Port  modemvoice.Port
-	Check func(context.Context) error
-	Route func() (media.AudioRoute, error)
-	Close func(context.Context) error
+	Port    modemvoice.Port
+	Check   func(context.Context) error // Existing session identity; also used while stopping.
+	CanCall func(context.Context) error // Optional current policy check for dial/answer.
+	Route   func() (media.AudioRoute, error)
+	Close   func(context.Context) error
 }
 
 type Options struct {
@@ -37,27 +38,30 @@ type Controller struct {
 }
 
 type device struct {
-	id               string
-	identity         string
-	previous         *device
-	ctx              context.Context
-	cancel           context.CancelFunc
-	done             chan struct{}
-	op               sync.Mutex // Serializes controls, polling and teardown for this generation.
-	mu               sync.Mutex // Snapshot readers never wait on serial/audio I/O.
-	phase, lastError string
-	cleanupErr       error
-	call             *call
-	resources        *Resources
-	session          *modemvoice.Session
+	id                 string
+	identity           string
+	previous           *device
+	ctx                context.Context
+	cancel             context.CancelFunc
+	done               chan struct{}
+	op                 sync.Mutex // Serializes controls, polling and teardown for this generation.
+	mu                 sync.Mutex // Snapshot readers never wait on serial/audio I/O.
+	phase, lastError   string
+	cleanupErr         error
+	cleanupTransferred bool // Protected by op after done; replacement owns pending resources.
+	call               *call
+	resources          *Resources
+	session            *modemvoice.Session
 }
 
 type call struct {
-	snapshot    voicehost.CallSnapshot
-	trackedID   string
-	conn        net.PacketConn
-	bridge      *media.Bridge
-	cancelMedia context.CancelFunc
+	snapshot      voicehost.CallSnapshot
+	trackedID     string
+	endReason     string // Set after a local hangup is accepted, until CLCC confirms it.
+	dialUncertain bool   // ATD was sent, but its final response was lost.
+	conn          net.PacketConn
+	bridge        *media.Bridge
+	cancelMedia   context.CancelFunc
 }
 
 func New(options Options) *Controller {
@@ -78,7 +82,7 @@ func (c *Controller) Enable(parent context.Context, id string) {
 		case <-existing.done:
 			previous = existing
 		default:
-			if existing.identity == identity {
+			if existing.identity == identity && existing.ctx.Err() == nil {
 				return
 			}
 			existing.cancel()
@@ -95,32 +99,6 @@ func (c *Controller) get(id string) *device {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.devices[id]
-}
-
-func (c *Controller) Disable(ctx context.Context, id string) error {
-	d := c.get(id)
-	if d == nil {
-		return nil
-	}
-	var hangupErr error
-	if active := c.ActiveCall(id); active != nil && d.ctx.Err() == nil {
-		hangupErr = c.HangupCall(ctx, id, active.CallID)
-	}
-	d.cancel()
-	select {
-	case <-ctx.Done():
-		return errors.Join(hangupErr, ctx.Err())
-	case <-d.done:
-	}
-	if d.cleanupErr != nil {
-		return errors.Join(hangupErr, d.cleanupErr)
-	}
-	c.mu.Lock()
-	if c.devices[id] == d {
-		delete(c.devices, id)
-	}
-	c.mu.Unlock()
-	return hangupErr
 }
 
 func (d *device) setStatus(phase string, err error) {
@@ -140,9 +118,7 @@ func (c *Controller) run(d *device) {
 		// A replacement SIM must never prepare a second runtime before the old
 		// generation has finished cleanup, including an in-flight preparation.
 		<-d.previous.done
-		if d.previous.cleanupErr != nil {
-			d.resources, d.session = d.previous.resources, d.previous.session
-		}
+		c.takePendingCleanup(d)
 		d.previous = nil
 	}
 	if d.resources != nil {
@@ -178,7 +154,10 @@ func (c *Controller) run(d *device) {
 		} else {
 			var update modemvoice.Update
 			update, err = d.session.Refresh(d.ctx)
-			c.apply(d, update)
+			err = errors.Join(err, c.apply(d, update))
+			if err == nil {
+				err = c.finishUnconfirmedDial(d)
+			}
 			if err == nil && c.ActiveCall(d.id) == nil {
 				for _, tracked := range d.session.Calls() {
 					if tracked.Call.Mode == 0 && tracked.Call.Inbound {
@@ -223,19 +202,6 @@ func callAudioError(d *device) error {
 		return d.call.bridge.Err()
 	}
 	return nil
-}
-
-func (c *Controller) cleanup(d *device) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	err := c.endMedia(d, "mode_stopped")
-	if d.session != nil {
-		err = errors.Join(err, d.session.Close(ctx))
-	}
-	if d.resources != nil && d.resources.Close != nil {
-		err = errors.Join(err, d.resources.Close(ctx))
-	}
-	return err
 }
 
 func (c *Controller) DeviceStatus(id string) map[string]interface{} {

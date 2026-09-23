@@ -65,6 +65,8 @@ type Manager struct {
 	// 通道驱动的异步架构
 	stop        chan struct{}
 	stopOnce    sync.Once
+	startStopMu sync.Mutex // Serializes startup with stop and the final loop join.
+	stopped     chan struct{}
 	loopWG      sync.WaitGroup
 	cmdChan     chan commandRequest // 普通优先级
 	cmdChanHigh chan commandRequest // 高优先级 (短信, IP 切换)
@@ -189,6 +191,7 @@ func newManager(cfg config.DeviceConfig, role runtimeRole) (*Manager, error) {
 		atPort:       cfg.ATPort,
 		role:         role,
 		stop:         make(chan struct{}),
+		stopped:      make(chan struct{}),
 		cmdChan:      make(chan commandRequest, 10),
 		cmdChanHigh:  make(chan commandRequest, 5),
 		rxChan:       make(chan rxMsg, 100),
@@ -507,6 +510,13 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 
 // Start 启动 AT 管理器的后台协程
 func (m *Manager) Start() error {
+	m.startStopMu.Lock()
+	defer m.startStopMu.Unlock()
+	select {
+	case <-m.stop:
+		return errors.New("AT 管理器已停止，不能重新启动旧实例")
+	default:
+	}
 	if !m.runsATRuntime() {
 		logger.Info(fmt.Sprintf("[%s] 纯 QMI 模式，跳过 AT 管理器启动", m.cfg.ID), "at_port", m.atPort)
 		m.setRunning(false)
@@ -608,6 +618,8 @@ func (m *Manager) handleFatalSerialRuntimeErr(err error, phase string, cmd strin
 
 // Stop 停止管理器
 func (m *Manager) Stop() {
+	m.startStopMu.Lock()
+	defer m.startStopMu.Unlock()
 	m.stopOnce.Do(func() {
 		m.releaseAllAPDULeases("stop")
 		close(m.stop)
@@ -616,18 +628,17 @@ func (m *Manager) Stop() {
 			m.port.Close()
 		}
 		m.setRunning(false)
+		go func() {
+			m.loopWG.Wait()
+			close(m.stopped)
+		}()
 	})
 }
 
 func (m *Manager) StopAndWait(timeout time.Duration) bool {
 	m.Stop()
-	done := make(chan struct{})
-	go func() {
-		m.loopWG.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-m.stopped:
 		return true
 	case <-time.After(timeout):
 		return false

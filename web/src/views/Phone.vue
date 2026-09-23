@@ -375,8 +375,9 @@ function toggleHold() {
   return runAction(call.value?.held ? '恢复通话' : '保持', () => phone.toggleHold())
 }
 
-function takeOver(current: PhoneCall) {
-  return runAction('接管', () => phone.takeOver(current), '已接管这通电话')
+function takeOver(current: PhoneCall, mode: 'listen-only' | 'two-way') {
+  const label = mode === 'listen-only' ? '仅听接管' : '双向接管'
+  return runAction(label, () => phone.takeOver(current, mode), `已${label}这通电话`)
 }
 
 async function sendDTMF(digit: string) {
@@ -569,11 +570,16 @@ async function sendDTMF(digit: string) {
           </div>
 
           <div v-else-if="call.read_only" class="takeover-panel">
-            <strong>此电话由另一个浏览器控制</strong>
-            <p>当前只能查看状态。显式接管会断开原浏览器媒体并把控制租约转移到本标签页。</p>
-            <button type="button" class="secondary-button" :disabled="!!action || !phone.secureContext" @click="takeOver(call)">
-              接管电话
-            </button>
+            <strong>接管这通电话</strong>
+            <p>接管后可在本页控制通话，原浏览器的媒体连接会断开。仅听不申请麦克风权限；双向语音需要受信任的 HTTPS。</p>
+            <div class="restore-actions">
+              <button type="button" class="restore-button" :disabled="!!action || callEnding" @click="takeOver(call, 'listen-only')">
+                <el-icon><Speaker224Regular /></el-icon>仅听接管
+              </button>
+              <button type="button" class="restore-button" :disabled="!!action || callEnding || !phone.secureContext" @click="takeOver(call, 'two-way')">
+                <el-icon><Mic24Regular /></el-icon>双向接管
+              </button>
+            </div>
           </div>
 
           <template v-else>
