@@ -26,15 +26,16 @@ func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instan
 	if controlledReauth {
 		invalidationReason = ikeReauthenticationReason
 	}
-	m.stateMu.Lock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
 	if !m.RuntimeStore().DeleteInstance(deviceID, inst) {
-		m.stateMu.Unlock()
+		stateMu.Unlock()
 		return false
 	}
 	m.lifecycleController().Invalidate(deviceID)
 	m.ClearDesiredRecoverState(deviceID)
 	epoch := m.invalidateRuntimeStateLocked(deviceID, invalidationReason)
-	m.stateMu.Unlock()
+	stateMu.Unlock()
 	m.BroadcastState(deviceID)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), failedRuntimeStopTimeout)
@@ -42,15 +43,15 @@ func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instan
 	if err := inst.Stop(stopCtx); err != nil {
 		logger.Warn("VoWiFi 故障实例停止失败", "device", deviceID, "err", err)
 	}
-	m.stateMu.Lock()
+	stateMu.Lock()
 	if !m.ShouldRun(deviceID, epoch) || m.Active(deviceID) || m.Starting(deviceID) {
-		m.stateMu.Unlock()
+		stateMu.Unlock()
 		return true
 	}
 	if adapter := m.hostAdapter(); adapter != nil {
 		adapter.RestoreSMSMode(deviceID)
 	}
-	m.stateMu.Unlock()
+	stateMu.Unlock()
 	if controlledReauth {
 		logger.Info("VoWiFi IKE 重鉴权旧实例已释放，立即请求新运行时", "device", deviceID)
 		m.requestRuntimeRecycle(deviceID, ikeReauthenticationReason)

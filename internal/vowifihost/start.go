@@ -16,14 +16,16 @@ func (m *Manager) BeginStart(deviceID string) StartClaim {
 	if deviceID == "" {
 		return StartClaim{}
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	return m.RuntimeStore().BeginStart(deviceID)
 }
 
 func (m *Manager) beginRuntimeStart(ctx context.Context, deviceID string) (StartClaim, error) {
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return StartClaim{}, err
 	}
@@ -42,8 +44,9 @@ func (m *Manager) FailStart(deviceID string, epoch uint64, state runtimehost.Sta
 	if deviceID == "" {
 		return
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if !m.ShouldRun(deviceID, epoch) {
 		return
 	}
@@ -75,8 +78,9 @@ func (m *Manager) ClaimStarted(deviceID string, epoch uint64, inst *runtimehost.
 	if deviceID == "" {
 		return false
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	current := m.CurrentEpoch(deviceID)
 	if current != epoch {
 		logger.Info("丢弃过期 VoWiFi 启动结果",

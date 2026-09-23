@@ -12,7 +12,8 @@ import (
 )
 
 type Manager struct {
-	stateMu        sync.Mutex // Serializes epoch-scoped state and host effects with invalidation.
+	stateLocksMu   sync.Mutex
+	stateLocks     map[string]*sync.Mutex
 	runtimeStore   RuntimeStore
 	stateHub       *StateHub
 	recoverStore   *DesiredRecoverStore

@@ -28,13 +28,12 @@ type Options struct {
 }
 
 type Controller struct {
-	options     Options
-	mu          sync.Mutex
-	devices     map[string]*device
-	incoming    []func(voicehost.IncomingCall)
-	events      []func(voicehost.CallEvent)
-	pending     []notification
-	dispatching bool
+	options       Options
+	mu            sync.Mutex
+	devices       map[string]*device
+	incoming      []func(voicehost.IncomingCall)
+	events        []func(voicehost.CallEvent)
+	notifications map[string]*notificationQueue
 }
 
 type device struct {

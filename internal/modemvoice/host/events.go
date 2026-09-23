@@ -2,11 +2,15 @@ package host
 
 import "github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 
-// Notifications are queued in call order and delivered outside device locks.
-// Phone callbacks may synchronously query or reject the same call.
+// Notifications are ordered per device and delivered outside device locks.
+// A callback may synchronously query/reject a call without blocking other devices.
 type notification struct {
 	incoming *voicehost.IncomingCall
 	event    voicehost.CallEvent
+}
+
+type notificationQueue struct {
+	pending []notification
 }
 
 func (c *Controller) SubscribeIncomingCalls(fn func(voicehost.IncomingCall)) func() {
@@ -26,26 +30,35 @@ func (c *Controller) SubscribeCallEvents(fn func(voicehost.CallEvent)) func() {
 }
 
 func (c *Controller) publish(n notification) {
-	c.mu.Lock()
-	c.pending = append(c.pending, n)
-	if !c.dispatching {
-		c.dispatching = true
-		go c.dispatch()
+	deviceID := n.event.DeviceID
+	if n.incoming != nil {
+		deviceID = n.incoming.DeviceID
 	}
-	c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.notifications == nil {
+		c.notifications = make(map[string]*notificationQueue)
+	}
+	queue := c.notifications[deviceID]
+	if queue == nil {
+		queue = &notificationQueue{}
+		c.notifications[deviceID] = queue
+		go c.dispatch(deviceID, queue)
+	}
+	queue.pending = append(queue.pending, n)
 }
 
-func (c *Controller) dispatch() {
+func (c *Controller) dispatch(deviceID string, queue *notificationQueue) {
 	for {
 		c.mu.Lock()
-		if len(c.pending) == 0 {
-			c.dispatching = false
+		if len(queue.pending) == 0 {
+			delete(c.notifications, deviceID)
 			c.mu.Unlock()
 			return
 		}
-		n := c.pending[0]
-		c.pending[0] = notification{}
-		c.pending = c.pending[1:]
+		n := queue.pending[0]
+		queue.pending[0] = notification{}
+		queue.pending = queue.pending[1:]
 		incoming := append([]func(voicehost.IncomingCall){}, c.incoming...)
 		events := append([]func(voicehost.CallEvent){}, c.events...)
 		c.mu.Unlock()

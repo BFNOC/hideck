@@ -47,8 +47,9 @@ func (m *Manager) ScheduleDesiredRecover(ctx context.Context, req DesiredRecover
 	if now.IsZero() {
 		now = time.Now()
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if !m.DesiredRecoverable(deviceID) {
 		return false
 	}
@@ -78,8 +79,9 @@ func (m *Manager) runDesiredRecover(ctx context.Context, req DesiredRecoverReque
 		DeviceID: req.DeviceID, Reason: req.Reason,
 		OverrideEPDG: req.OverrideEPDG, Generation: req.Generation,
 	})
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(req.DeviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if m.CurrentLifecycleGeneration(req.DeviceID) != req.Generation {
 		return
 	}

@@ -126,13 +126,14 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 	}
 	initialState := preparedStart.StartupState
 	m.RecordStartupStateForEpoch(deviceID, startupEpoch, initialState)
-	m.stateMu.Lock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
 	if startCtx.Err() != nil || !m.ShouldRun(deviceID, startupEpoch) {
-		m.stateMu.Unlock()
+		stateMu.Unlock()
 		return context.Canceled
 	}
 	beforeStart := m.BeforeStart(deviceID, modemIface, preparedStart.Proxy)
-	m.stateMu.Unlock()
+	stateMu.Unlock()
 
 	result, err := m.StartRuntime(startCtx, RuntimeStartRequest{
 		DeviceID:      deviceID,

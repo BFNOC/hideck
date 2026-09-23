@@ -99,8 +99,9 @@ func (m *Manager) InvalidateRuntime(deviceID, reason string) uint64 {
 	if m == nil || strings.TrimSpace(deviceID) == "" {
 		return 0
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	m.lifecycleController().Invalidate(deviceID)
 	m.ClearDesiredRecoverState(deviceID)
 	return m.invalidateRuntimeStateLocked(deviceID, reason)
@@ -108,8 +109,9 @@ func (m *Manager) InvalidateRuntime(deviceID, reason string) uint64 {
 
 // Internal teardown must not cancel its own lifecycle command.
 func (m *Manager) invalidateRuntimeState(deviceID, reason string) uint64 {
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	return m.invalidateRuntimeStateLocked(deviceID, reason)
 }
 

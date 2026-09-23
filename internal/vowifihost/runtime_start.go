@@ -57,8 +57,9 @@ func (m *Manager) runtimeStarter() runtimeStartFunc {
 
 func (m *Manager) runtimeStateObserver(deviceID string, epoch uint64, readiness *runtimeReadinessTracker) runtimehost.Observer {
 	return runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
-		m.stateMu.Lock()
-		defer m.stateMu.Unlock()
+		stateMu := m.stateLock(deviceID)
+		stateMu.Lock()
+		defer stateMu.Unlock()
 		if !m.ShouldRun(deviceID, epoch) {
 			return
 		}
@@ -143,8 +144,9 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		cancel()
 		return RuntimeStartResult{Instance: inst, Stale: true}, nil
 	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
+	stateMu := m.stateLock(deviceID)
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if !m.ShouldRun(deviceID, req.Epoch) || !m.IsCurrentInstance(deviceID, inst) {
 		return RuntimeStartResult{Instance: inst, Stale: true}, nil
 	}
