@@ -519,6 +519,8 @@ export type UpstreamProxy = {
 }
 
 export type UpstreamProxyProbeResult = {
+  checked_at?: string
+  egress?: UpstreamProxyEgressProbe
   proxy_addr: string
   stage: string
   reachable: boolean
@@ -531,6 +533,15 @@ export type UpstreamProxyProbeResult = {
   duration_ms: number
   diagnosis?: string
   hint?: string
+  error?: string
+}
+
+export type UpstreamProxyEgressProbe = {
+  source: string
+  checked_at: string
+  reachable: boolean
+  ip?: string
+  country_code?: string
   error?: string
 }
 
