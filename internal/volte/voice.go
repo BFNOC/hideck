@@ -86,7 +86,9 @@ func (c *Controller) attachVoice(deviceID string) {
 	c.mu.Unlock()
 	if first {
 		_ = c.host.OnVoiceStatus(deviceID, func(info *qmi.VoiceAllCallInfo) {
-			if !c.generationLive(deviceID, gen) {
+			s.events.Lock()
+			defer s.events.Unlock()
+			if !c.sessionGenerationLive(deviceID, s, gen) {
 				return
 			}
 			c.handleVoiceInfo(deviceID, vs, info)
@@ -102,21 +104,28 @@ func (c *Controller) ReconcileCalls(ctx context.Context, deviceID string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	info, err := c.host.VOICEGetAllCallInfo(ctx, deviceID)
-	if err != nil {
-		return
-	}
 	c.mu.Lock()
 	s := c.sess[deviceID]
 	var vs *voiceSession
+	var gen uint64
 	if s != nil {
 		if s.voice == nil {
 			s.voice = newVoiceSession()
 		}
 		vs = s.voice
+		gen = s.gen
 	}
 	c.mu.Unlock()
 	if vs == nil {
+		return
+	}
+	info, err := c.host.VOICEGetAllCallInfo(ctx, deviceID)
+	if err != nil {
+		return
+	}
+	s.events.Lock()
+	defer s.events.Unlock()
+	if !c.sessionGenerationLive(deviceID, s, gen) {
 		return
 	}
 	c.handleVoiceInfo(deviceID, vs, info)

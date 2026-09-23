@@ -74,11 +74,15 @@ func (p *Pool) waitRadioRecoveryReady(deviceID string, timeout time.Duration) er
 }
 
 func (p *Pool) waitQMICoreReady(deviceID string, timeout time.Duration) error {
+	return p.waitQMICoreReadyContext(p.ctx, deviceID, timeout)
+}
+
+func (p *Pool) waitQMICoreReadyContext(ctx context.Context, deviceID string, timeout time.Duration) error {
 	w := p.GetWorker(deviceID)
 	if w == nil {
 		return fmt.Errorf("设备 %s 不存在", deviceID)
 	}
-	waitCtx, cancel := context.WithTimeout(p.ctx, timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	if b, ok := w.Backend.(interface {

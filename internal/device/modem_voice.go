@@ -77,6 +77,7 @@ func (p *Pool) reconcileModemVoice(w *Worker) error {
 }
 
 func (p *Pool) stopNativeVoLTEForModemVoice(id string) error {
+	p.cancelNativeVoLTEStart(id)
 	if p.volteCtl == nil {
 		return nil
 	}

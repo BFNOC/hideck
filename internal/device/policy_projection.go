@@ -107,6 +107,15 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	}
 	// Finish the old call before projecting a policy that disallows new calls.
 	// Failed hangup leaves the current session and policy available for retry.
+	var finishNativeTransition func()
+	if !IsNativeVoLTEMode(pol.PhoneMode) || !pol.VoWiFiEnabled || pol.AirplaneEnabled {
+		finishNativeTransition = p.beginNativeVoLTETransition(worker.ID)
+		defer func() {
+			if finishNativeTransition != nil {
+				finishNativeTransition()
+			}
+		}()
+	}
 	if !IsModemVoiceMode(pol.PhoneMode) || !pol.VoWiFiEnabled || pol.AirplaneEnabled {
 		if err := p.stopModemVoice(worker.ID); err != nil {
 			return policyApplyResult{ICCID: iccid, Reason: "modem_voice_stop_failed", Err: err}
@@ -153,6 +162,11 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		}
 	}
 	if IsNativeVoLTEMode(effective.PhoneMode) && PhoneServiceEnabled(effective) && !effective.AirplaneEnabled {
+		// Carrier policy can project a software IMS mode into native VoLTE.
+		if finishNativeTransition != nil {
+			finishNativeTransition()
+			finishNativeTransition = nil
+		}
 		p.clearDesiredVoWiFiRecoverState(worker.ID)
 		p.scheduleNativeVoLTE(worker.ID, reason)
 	} else {

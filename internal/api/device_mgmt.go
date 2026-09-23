@@ -1632,22 +1632,11 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 }
 
 func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
-	id := deviceIDParam(c)
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
-		return
-	}
-
+	var abandon func(string) error
 	if s.pool != nil {
-		s.pool.AbandonDevice(id)
+		abandon = s.pool.AbandonDevice
 	}
-
-	if err := config.DeleteDeviceInFile(s.configPath, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "删除设备配置失败: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	deleteManagedDevice(c, s.configPath, abandon)
 }
 
 type addDeviceRequest struct {
@@ -1697,7 +1686,9 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 		return
 	}
 	if s.pool != nil {
-		s.pool.AbandonDevice(newCfg.ID)
+		if !stopManagedDevice(c, newCfg.ID, s.pool.AbandonDevice) {
+			return
+		}
 	}
 	if conflict := detectDeviceBindingConflict(newCfg, ""); conflict != nil {
 		c.JSON(http.StatusConflict, gin.H{

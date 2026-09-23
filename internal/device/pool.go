@@ -202,14 +202,15 @@ type Pool struct {
 	inboundSMSHandlers        []InboundSMSHandler
 	rescanAndReconnectForTest func() error
 
-	voiceGateway          *voicehost.Gateway
-	volteCtl              *volte.Controller
-	modemVoiceCtl         *modemvoicehost.Controller
-	nativeVoLTEScheduleMu sync.Mutex
-	nativeVoLTEScheduled  map[string]struct{}
-	atPortMu              sync.Mutex
-	atPortLocks           map[string]chan struct{}
-	openATSession         func(string) (atSerialSession, error)
+	voiceGateway           *voicehost.Gateway
+	volteCtl               *volte.Controller
+	modemVoiceCtl          *modemvoicehost.Controller
+	nativeVoLTEScheduleMu  sync.Mutex
+	nativeVoLTEScheduled   map[string]*nativeVoLTEStart
+	nativeVoLTETransitions map[string]*nativeVoLTETransition
+	atPortMu               sync.Mutex
+	atPortLocks            map[string]chan struct{}
+	openATSession          func(string) (atSerialSession, error)
 
 	// VoWiFi host 侧整合（多实例）
 	vowifiHost         *vowifihost.Manager
@@ -373,6 +374,7 @@ func (p *Pool) removeWorkerRegistrationIfCurrent(worker *Worker) {
 		delete(p.workers, worker.ID)
 	}
 	p.mu.Unlock()
+	p.cancelNativeVoLTEWorkerStart(worker)
 }
 
 func (w *Worker) IncStreamSub() {
@@ -1148,21 +1150,24 @@ func (p *Pool) ForceRebuildingForTest(deviceID string) {
 
 // AbandonDevice 作废该设备的恢复/启动并拆掉 Worker。
 // 必须真正取消恢复 goroutine，否则删后重加同一 ID 会被旧循环拆掉。
-func (p *Pool) AbandonDevice(deviceID string) {
+func (p *Pool) AbandonDevice(deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if p == nil || deviceID == "" {
-		return
+		return nil
 	}
 	p.abandonModemRebootRecovery(deviceID)
 	p.mu.Lock()
 	p.beginRebuildAttemptLocked(deviceID)
 	delete(p.rebuilding, deviceID)
 	p.mu.Unlock()
-	if err := p.RemoveWorker(deviceID); err != nil && !strings.Contains(err.Error(), "设备未找到") {
-		logger.Warn("删除设备时停止 Worker 失败", "device", deviceID, "err", err)
+	if err := p.RemoveWorker(deviceID); err != nil && !errors.Is(err, ErrWorkerNotFound) {
+		return err
 	}
 	p.forgetRuntimeQMIAttachment(deviceID)
+	return nil
 }
+
+var ErrWorkerNotFound = errors.New("设备未找到")
 
 func (p *Pool) RemoveWorker(deviceID string) error {
 	if err := p.stopModemVoice(deviceID); err != nil {
@@ -1186,7 +1191,14 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 		return p.RemoveWorker(deviceID)
 	}
 	if worker == nil {
-		return fmt.Errorf("设备未找到")
+		return ErrWorkerNotFound
+	}
+	p.cancelNativeVoLTEWorkerStart(worker)
+	// Retire only local native state: the old QMI transport is stopped below.
+	// No ID-based modem I/O may reach a replacement Worker during teardown.
+	var nativeErr error
+	if p.volteCtl != nil {
+		nativeErr = p.volteCtl.RetireDevice(deviceID)
 	}
 	p.rememberRuntimeQMIAttachment(worker.Config)
 	if !alreadyRebuilding {
@@ -1240,7 +1252,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 			p.lifecycle.MarkOffline(deviceID, "worker_removed")
 		}
 	}
-	return mappingErr
+	return errors.Join(nativeErr, mappingErr)
 }
 
 // qmiWorkerBootstrapDeadline 是 AddWorkerFromConfig 单次执行的硬上限。
