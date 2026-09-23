@@ -127,6 +127,12 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 			return policyApplyResult{ICCID: iccid, Reason: "native_volte_stop_failed", Err: err}
 		}
 	}
+	if worker.Config.PhoneMode != pol.PhoneMode || !pol.VoWiFiEnabled ||
+		(pol.PhoneMode == "cellular" && (pol.AirplaneEnabled || pol.DataStrategy != "always")) {
+		if err := p.StopSoftwareIMS(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "software_ims_stop_failed", Err: err}
+		}
+	}
 	if err := applyPolicyToWorker(worker, pol); err != nil {
 		logger.Warn("投影卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
 		return policyApplyResult{ICCID: iccid, Reason: "apply_failed", Err: err}

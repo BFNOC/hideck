@@ -2,6 +2,7 @@ package vowifihost
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost"
@@ -11,6 +12,7 @@ import (
 )
 
 type Manager struct {
+	stateMu        sync.Mutex // Serializes epoch-scoped state and host effects with invalidation.
 	runtimeStore   RuntimeStore
 	stateHub       *StateHub
 	recoverStore   *DesiredRecoverStore

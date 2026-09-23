@@ -173,7 +173,8 @@ func (p *Pool) StopSoftwareIMS(deviceID string) error {
 	if p == nil {
 		return nil
 	}
-	if !p.IsVoWiFiActive(deviceID) && p.GetVoWiFiAppForDevice(deviceID) == nil {
+	if !p.IsVoWiFiActive(deviceID) && !p.voWiFiHost().Starting(deviceID) {
+		p.voWiFiHost().InvalidateRuntime(deviceID, "native_phone")
 		return nil
 	}
 	return p.voWiFiHost().Disable(p.Context(), deviceID, "native_volte", true)

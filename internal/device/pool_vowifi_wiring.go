@@ -66,7 +66,8 @@ func (p *Pool) StopVoWiFiRuntimeForCellularIdle(deviceID string) error {
 		return nil
 	}
 	p.clearDesiredVoWiFiRecoverState(deviceID)
-	if !p.IsVoWiFiActive(deviceID) && p.GetVoWiFiAppForDevice(deviceID) == nil {
+	if !p.IsVoWiFiActive(deviceID) && !p.voWiFiHost().Starting(deviceID) {
+		p.voWiFiHost().InvalidateRuntime(deviceID, "cellular_on_demand_idle")
 		return nil
 	}
 	return p.voWiFiHost().Disable(p.ctx, deviceID, "cellular_on_demand_idle", true)

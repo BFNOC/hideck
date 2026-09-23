@@ -1173,6 +1173,10 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	if err := p.stopModemVoice(deviceID); err != nil {
 		return err
 	}
+	// Cancel and drain startup before removing the hardware it still owns.
+	if err := p.voWiFiHost().Disable(p.ctx, deviceID, "remove_worker", false); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	worker := p.workers[deviceID]
 	alreadyRebuilding := p.rebuilding[deviceID]
@@ -1207,12 +1211,6 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 			delete(p.rebuilding, deviceID)
 			p.mu.Unlock()
 		}()
-	}
-
-	// 移除 Worker 时，使当前设备的 VoWiFi 运行态失效，防止未完成的旧启动例程回写状态
-	p.voWiFiHost().InvalidateRuntime(deviceID, "remove_worker")
-	if p.stopVoWiFiAppForTeardown(p.ctx, deviceID, "remove") {
-		logger.Info("设备移除时强制关闭并清理残留的 VoWiFi 实例", "device", deviceID)
 	}
 
 	worker.stopOnce.Do(func() {

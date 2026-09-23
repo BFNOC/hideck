@@ -192,7 +192,7 @@ func (p *Pool) RestartVoWiFiForICCID(iccid string) error {
 	}
 	var deviceIDs []string
 	for _, w := range p.GetAllWorkers() {
-		if w == nil || !w.Config.VoWiFiEnabled {
+		if w == nil || !w.Config.VoWiFiEnabled || UsesModemPhoneControl(w.Config.PhoneMode) {
 			continue
 		}
 		if db.CanonicalICCID(w.CurrentICCID()) != iccid {
