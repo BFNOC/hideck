@@ -3,6 +3,7 @@ package modemvoice
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 func (s *Session) Dial(ctx context.Context, number string) (Update, error) {
@@ -83,8 +84,17 @@ func containsCallID(calls []TrackedCall, id string) bool {
 }
 
 func (s *Session) execute(ctx context.Context, command string, update Update) (Update, error) {
+	return s.executeCommand(ctx, sessionCommand{text: command, timeout: callCommandTimeout}, update)
+}
+
+type sessionCommand struct {
+	text    string
+	timeout time.Duration
+}
+
+func (s *Session) executeCommand(ctx context.Context, command sessionCommand, update Update) (Update, error) {
 	update.Attempted = true
-	_, err := s.port.ExecuteATContext(ctx, command, callCommandTimeout)
+	_, err := s.port.ExecuteATContext(ctx, command.text, command.timeout)
 	update.Accepted = err == nil
 	// Even a timed-out dial may have created a call; wake a fresh poll, never
 	// redial automatically or manufacture an ended/connected state here.

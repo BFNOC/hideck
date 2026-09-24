@@ -163,9 +163,6 @@ func (c *Controller) RejectIncomingCall(req voicehost.RejectRequest) error {
 	return c.HangupCall(ctx, req.DeviceID, req.CallID)
 }
 
-func (c *Controller) SendCallDTMF(string, string, string) error {
-	return errors.New("模组直拨暂不支持按键发送")
-}
 func (c *Controller) HoldCall(context.Context, string, string) error {
 	return voicehost.ErrHoldNotAligned
 }

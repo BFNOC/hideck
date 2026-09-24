@@ -25,12 +25,18 @@ import { phoneService } from '../services/phone'
 import { devicesService } from '../services/devices'
 import { usePhoneStore } from '../stores/phone'
 import { usePhoneIdentity } from '../composables/usePhoneIdentity'
+import { usePhoneDeviceSelection } from '../composables/usePhoneDeviceSelection'
 import { phoneContactsService } from '../services/phone-contacts'
 import { dialNumberError, formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
 const phone = usePhoneStore()
 const identities = usePhoneIdentity()
-const selectedDevice = ref('')
+const { selectedDevice, rememberDevice } = usePhoneDeviceSelection({
+  devices: () => phone.devices,
+  isReady: isDeviceReady,
+  storage: () => window.localStorage,
+  onStorageError: () => ElMessage.warning('无法保存或读取拨号设备，请检查浏览器存储权限')
+})
 const callee = ref('')
 const action = ref('')
 const keypadVisible = ref(false)
@@ -51,7 +57,6 @@ const canPlaceCall = computed(() => !!callee.value && !calleeError.value
   && !!selected.value
   && (isDeviceReady(selected.value) || selected.value.phone_mode === 'cellular' || selected.value.phone_mode === 'volte')
   && !isDeviceBusy(selected.value))
-watch(() => phone.devices, (devices) => selectFirstAvailableDevice(devices), { immediate: true })
 watch(call, (current) => {
   if (!current || current.status !== 'connected') keypadVisible.value = false
   if (current?.peer) void identities.resolve(current.peer, current.device_id)
@@ -85,11 +90,6 @@ const statusTimer = window.setInterval(async () => {
   } finally { statusPending = false }
 }, 2_000)
 onUnmounted(() => { window.clearInterval(statusTimer); statusAbort.abort() })
-
-function selectFirstAvailableDevice(devices: PhoneDevice[]) {
-  if (devices.some((device) => device.id === selectedDevice.value)) return
-  selectedDevice.value = devices.find((device) => isDeviceReady(device))?.id || devices[0]?.id || ''
-}
 
 function isDeviceReady(device: PhoneDevice) {
   if (device.phone_mode === 'volte') {
@@ -433,6 +433,7 @@ async function sendDTMF(digit: string) {
               placeholder="选择语音设备"
               :disabled="!!call"
               popper-class="phone-device-dropdown"
+              @change="rememberDevice"
             >
               <el-option v-if="!phone.devices.length" label="无可用设备" value="" />
               <el-option
@@ -471,8 +472,7 @@ async function sendDTMF(digit: string) {
                   : '会正常驻网，待机不走流量。打蜂窝电话会临时打开数据。' }}
               </p>
               <div v-if="selectedMode === 'modem_voice'" class="phone-mode-hint" role="status" aria-live="polite">
-                <p>通过模组驻网通话和 USB 音频连接网页。目前适配 Linux 上的 QDC507GLEFM21，需要 ADB 和 alsa-utils；首次启用会下载固定版本的语音运行时。</p>
-                <p>{{ deviceStatus(selected) }}</p>
+                <p>使用 SIM 卡拨打和接听，声音通过网页传输。接通后可用键盘按键。</p>
                 <el-button v-if="selected?.voice.phase === 'failed'" :loading="modePending" :disabled="!!call" @click="void changePhoneMode('modem_voice')">重新准备</el-button>
               </div>
               <p v-if="selectedMode === 'volte'" class="phone-mode-hint">
@@ -619,7 +619,7 @@ async function sendDTMF(digit: string) {
 
             <div v-if="connected && keypadVisible" class="active-keypad">
               <p aria-live="polite">发送 DTMF{{ lastDTMF ? `：${lastDTMF}` : '' }}</p>
-              <PhoneDialPad :disabled="!!action || callEnding" @digit="appendDigit" />
+              <PhoneDialPad :disabled="!!action || !phone.canSendDTMF" @digit="appendDigit" />
             </div>
 
             <div class="call-controls" aria-label="通话控制">
@@ -653,7 +653,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="callEnding || !connected || modemCall"
+                :disabled="!phone.canSendDTMF"
                 :aria-pressed="keypadVisible"
                 @click="keypadVisible = !keypadVisible"
               >

@@ -16,6 +16,14 @@ const shell = await readFile(new URL('../src/layouts/AuthenticatedShell.vue', im
 const router = await readFile(new URL('../src/router/index.ts', import.meta.url), 'utf8')
 const zhCN = await readFile(new URL('../src/i18n/zh-CN.ts', import.meta.url), 'utf8')
 
+test('dialer remembers explicit device choices and keeps modem help concise', () => {
+  assert.match(phoneView, /usePhoneDeviceSelection\(\{/)
+  assert.match(phoneView, /@change="rememberDevice"/)
+  assert.match(phoneView, /接通后可用键盘按键/)
+  assert.doesNotMatch(phoneView, /目前适配 Linux|首次启用会下载|<p>\{\{ deviceStatus\(selected\) \}\}<\/p>/)
+  assert.match(phoneView, /重新准备/)
+})
+
 test('phone route and navigation remain available outside the phone page', () => {
   assert.match(router, /path: '\/phone'/)
   assert.match(shell, /<PhoneCallBar\s*\/>/)
@@ -34,7 +42,7 @@ test('dial pad is an explicit fixed 3 by 4 control with accessible buttons', () 
   }
   assert.match(dialPad, /v-if="allowPlus"[\s\S]*@click="\$emit\('digit', '\+'\)"/)
   assert.match(phoneView, /<PhoneDialPad allow-plus :plus-disabled="!!callee" @digit="appendDigit"/)
-  assert.match(phoneView, /<PhoneDialPad :disabled="!!action \|\| callEnding" @digit="appendDigit"/)
+  assert.match(phoneView, /<PhoneDialPad :disabled="!!action \|\| !phone\.canSendDTMF" @digit="appendDigit"/)
 })
 
 test('dialer offers the selected SIM calling code without forcing it onto local or short numbers', () => {

@@ -64,6 +64,11 @@ export const usePhoneStore = defineStore('phone', {
     isCallEnding(state) {
       return (callId: string) => state.endingCallIds.includes(callId)
     },
+    canSendDTMF(): boolean {
+      const call = this.currentCall
+      return !!call && call.status === 'connected' && !call.held && !call.read_only
+        && !this.isCallEnding(call.call_id)
+    },
     mediaReady(state) {
       return state.mediaState === 'connecting' || state.mediaState === 'connected'
     },
@@ -238,6 +243,7 @@ export const usePhoneStore = defineStore('phone', {
     async sendDTMF(digit: string) {
       const call = this.currentCall
       if (!call) throw new Error('当前没有活动电话')
+      if (!this.canSendDTMF) throw new Error('当前通话不可发送按键，请确认通话已接通且由本页面控制')
       await phoneService.dtmf(call.call_id, digit, this.lease)
     },
 
