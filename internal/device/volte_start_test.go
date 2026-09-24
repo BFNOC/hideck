@@ -45,7 +45,7 @@ func (*nativeStartEffectHost) AudioDevice(string) string      { return "" }
 func (*nativeStartEffectHost) ReleaseIMSClients(string) error { return nil }
 
 func TestNativeStartCanceledDuringReadinessCannotOutliveHandoff(t *testing.T) {
-	p, port := testModemVoicePort(t)
+	p, port := testPhoneWorker(t)
 	port.worker.Config.PhoneMode = PhoneModeVoLTE
 	b := &pendingNativeReadiness{entered: make(chan struct{}), release: make(chan struct{})}
 	port.worker.Backend = b
@@ -58,10 +58,8 @@ func TestNativeStartCanceledDuringReadinessCannotOutliveHandoff(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("startup did not reach readiness wait")
 	}
-	if err := p.stopNativeVoLTEForModemVoice(port.worker.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := applyPolicyToWorker(port.worker, cardpolicy.Policy{PhoneMode: PhoneModeModemVoice, VoWiFiEnabled: true}); err != nil {
+	p.stopNativeVoLTE(port.worker.ID, "test_handoff")
+	if err := applyPolicyToWorker(port.worker, cardpolicy.Policy{PhoneMode: PhoneModeCellular, VoWiFiEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	// Readiness must stop without waiting for the backend to become ready.
@@ -79,7 +77,7 @@ func TestNativeStartCanceledDuringReadinessCannotOutliveHandoff(t *testing.T) {
 }
 
 func TestNativeStartOldCompletionCannotRemoveReplacement(t *testing.T) {
-	p, port := testModemVoicePort(t)
+	p, port := testPhoneWorker(t)
 	old := p.beginNativeVoLTESchedule(port.worker.ID)
 	finish := p.beginNativeVoLTETransition(port.worker.ID)
 	if old.ctx.Err() != context.Canceled {
@@ -109,7 +107,7 @@ func TestNativeStartOldCompletionCannotRemoveReplacement(t *testing.T) {
 func TestNativeStartRechecksOwnershipBeforeProvisioning(t *testing.T) {
 	for _, changed := range []string{"mode", "airplane", "disabled", "sim", "worker", "rf_lock"} {
 		t.Run(changed, func(t *testing.T) {
-			p, port := testModemVoicePort(t)
+			p, port := testPhoneWorker(t)
 			port.worker.Config.PhoneMode = PhoneModeVoLTE
 			start := p.beginNativeVoLTESchedule(port.worker.ID)
 			defer p.endNativeVoLTESchedule(port.worker.ID, start)
@@ -118,7 +116,7 @@ func TestNativeStartRechecksOwnershipBeforeProvisioning(t *testing.T) {
 			}
 			switch changed {
 			case "mode":
-				port.worker.Config.PhoneMode = PhoneModeModemVoice
+				port.worker.Config.PhoneMode = PhoneModeCellular
 			case "airplane":
 				port.worker.Config.AirplaneEnabled = true
 			case "disabled":

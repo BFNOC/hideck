@@ -33,7 +33,6 @@ const focusMeta = computed(() => {
 const focusDetail = computed(() => {
   if (!props.device) return t('dashboard.addDeviceFirst')
   if (!props.device.healthy) return t('dashboard.deviceOffline')
-  if (props.device.phone_mode === 'modem_voice') return presentation.value?.connectionDetail
   if (presentation.value?.connectionKind === 'volte') {
     return t('dashboard.viaVolte')
   }
@@ -85,7 +84,7 @@ function stageStatusLabel(ready: boolean | undefined): string {
         class="connection-path"
         :class="{ 'is-flowing': pathIsFlowing }"
         :style="{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }"
-        aria-label="通话服务链路"
+        :aria-label="presentation?.connectionKind === 'volte' ? t('dashboard.voltePath') : t('dashboard.vowifiPath')"
       >
         <div class="connection-path-track" aria-hidden="true">
           <span class="connection-signal" />
@@ -116,7 +115,7 @@ function stageStatusLabel(ready: boolean | undefined): string {
 
     <aside class="connection-stage-aside" :aria-label="t('dashboard.networkFacts')">
       <WiFiCallingHealth
-        v-if="device?.vowifi_health && presentation?.connectionKind !== 'volte' && device?.phone_mode !== 'modem_voice'"
+        v-if="device?.vowifi_health && presentation?.connectionKind !== 'volte'"
         :health="device.vowifi_health"
         mode="summary"
       />

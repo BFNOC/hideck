@@ -44,27 +44,6 @@ container image rollout.
 UPX compression is disabled by default in `Dockerfile.github` to keep produced
 binaries easier to inspect.
 
-## Optional QDC507 voice runtime
-
-The experimental `internal/modemvoice/qdc507` adapter can verify a local runtime
-bundle or explicitly download it into a versioned cache. These runtime binaries
-are not embedded in the Go executable or copied into the Docker images.
-
-- Upstream: https://github.com/moluncn/mavo
-- Pinned revision: `0443dfdaf8aec086fd76ba2ee9152fd908114524`
-- Runtime directory: `Resources/ModuleVoice`
-- Runtime version: `qdc507-3.18.44-voice-20260712.5`
-- Verified files include the upstream `COPYING-GPL-2.0` and `MODULE-REPORT.md`.
-- `mavo-pcm-bridge.armv7` is supplied by the MIT-licensed MaVo project; the kernel
-  objects `qdc507_aprv3.ko` and `qdc507_voice.ko` advertise GPL v2 module metadata.
-
-The repository records fixed sizes and SHA-256 hashes for the selected artifacts.
-The report bundled upstream describes an older runtime revision in places; the
-pinned artifact list, not that prose, determines which modules are loaded.
-Any future redistribution of these binary artifacts must separately address
-their corresponding source and applicable notices. This experimental downloader
-does not establish that a public combined runtime distribution is ready.
-
 ## License compatibility note
 
 The root project license and the included AGPL-3.0 VoWiFi implementation carry

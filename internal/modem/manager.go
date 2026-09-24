@@ -141,10 +141,8 @@ type Manager struct {
 	ussdChan chan USSDResult
 
 	// RDY 事件订阅（模组重启后广播）
-	rdyMu        sync.Mutex
-	rdySubs      []chan struct{}
-	voiceURCMu   sync.Mutex
-	voiceURCSubs map[chan struct{}]struct{}
+	rdyMu   sync.Mutex
+	rdySubs []chan struct{}
 
 	// APDU 仲裁（设备级全局）
 	apduArbiter  *apduarbiter.Arbiter
@@ -623,7 +621,6 @@ func (m *Manager) Stop() {
 	m.stopOnce.Do(func() {
 		m.releaseAllAPDULeases("stop")
 		close(m.stop)
-		m.closeVoiceChanges()
 		if m.port != nil {
 			m.port.Close()
 		}
@@ -1388,7 +1385,6 @@ func (m *Manager) handleURC(line string) {
 	if s == "" {
 		return
 	}
-	m.notifyVoiceURC(s)
 
 	fr := m.formatURC(s)
 	msg := fmt.Sprintf("[%s] %s", m.cfg.ID, fr.Msg)

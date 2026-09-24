@@ -83,10 +83,6 @@ func (p *Pool) ShouldRouteSMSViaVoWiFi(deviceID string) bool {
 	if p == nil {
 		return false
 	}
-	// An old IMS runtime may still be tearing down during a mode switch.
-	if w := p.GetWorker(deviceID); w != nil && IsModemVoiceMode(w.Config.PhoneMode) {
-		return false
-	}
 	if p.IsVoWiFiActive(deviceID) {
 		return true
 	}

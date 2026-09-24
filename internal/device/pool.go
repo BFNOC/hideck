@@ -22,7 +22,6 @@ import (
 	"github.com/yibaiba/hideck/internal/esim"
 	mbimcore "github.com/yibaiba/hideck/internal/mbim"
 	"github.com/yibaiba/hideck/internal/modem"
-	modemvoicehost "github.com/yibaiba/hideck/internal/modemvoice/host"
 	"github.com/yibaiba/hideck/internal/pcsc"
 	"github.com/yibaiba/hideck/internal/proxy/server"
 	qmicore "github.com/yibaiba/hideck/internal/qmi"
@@ -207,7 +206,6 @@ type Pool struct {
 
 	voiceGateway           *voicehost.Gateway
 	volteCtl               *volte.Controller
-	modemVoiceCtl          *modemvoicehost.Controller
 	nativeVoLTEScheduleMu  sync.Mutex
 	nativeVoLTEScheduled   map[string]*nativeVoLTEStart
 	nativeVoLTETransitions map[string]*nativeVoLTETransition
@@ -302,7 +300,6 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 	p.voWiFiHost().ConfigureRuntimeRecycleHandler(p.handleVoWiFiRuntimeRecycle)
 	p.voWiFiHost().ConfigureRuntimeDependencies(p.GetVoiceGateway(), vowifiDeliveryStore{}, poolVoWiFiRuntimeDispatcher{pool: p})
 	p.volteCtl = volte.NewController(p)
-	p.modemVoiceCtl = p.newModemVoiceController()
 
 	return p
 }
@@ -1203,9 +1200,6 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 }
 
 func (p *Pool) removeWorkerForPolicyTransition(deviceID string) error {
-	if err := p.stopModemVoice(deviceID); err != nil {
-		return err
-	}
 	// Cancel and drain startup before removing the hardware it still owns.
 	if err := p.voWiFiHost().Disable(p.ctx, deviceID, "remove_worker", false); err != nil {
 		return err
@@ -2520,13 +2514,7 @@ func (p *Pool) ShutdownContext(ctx context.Context) error {
 		_ = p.stopVoWiFiAppForTeardown(ctx, devID, "shutdown")
 	}
 
-	var voiceErr error
-	if p.modemVoiceCtl != nil {
-		for _, worker := range p.GetAllWorkers() {
-			voiceErr = errors.Join(voiceErr, p.modemVoiceCtl.Disable(ctx, worker.ID))
-		}
-	}
-	mappingErr := errors.Join(voiceErr, p.removeAllDynamicInterfaceMappings(ctx))
+	mappingErr := p.removeAllDynamicInterfaceMappings(ctx)
 	p.mu.RLock()
 	for _, w := range p.workers {
 		w.stopOnce.Do(func() {

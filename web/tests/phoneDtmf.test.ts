@@ -5,11 +5,11 @@ import { phoneService, type PhoneCall } from '../src/services/phone'
 import { usePhoneStore } from '../src/stores/phone'
 
 function connectedCall(): PhoneCall {
-  return { call_id: 'modemvoice-test', device_id: 'wwan1', direction: 'outbound',
+  return { call_id: 'volte-test', device_id: 'wwan1', direction: 'outbound',
     peer: '10010', status: 'connected', media_id: 'media', started_at: '', read_only: false }
 }
 
-test('modem voice and IMS use the same DTMF API without requiring microphone audio', async () => {
+test('native VoLTE and IMS use the same DTMF API without requiring microphone audio', async () => {
   const original = phoneService.dtmf
   const sent: unknown[] = []
   phoneService.dtmf = async (...args) => { sent.push(args) }
@@ -19,7 +19,7 @@ test('modem voice and IMS use the same DTMF API without requiring microphone aud
     store.mediaId = 'media'
     store.lease = 'lease'
     store.mediaMode = 'listen-only'
-    for (const id of ['modemvoice-test', 'ims-call']) {
+    for (const id of ['volte-test', 'ims-call']) {
       store.calls = [{ ...connectedCall(), call_id: id }]
       assert.equal(store.canSendDTMF, true)
       await store.sendDTMF('#')
@@ -45,7 +45,7 @@ test('DTMF is disabled for ringing, held, read-only, ending and missing calls', 
       await assert.rejects(store.sendDTMF('1'))
     }
     store.calls = [connectedCall()]
-    store.endingCallIds = ['modemvoice-test']
+    store.endingCallIds = ['volte-test']
     assert.equal(store.canSendDTMF, false)
     await assert.rejects(store.sendDTMF('1'))
     store.calls = []

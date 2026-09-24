@@ -1,7 +1,6 @@
 package device
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
@@ -9,23 +8,11 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 )
 
-var ErrModemVoiceSoftwareIMS = errors.New("模组直拨模式不使用软件 IMS")
-
 const (
-	PhoneModeWiFi       = "wifi"
-	PhoneModeCellular   = "cellular"
-	PhoneModeVoLTE      = "volte"
-	PhoneModeModemVoice = "modem_voice"
+	PhoneModeWiFi     = "wifi"
+	PhoneModeCellular = "cellular"
+	PhoneModeVoLTE    = "volte"
 )
-
-func IsModemVoiceMode(mode string) bool {
-	return strings.TrimSpace(mode) == PhoneModeModemVoice
-}
-
-// UsesModemPhoneControl excludes modem-controlled modes from software IMS.
-func UsesModemPhoneControl(mode string) bool {
-	return IsNativeVoLTEMode(mode) || IsModemVoiceMode(mode)
-}
 
 func IsNativeVoLTEMode(mode string) bool {
 	return strings.TrimSpace(mode) == PhoneModeVoLTE
@@ -33,7 +20,7 @@ func IsNativeVoLTEMode(mode string) bool {
 
 func PhoneModeCampsOnCell(mode string) bool {
 	switch strings.TrimSpace(mode) {
-	case PhoneModeCellular, PhoneModeVoLTE, PhoneModeModemVoice:
+	case PhoneModeCellular, PhoneModeVoLTE:
 		return true
 	default:
 		return false
@@ -52,7 +39,7 @@ func cellularAlwaysData(cfg config.DeviceConfig) bool {
 }
 
 // WorkerSoftwareIMSBlocked reports China MCC 460/461, which has no ePDG
-// software IMS path in this stack. Phone service must use modem call control.
+// software IMS path in this stack. Phone service must use native VoLTE.
 func WorkerSoftwareIMSBlocked(w *Worker) bool {
 	if w == nil {
 		return false
@@ -69,7 +56,7 @@ func WorkerSoftwareIMSBlocked(w *Worker) bool {
 }
 
 func forceSoftwareIMSBlockedToVoLTE(w *Worker, pol cardpolicy.Policy) {
-	if w == nil || !PhoneServiceEnabled(w.Config) || !WorkerSoftwareIMSBlocked(w) || IsModemVoiceMode(w.Config.PhoneMode) {
+	if w == nil || !PhoneServiceEnabled(w.Config) || !WorkerSoftwareIMSBlocked(w) {
 		return
 	}
 	w.Config.PhoneMode = PhoneModeVoLTE
@@ -79,8 +66,7 @@ func forceSoftwareIMSBlockedToVoLTE(w *Worker, pol cardpolicy.Policy) {
 }
 
 // applyPhoneRadioPolicy applies RF side-effects of turning phone service on.
-// Camped modes keep RF on; WiFi calling takes the radio. Callers must retain
-// the existing card-specific RF lock checks before applying this projection.
+// Camped modes (cellular, volte) keep RF on; WiFi calling takes the radio.
 func applyPhoneRadioPolicy(cfg *config.DeviceConfig) {
 	if cfg == nil || !PhoneServiceEnabled(*cfg) {
 		return

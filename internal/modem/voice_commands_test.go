@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -74,62 +73,5 @@ func TestVoiceTerminalResponsesCompleteCommand(t *testing.T) {
 	}
 	if isVoiceCommandFailure("AT+CMGS=10", "NO CARRIER") || isVoiceCommandFailure("ATD*99#", "NO CARRIER") {
 		t.Fatal("non-voice transactions changed")
-	}
-}
-
-func TestVoiceWakeupsCoalesceAndUnsubscribe(t *testing.T) {
-	m := newRunningTestManager(t)
-	first, cancel := m.SubscribeVoiceChanges()
-	second, cancelSecond := m.SubscribeVoiceChanges()
-	defer cancelSecond()
-	m.notifyVoiceURC("RING")
-	m.notifyVoiceURC("+CLIP: \"10010\",129")
-	if len(first) != 1 || len(second) != 1 {
-		t.Fatal("each subscriber must get one pending refresh")
-	}
-	<-first
-	<-second
-	cancel()
-	cancel()
-	if _, ok := <-first; ok {
-		t.Fatal("canceled subscription remains open")
-	}
-	m.notifyVoiceURC("+CMTI: \"ME\",1")
-	if len(second) != 0 {
-		t.Fatal("SMS must not generate call state updates")
-	}
-	m.notifyVoiceURC("NO CARRIER")
-	if len(second) != 1 {
-		t.Fatal("other subscribers lost after unsubscribe")
-	}
-}
-
-func TestVoiceSubscribeConcurrentDispatch(t *testing.T) {
-	m := newRunningTestManager(t)
-	var workers sync.WaitGroup
-	for range 8 {
-		workers.Go(func() {
-			for range 100 {
-				_, cancel := m.SubscribeVoiceChanges()
-				m.notifyVoiceURC("RING")
-				cancel()
-			}
-		})
-	}
-	workers.Wait()
-}
-
-func TestVoiceSubscriptionsCloseOnStop(t *testing.T) {
-	m := newRunningTestManager(t)
-	changes, unsubscribe := m.SubscribeVoiceChanges()
-	m.Stop()
-	if _, open := <-changes; open {
-		t.Fatal("subscription remains open after manager stops")
-	}
-	unsubscribe()
-	late, cancel := m.SubscribeVoiceChanges()
-	defer cancel()
-	if _, open := <-late; open {
-		t.Fatal("stopped manager accepted subscription")
 	}
 }

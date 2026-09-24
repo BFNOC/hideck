@@ -596,7 +596,6 @@ func (s *Server) handleListDevices(c *gin.Context) {
 		VoWiFiRuntime    *voWiFiRuntimeDTO                 `json:"vowifi_runtime,omitempty"`
 		VoWiFiHealth     *device.WiFiCallingHealthSnapshot `json:"vowifi_health,omitempty"`
 		NativeVoLTE      *volte.Status                     `json:"native_volte,omitempty"`
-		ModemVoice       map[string]interface{}            `json:"modem_voice,omitempty"`
 		Traffic          map[string]string                 `json:"traffic,omitempty"`
 		NetworkConnected bool                              `json:"network_connected"`
 	}
@@ -626,7 +625,6 @@ func (s *Server) handleListDevices(c *gin.Context) {
 			VoWiFiActive:     s.pool.IsVoWiFiActive(w.ID), // 逐个设备判断 VoWiFi 状态，支持多设备
 			VoWiFiRuntime:    s.getVoWiFiRuntimeDTO(w.ID),
 			VoWiFiHealth:     s.getWiFiCallingHealth(w.ID),
-			ModemVoice:       s.pool.ModemVoiceStatus(w.ID),
 			NetworkConnected: w.NetworkConnected(),
 		}
 		if device.IsNativeVoLTEMode(cfg.PhoneMode) {

@@ -34,11 +34,6 @@ outbound_limits:
   #     sms:
   #       per_day: 200
 
-# 仅明确选择模组直拨时准备 QDC507GLEFM21；USB 写入后必要时自动重启目标模组一次。
-# 设为 false 可禁止自动授权/修改 USB，已经开启的 ADB 仍可正常使用。
-modem_voice:
-  auto_enable_adb: true
-
 system:
   # 仅 OpenWrt 使用：把已拨号的数据网卡动态映射到 netifd，其他系统必须保持 false。
   openwrt_dynamic_interfaces: false

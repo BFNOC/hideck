@@ -230,8 +230,6 @@ func overviewPhoneMode(mode string) string {
 		return "cellular"
 	case "volte":
 		return "volte"
-	case "modem_voice":
-		return "modem_voice"
 	default:
 		return "wifi"
 	}
@@ -409,7 +407,6 @@ type deviceMgmtOverviewLiteItem struct {
 	VoWiFiRuntime          *voWiFiRuntimeDTO                 `json:"vowifi_runtime,omitempty"`
 	VoWiFiHealth           *device.WiFiCallingHealthSnapshot `json:"vowifi_health,omitempty"`
 	NativeVoLTE            volte.Status                      `json:"native_volte,omitempty"`
-	ModemVoice             map[string]interface{}            `json:"modem_voice,omitempty"`
 	RadioLiveOK            *bool                             `json:"radio_live_ok,omitempty"`
 	Modem                  modem.DeviceStatus                `json:"modem"`
 	Traffic                map[string]string                 `json:"traffic,omitempty"`
@@ -438,31 +435,30 @@ type deviceMgmtListModem struct {
 }
 
 type deviceMgmtListItem struct {
-	ID                     string                 `json:"id"`
-	Name                   string                 `json:"name"`
-	Running                bool                   `json:"running"`
-	Healthy                bool                   `json:"healthy"`
-	ControlOnline          bool                   `json:"control_online"`
-	PhysicalPresent        bool                   `json:"physical_present"`
-	WorkerRunning          bool                   `json:"worker_running"`
-	DataConnected          bool                   `json:"data_connected"`
-	RadioRegistered        bool                   `json:"radio_registered"`
-	LifecyclePhase         string                 `json:"lifecycle_phase"`
-	LifecycleReason        string                 `json:"lifecycle_reason,omitempty"`
-	PublicIP               string                 `json:"public_ip"`
-	PublicIPv6             string                 `json:"public_ipv6,omitempty"`
-	Interface              string                 `json:"interface,omitempty"`
-	ESIMTransport          string                 `json:"esim_transport,omitempty"`
-	SMSEnabled             bool                   `json:"sms_enabled"`
-	NetworkEnabled         bool                   `json:"network_enabled"`
-	PhoneMode              string                 `json:"phone_mode,omitempty"`
-	VoWiFiEnabled          bool                   `json:"vowifi_enabled"`
-	VoWiFiRuntime          *voWiFiRuntimeDTO      `json:"vowifi_runtime,omitempty"`
-	NativeVoLTE            *volte.Status          `json:"native_volte,omitempty"`
-	ModemVoice             map[string]interface{} `json:"modem_voice,omitempty"`
-	Modem                  deviceMgmtListModem    `json:"modem"`
-	NetworkConnected       bool                   `json:"network_connected"`
-	RegistrationStateLabel string                 `json:"registration_state_label"`
+	ID                     string              `json:"id"`
+	Name                   string              `json:"name"`
+	Running                bool                `json:"running"`
+	Healthy                bool                `json:"healthy"`
+	ControlOnline          bool                `json:"control_online"`
+	PhysicalPresent        bool                `json:"physical_present"`
+	WorkerRunning          bool                `json:"worker_running"`
+	DataConnected          bool                `json:"data_connected"`
+	RadioRegistered        bool                `json:"radio_registered"`
+	LifecyclePhase         string              `json:"lifecycle_phase"`
+	LifecycleReason        string              `json:"lifecycle_reason,omitempty"`
+	PublicIP               string              `json:"public_ip"`
+	PublicIPv6             string              `json:"public_ipv6,omitempty"`
+	Interface              string              `json:"interface,omitempty"`
+	ESIMTransport          string              `json:"esim_transport,omitempty"`
+	SMSEnabled             bool                `json:"sms_enabled"`
+	NetworkEnabled         bool                `json:"network_enabled"`
+	PhoneMode              string              `json:"phone_mode,omitempty"`
+	VoWiFiEnabled          bool                `json:"vowifi_enabled"`
+	VoWiFiRuntime          *voWiFiRuntimeDTO   `json:"vowifi_runtime,omitempty"`
+	NativeVoLTE            *volte.Status       `json:"native_volte,omitempty"`
+	Modem                  deviceMgmtListModem `json:"modem"`
+	NetworkConnected       bool                `json:"network_connected"`
+	RegistrationStateLabel string              `json:"registration_state_label"`
 }
 
 type voWiFiRuntimeDTO struct {
@@ -682,7 +678,6 @@ func (s *Server) buildOverviewLiteItemFromWorkerWithModem(w *device.Worker, cfg 
 		VoWiFiRuntime:          s.getVoWiFiRuntimeDTO(w.ID),
 		VoWiFiHealth:           s.getWiFiCallingHealth(w.ID),
 		NativeVoLTE:            s.pool.NativeVoLTEStatus(w.ID),
-		ModemVoice:             s.pool.ModemVoiceStatus(w.ID),
 		RadioLiveOK:            radioLiveOK,
 		Modem:                  modemStatus,
 		NetworkConnected:       w.NetworkConnected(),
@@ -855,7 +850,6 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			volteStatus := s.pool.NativeVoLTEStatus(w.ID)
 			item.NativeVoLTE = &volteStatus
 		}
-		item.ModemVoice = s.pool.ModemVoiceStatus(w.ID)
 		s.applyLifecycleToListItem(&item, true, cfg)
 		items = append(items, item)
 	}

@@ -16,8 +16,6 @@ LABEL org.opencontainers.image.title="HiDeck" \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      adb \
-      alsa-utils \
       ca-certificates \
       libmp3lame0 \
       libopencore-amrnb0 \
@@ -29,7 +27,6 @@ RUN apt-get update \
       wget \
  && rm -rf /var/lib/apt/lists/* \
  && test -x /usr/libexec/qmi-proxy \
- && adb version && arecord --version && aplay --version \
  && mkdir -p /app/config /app/data /app/logs
 
 COPY dist/hideck_${VERSION}_linux_${TARGETARCH} /usr/local/bin/hideck

@@ -16,21 +16,17 @@ const shell = await readFile(new URL('../src/layouts/AuthenticatedShell.vue', im
 const router = await readFile(new URL('../src/router/index.ts', import.meta.url), 'utf8')
 const zhCN = await readFile(new URL('../src/i18n/zh-CN.ts', import.meta.url), 'utf8')
 
-test('dialer remembers explicit device choices and keeps modem help concise', () => {
+test('dialer remembers explicit device choices', () => {
   assert.match(phoneView, /usePhoneDeviceSelection\(\{/)
   assert.match(phoneView, /@change="rememberDevice"/)
-  assert.match(phoneView, /接通后可用键盘按键/)
   assert.doesNotMatch(phoneView, /目前适配 Linux|首次启用会下载|<p>\{\{ deviceStatus\(selected\) \}\}<\/p>/)
-  assert.match(phoneView, /重新准备/)
 })
 
-test('RF mode changes confirm first and keep full preparation errors outside device labels', () => {
+test('RF mode changes confirm first and retain the selected device', () => {
   assert.match(phoneView, /await confirmPhoneModeChange\(\{/)
   assert.match(phoneView, /enableVoWiFi\(target\.id/)
   assert.match(phoneView, /confirmButtonText: '确认切换', cancelButtonText: '保持当前模式'/)
   assert.match(phoneView, /:disabled="!!call \|\| modePending"[\s\S]*popper-class="phone-device-dropdown"/)
-  assert.match(phoneView, /role="alert">\{\{ selected\.voice\.last_error \}\}/)
-  assert.match(phoneView, /if \(device.voice.last_error\) return `\$\{mode\} · 准备失败`/)
 })
 
 test('phone route and navigation remain available outside the phone page', () => {
@@ -123,7 +119,7 @@ test('phone device picker uses the themed select without changing availability r
   assert.match(phoneView, /<el-select[\s\S]*v-model="selectedDevice"/)
   assert.match(phoneView, /<label for="phone-device">语音设备<\/label>/)
   assert.match(phoneView, /id="phone-device"[\s\S]*aria-label="语音设备"/)
-  assert.match(phoneView, /:disabled="!!call"/)
+  assert.match(phoneView, /:disabled="!!call \|\| modePending"/)
   assert.match(phoneView, /<el-option v-if="!phone\.devices\.length" label="无可用设备" value=""/)
   assert.match(phoneView, /:disabled="isDeviceBusy\(device\)"/)
   assert.doesNotMatch(phoneCSS, /\.device-selector select/)

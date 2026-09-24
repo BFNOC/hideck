@@ -94,12 +94,9 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 				mode = w.Config.PhoneMode
 			}
 		}
-		if !s.allowModemVoiceModeChange(c, deviceID, mode) {
-			return
-		}
 		strategy := normalizeDataStrategy(req.DataStrategy)
 		forceVoLTE := false
-		if w := s.pool.GetWorker(deviceID); device.WorkerSoftwareIMSBlocked(w) && !device.IsModemVoiceMode(mode) {
+		if w := s.pool.GetWorker(deviceID); device.WorkerSoftwareIMSBlocked(w) {
 			mode = device.PhoneModeVoLTE
 			forceVoLTE = true
 		}
@@ -141,14 +138,6 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 			}
 		}
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
-		if w := s.pool.GetWorker(deviceID); w != nil && device.IsModemVoiceMode(w.Config.PhoneMode) {
-			if err := s.pool.ApplyCurrentCardPolicy(deviceID, "api_enable_modem_voice"); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "正在准备模组直拨音频", "device": deviceID})
-			return
-		}
 		if w := s.pool.GetWorker(deviceID); w != nil && device.IsNativeVoLTEMode(w.Config.PhoneMode) {
 			if err := s.pool.ApplyCurrentCardPolicy(deviceID, "api_enable_native_volte"); err != nil {
 				logger.Warn("VoLTE 投影射频失败，仍尝试启用原生 IMS", "device", deviceID, "err", err)
@@ -204,9 +193,6 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 	}
 
 	// 落库：仅清 vowifi_enabled=false，保留 airplane_enabled（用户飞行意图）。
-	if !s.allowModemVoiceModeChange(c, deviceID, "") {
-		return
-	}
 	// 关闭 VoWiFi 后 DisableVoWiFi 会按当前卡策略重投影：之前是飞行则回飞行，否则回在线。
 	if _, _, err := s.patchCardPolicyForDevice(deviceID, vowifiDisablePolicyMutation); err != nil {
 		writeCardPolicyMutationError(c, err)
@@ -267,7 +253,7 @@ func applyVoWiFiEnableToCardPolicy(p *db.CardPolicy) {
 		}
 		return
 	}
-	if p.PhoneMode == "volte" || p.PhoneMode == "modem_voice" {
+	if p.PhoneMode == "volte" {
 		p.AirplaneEnabled = false
 		return
 	}
@@ -284,8 +270,6 @@ func normalizePhoneMode(v *string) string {
 		return "cellular"
 	case "volte":
 		return "volte"
-	case "modem_voice":
-		return "modem_voice"
 	default:
 		return "wifi"
 	}

@@ -152,9 +152,6 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, fmt.Errorf("设备 %s 不存在", deviceID)
 	}
 	startCtx.worker = w
-	if IsModemVoiceMode(w.Config.PhoneMode) {
-		return startCtx, ErrModemVoiceSoftwareIMS
-	}
 	if IsNativeVoLTEMode(w.Config.PhoneMode) {
 		return startCtx, fmt.Errorf("设备 %s 已选择原生 VoLTE，不能启动软件 IMS", deviceID)
 	}

@@ -24,7 +24,7 @@ func (r *delayedOwnerPolicy) Resolve(id string) (cardpolicy.Policy, error) {
 func TestRetiredPolicyCannotAffectReplacementDeviceOrSIM(t *testing.T) {
 	for _, change := range []string{"worker", "sim", "sim_round_trip", "esim_prepare", "esim_failed_same_sim"} {
 		t.Run(change, func(t *testing.T) {
-			p, port := testModemVoicePort(t)
+			p, port := testPhoneWorker(t)
 			w := port.worker
 			resolver := &delayedOwnerPolicy{entered: make(chan struct{}), release: make(chan struct{})}
 			p.SetPolicyResolver(resolver)
@@ -50,7 +50,7 @@ func TestRetiredPolicyCannotAffectReplacementDeviceOrSIM(t *testing.T) {
 			if result.Applied || !errors.Is(result.Err, errPolicyOwnerChanged) {
 				t.Fatalf("old policy not rejected explicitly: %+v", result)
 			}
-			if stopped || !host.ShouldRun(w.ID, claim.Epoch) || w.Config.PhoneMode != PhoneModeModemVoice {
+			if stopped || !host.ShouldRun(w.ID, claim.Epoch) || w.Config.PhoneMode != PhoneModeCellular {
 				t.Fatal("old policy changed replacement runtime or configuration")
 			}
 		})
@@ -88,7 +88,7 @@ func replacePolicyOwnerForTest(t *testing.T, p *Pool, change string) {
 func TestPolicyEffectsSerializeWithRemovalAndESIMSwitch(t *testing.T) {
 	for _, operation := range []string{"remove", "esim_switch"} {
 		t.Run(operation, func(t *testing.T) {
-			p, port := testModemVoicePort(t)
+			p, port := testPhoneWorker(t)
 			w := port.worker
 			p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{PhoneMode: PhoneModeWiFi, AirplaneEnabled: true}})
 			p.voWiFiHost().BeginStart(w.ID)
@@ -135,7 +135,7 @@ func TestPolicyEffectsSerializeWithRemovalAndESIMSwitch(t *testing.T) {
 }
 
 func TestPolicyRechecksSIMAfterSlowRuntimeStop(t *testing.T) {
-	p, port := testModemVoicePort(t)
+	p, port := testPhoneWorker(t)
 	w := port.worker
 	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{PhoneMode: PhoneModeWiFi, AirplaneEnabled: true}})
 	p.voWiFiHost().BeginStart(w.ID)
@@ -145,7 +145,7 @@ func TestPolicyRechecksSIMAfterSlowRuntimeStop(t *testing.T) {
 		return nil
 	})
 	result := p.resolveAndApplyPolicy(w, "test")
-	if !errors.Is(result.Err, errPolicyOwnerChanged) || w.Config.PhoneMode != PhoneModeModemVoice {
+	if !errors.Is(result.Err, errPolicyOwnerChanged) || w.Config.PhoneMode != PhoneModeCellular {
 		t.Fatalf("old policy was applied after SIM changed during teardown: %+v", result)
 	}
 }
@@ -160,7 +160,7 @@ func waitPolicyOperation(t *testing.T, done <-chan struct{}) {
 }
 
 func TestPolicyAcceptsConfirmedESIMTarget(t *testing.T) {
-	p, port := testModemVoicePort(t)
+	p, port := testPhoneWorker(t)
 	w := port.worker
 	snapshot := p.beginESIMSwitch(w.ID, "new-sim")
 	generation := w.BeginSIMIdentityTransition("new-sim", "esim_switch_begin")

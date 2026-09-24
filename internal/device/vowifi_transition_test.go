@@ -12,7 +12,7 @@ import (
 
 func TestSoftwareIMSTransitionInvalidatesOldOwnership(t *testing.T) {
 	for _, stage := range []string{"idle", "starting", "active"} {
-		for _, target := range []string{"volte", "modem_voice", "cellular_idle", "disable", "remove"} {
+		for _, target := range []string{"volte", "cellular_idle", "disable", "remove"} {
 			t.Run(stage+"_to_"+target, func(t *testing.T) {
 				p, w := atTestPool(t)
 				host := p.voWiFiHost()
@@ -25,7 +25,7 @@ func TestSoftwareIMSTransitionInvalidatesOldOwnership(t *testing.T) {
 				}
 				var err error
 				switch target {
-				case "volte", "modem_voice":
+				case "volte":
 					w.Config.PhoneMode = target
 					err = p.StopSoftwareIMS(w.ID)
 				case "cellular_idle":
@@ -51,10 +51,10 @@ func TestSoftwareIMSTransitionInvalidatesOldOwnership(t *testing.T) {
 }
 
 func TestPolicyModeChangeDrainsSoftwareStartupBeforeProjection(t *testing.T) {
-	p, port := testModemVoicePort(t)
+	p, port := testPhoneWorker(t)
 	w := port.worker
 	w.Config.PhoneMode = PhoneModeWiFi
-	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{ICCID: port.iccid, PhoneMode: PhoneModeModemVoice, VoWiFiEnabled: true}})
+	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{ICCID: port.iccid, PhoneMode: PhoneModeCellular, VoWiFiEnabled: true}})
 	started, release := make(chan context.Context, 1), make(chan struct{})
 	p.voWiFiHost().SetLifecycleRunForTest(func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
 		if cmd.Kind == vowifihost.LifecycleCommandEnable {
@@ -86,7 +86,7 @@ func TestPolicyModeChangeDrainsSoftwareStartupBeforeProjection(t *testing.T) {
 }
 
 func TestNativePhoneModesRejectDelayedSoftwarePreparation(t *testing.T) {
-	for _, mode := range []string{PhoneModeVoLTE, PhoneModeModemVoice} {
+	for _, mode := range []string{PhoneModeVoLTE} {
 		t.Run(mode, func(t *testing.T) {
 			p, w := atTestPool(t)
 			w.Config.PhoneMode = mode
