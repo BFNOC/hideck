@@ -24,19 +24,20 @@ const (
 
 // registerSession tracks one registration attempt.
 type registerSession struct {
-	callID       string
-	fromTag      string
-	contactUser  string
-	cseq         int
-	branch       string
-	challenge    *DigestChallenge
-	authHeader   string
-	expires      time.Duration
-	security     *securityAgreement
-	publicID     string
-	serviceRoute string
-	path         string
-	template     policy.IMSRegisterTemplate
+	callID         string
+	fromTag        string
+	contactUser    string
+	requestContact string
+	cseq           int
+	branch         string
+	challenge      *DigestChallenge
+	authHeader     string
+	expires        time.Duration
+	security       *securityAgreement
+	publicID       string
+	serviceRoute   string
+	path           string
+	template       policy.IMSRegisterTemplate
 }
 
 type registerAttemptResult struct {
@@ -363,9 +364,12 @@ func updateRegisterAttemptAuth(result *registerAttemptResult, session *registerS
 }
 
 func (s *Service) commitRegisterSuccess(resp *sipResponse, session *registerSession) (time.Duration, error) {
+	expires, err := registrationExpires(resp, session.requestContact, s.cfg.Expires)
+	if err != nil {
+		return 0, err
+	}
 	s.finalizeRegistrationTransportSwitch()
 	s.lastRegisterContactCount.Store(int32(registerContactBindingCount(resp)))
-	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
 	s.recordRegisterSession(session)
 	s.recordRegisterGRUU(resp.Header("Contact"))
@@ -693,6 +697,7 @@ func (s *Service) buildRegisterRequest(
 	} else if options.unregister && !strings.Contains(strings.ToLower(contact), ";expires=") {
 		contact += ";expires=0"
 	}
+	session.requestContact = contact
 	authenticated := strings.TrimSpace(authHeader) != ""
 	protected := registerUsesProtectedTransport(session)
 	transport := s.registerRequestTransport(protected)
@@ -1204,33 +1209,6 @@ func contactUser(cfg *IMSConfig) string {
 	}
 	user, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cfg.IMPI), "sip:"), "@")
 	return user
-}
-
-func registrationExpires(resp *sipResponse, configured time.Duration) time.Duration {
-	fallback := uint32(0)
-	if configured > 0 {
-		fallback = uint32(configured / time.Second)
-	}
-	seconds := parseRegisterExpiresFromResponse(resp, fallback)
-	if seconds == 0 {
-		seconds = uint32(time.Hour / time.Second)
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-func contactExpires(contact string) int {
-	for _, parameter := range strings.Split(contact, ";") {
-		name, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
-		if !ok || !strings.EqualFold(name, "expires") {
-			continue
-		}
-		value, _, _ = strings.Cut(value, ",")
-		seconds, err := strconv.Atoi(strings.TrimSpace(value))
-		if err == nil && seconds > 0 {
-			return seconds
-		}
-	}
-	return 0
 }
 
 func (s *Service) scheduleRegistrationRefresh(expires time.Duration) {

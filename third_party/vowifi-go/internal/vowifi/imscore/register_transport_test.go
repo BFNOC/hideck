@@ -551,12 +551,12 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	}
 }
 
-func TestRegistrationExpiresPrefersExpiresHeader(t *testing.T) {
+func TestRegistrationExpiresPrefersOwnContact(t *testing.T) {
 	response := &sipResponse{Headers: map[string]string{
 		"Contact": "<sip:user@10.0.0.2>;expires=120", "Expires": "3600",
 	}}
-	if got := registrationExpires(response, time.Hour); got != time.Hour {
-		t.Fatalf("registrationExpires = %s, want 1h", got)
+	if got, err := registrationExpires(response, "<sip:user@10.0.0.2>", time.Hour); err != nil || got != 120*time.Second {
+		t.Fatalf("registrationExpires = %s, %v, want 120s", got, err)
 	}
 }
 
