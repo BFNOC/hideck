@@ -1,11 +1,14 @@
 package qdc507
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+var ErrADBNotFound = errors.New("未找到 ADB 连接")
 
 var usbLocation = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 var bootIdentity = regexp.MustCompile(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
@@ -47,7 +50,7 @@ func selectTransport(output, usb string) (transport, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return transport{}, fmt.Errorf("qdc507: USB %s 未找到 ADB 连接；请检查此模组是否已开启 ADB，以及宿主机或容器能否访问该 USB 接口", usb)
+		return transport{}, fmt.Errorf("qdc507: USB %s %w；请检查此模组是否已开启 ADB，以及宿主机或容器能否访问该 USB 接口", usb, ErrADBNotFound)
 	}
 	if len(matches) > 1 {
 		return transport{}, fmt.Errorf("qdc507: USB %s 匹配到 %d 个 ADB 连接，无法唯一确认目标模组", usb, len(matches))

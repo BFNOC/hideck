@@ -108,16 +108,17 @@ func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 }
 
 type Config struct {
-	OutboundLimits outbound.Config `mapstructure:"outbound_limits"`
-	Server         ServerConfig    `mapstructure:"server"`
-	System         SystemConfig    `mapstructure:"system"`
-	Devices        []DeviceConfig  `mapstructure:"devices"`
-	Telegram       TelegramConfig  `mapstructure:"telegram"`
-	Feishu         FeishuConfig    `mapstructure:"feishu"`
-	QQ             QQConfig        `mapstructure:"qq"`
-	Weixin         WeixinConfig    `mapstructure:"weixin"`
-	WeComBot       WeComBotConfig  `mapstructure:"wecom_bot"`
-	Webhook        WebhookConfig   `mapstructure:"webhook"`
+	ModemVoice     ModemVoiceConfig `mapstructure:"modem_voice"`
+	OutboundLimits outbound.Config  `mapstructure:"outbound_limits"`
+	Server         ServerConfig     `mapstructure:"server"`
+	System         SystemConfig     `mapstructure:"system"`
+	Devices        []DeviceConfig   `mapstructure:"devices"`
+	Telegram       TelegramConfig   `mapstructure:"telegram"`
+	Feishu         FeishuConfig     `mapstructure:"feishu"`
+	QQ             QQConfig         `mapstructure:"qq"`
+	Weixin         WeixinConfig     `mapstructure:"weixin"`
+	WeComBot       WeComBotConfig   `mapstructure:"wecom_bot"`
+	Webhook        WebhookConfig    `mapstructure:"webhook"`
 
 	Bark     BarkConfig     `mapstructure:"bark"`
 	Email    EmailConfig    `mapstructure:"email"`

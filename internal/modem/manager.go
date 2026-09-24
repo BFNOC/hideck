@@ -499,7 +499,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 连续超时达到阈值，触发控制面恢复", m.cfg.ID),
-		"cmd", cmd,
+		"cmd", logATCommand(cmd),
 		"port", m.atPort,
 		"failures", failures,
 		"threshold", atTimeoutWatchdogThreshold)
@@ -610,7 +610,7 @@ func (m *Manager) handleFatalSerialRuntimeErr(err error, phase string, cmd strin
 		return
 	}
 	logger.Warn(fmt.Sprintf("[%s] AT 串口运行期失效，触发恢复", m.cfg.ID),
-		"phase", phase, "cmd", cmd, "port", m.atPort, "err", err)
+		"phase", phase, "cmd", logATCommand(cmd), "port", m.atPort, "err", logATResponse(cmd, err.Error()))
 	m.markUnhealthy()
 	m.Stop()
 	m.notifyDisconnect("serial_runtime_error")
@@ -723,7 +723,7 @@ RespLoop:
 		case <-timeoutTimer.C:
 			// 超时时尝试发送 ESC (0x1B) 以取消可能的挂起操作（如短信输入）
 			m.port.Write([]byte{0x1B})
-			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", req.cmd, "cost", time.Since(startTime).String())
+			logger.Warn(fmt.Sprintf("[%s] 命令执行超时，已发送 ESC 尝试恢复", m.cfg.ID), "port", m.atPort, "cmd", logATCommand(req.cmd), "cost", time.Since(startTime).String())
 			req.errChan <- errors.New("命令执行超时")
 			if failures, tripped := m.recordATTimeout(req); tripped {
 				m.tripATTimeoutWatchdog(req.cmd, failures)
@@ -749,8 +749,8 @@ RespLoop:
 				m.resetATTimeoutWatchdog()
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 执行成功", m.cfg.ID),
-						"cmd", req.cmd,
-						"resp", strings.Join(fullResponse, " | "),
+						"cmd", logATCommand(req.cmd),
+						"resp", logATResponse(req.cmd, strings.Join(fullResponse, " | ")),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
 				req.respChan <- strings.Join(fullResponse, "\n")
@@ -760,18 +760,18 @@ RespLoop:
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Warn(fmt.Sprintf("[%s] AT 执行失败", m.cfg.ID),
-						"cmd", req.cmd,
-						"resp", strings.Join(fullResponse, " | "),
+						"cmd", logATCommand(req.cmd),
+						"resp", logATResponse(req.cmd, strings.Join(fullResponse, " | ")),
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}
-				req.errChan <- fmt.Errorf("设备返回错误: %s", strings.Join(fullResponse, "\n"))
+				req.errChan <- fmt.Errorf("设备返回错误: %s", logATResponse(req.cmd, strings.Join(fullResponse, "\n")))
 				break RespLoop
 			} else if strings.Contains(line, ">") {
 				m.resetATTimeoutWatchdog()
 				fullResponse = append(fullResponse, line)
 				if !req.silent {
 					logger.Debug(fmt.Sprintf("[%s] AT 收到提示", m.cfg.ID),
-						"cmd", req.cmd,
+						"cmd", logATCommand(req.cmd),
 						"resp", ">",
 						"cost", time.Since(startTime).Truncate(time.Millisecond).String())
 				}

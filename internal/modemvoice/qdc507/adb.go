@@ -52,6 +52,11 @@ func (a *ADB) find(ctx context.Context, usb string) (transport, error) {
 	return selectTransport(output, usb)
 }
 
+func (a *ADB) Probe(ctx context.Context, usb string) error {
+	_, err := a.find(ctx, usb)
+	return err
+}
+
 func (a *ADB) Bind(ctx context.Context, usb string) (Target, error) {
 	t, err := a.find(ctx, usb)
 	if err != nil {

@@ -16,7 +16,9 @@ test('every RF mode warns before switching, including overseas cards and retries
     assert.match(warning.message, /WiFi calling/)
     assert.ok(phoneModeWarning({ ...device(), phone_mode: mode }, mode))
   }
-  assert.match(phoneModeWarning(device(), 'modem_voice')!.message, /不会自动开启 ADB/)
+  assert.match(phoneModeWarning(device(), 'modem_voice')!.message, /尝试开启 ADB/)
+  assert.match(phoneModeWarning(device(), 'modem_voice')!.message, /无通话时会自动重启目标模组一次/)
+  assert.match(phoneModeWarning(device(), 'modem_voice')!.message, /失败不反复重启/)
   assert.equal(phoneModeWarning(device(), 'wifi'), undefined)
   for (const region of ['CN', undefined]) {
     const warning = phoneModeWarning({ ...device(), phone_region: region }, 'volte')!

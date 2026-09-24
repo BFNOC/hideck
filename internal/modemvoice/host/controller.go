@@ -21,6 +21,9 @@ type Resources struct {
 	Close   func(context.Context) error
 }
 
+// ErrPrepareRestarting hands preparation to hotplug/recovery without reporting ready.
+var ErrPrepareRestarting = errors.New("模组重启准备中")
+
 type Options struct {
 	Prepare  func(context.Context, string) (*Resources, error)
 	Listen   func() (net.PacketConn, error)
@@ -134,7 +137,11 @@ func (c *Controller) run(d *device) {
 	}
 	if err != nil {
 		d.cleanupErr = c.cleanup(d)
-		d.setStatus("failed", errors.Join(err, d.cleanupErr))
+		phase := "failed"
+		if errors.Is(err, ErrPrepareRestarting) && d.cleanupErr == nil {
+			phase = "restarting"
+		}
+		d.setStatus(phase, errors.Join(err, d.cleanupErr))
 		return
 	}
 	d.setStatus("ready", nil)

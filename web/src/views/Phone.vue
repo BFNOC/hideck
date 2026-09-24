@@ -115,6 +115,7 @@ function deviceStatus(device?: PhoneDevice) {
   if (isDeviceBusy(device)) return '通话占用'
   const mode = deviceModeLabel(device)
   if (device.phone_mode === 'modem_voice') {
+    if (device.voice.phase === 'restarting') return `${mode} · 重启模组中`
     if (device.voice.last_error) return `${mode} · 准备失败`
     if (device.voice.phase === 'preparing') return `${mode} · 准备音频中`
     return `${mode} · ${device.voice.ready ? '就绪' : '未就绪'}`

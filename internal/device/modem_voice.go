@@ -146,6 +146,9 @@ func prepareQDC507(ctx context.Context, port *modemVoicePort, setup qdc507Setup)
 	if err != nil {
 		return nil, err
 	}
+	if err := port.prepareADB(ctx, client, setup.state); err != nil {
+		return nil, err
+	}
 	manager, err := qdc507.NewManager(qdc507.Options{USB: filepath.Base(port.worker.Config.USBPath),
 		Firmware: "QDC507GLEFM21", Client: client, Source: setup.bundle, Check: port.check})
 	if err != nil {

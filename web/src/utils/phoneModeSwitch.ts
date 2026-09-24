@@ -11,7 +11,7 @@ export function phoneModeWarning(device: PhoneDevice, mode: string): PhoneModeWa
     ? '这是一张境外 SIM 卡；在归属地以外驻网或通话可能产生漫游费用，也可能受运营商漫游限制。'
     : '在 SIM 卡归属地以外使用，可能产生漫游费用。'
   const audio = mode === 'modem_voice'
-    ? '模组直拨还需要该模组已适配的 USB 音频和 ADB 接口；切换模式不会自动开启 ADB。'
+    ? '模组直拨需要已适配的 USB 音频和 ADB 接口；未禁用自动准备时，会为 QDC507GLEFM21 模组尝试开启 ADB。若 USB 配置已写入但 ADB 仍未出现，无通话时会自动重启目标模组一次，期间该设备会暂时离线；失败不反复重启。'
     : ''
   return {
     title: `切换到${label}？`,
