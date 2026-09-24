@@ -122,9 +122,6 @@ type Server struct {
 	authChangeMu           sync.Mutex
 	passwordChangeRequired bool
 
-	smsLimiterMu sync.Mutex
-	smsLimiter   *smsRateLimiter
-
 	shutdownCh       chan struct{}
 	backgroundCancel context.CancelFunc
 }
@@ -169,10 +166,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 			},
 		),
 		loginAttempts: make(map[string]loginAttempt),
-		smsLimiter: newSMSRateLimiterWithConfig(
-			time.Now(), time.Now, cfg.Server.SMSRateLimitDisabled,
-		),
-		shutdownCh: make(chan struct{}),
+		shutdownCh:    make(chan struct{}),
 	}
 	s.backendSwitch = newDeviceBackendSwitchService(pool, configPath)
 	s.initializeCommandCenter()
@@ -221,21 +215,6 @@ func (s *Server) SetVoiceRecordingDirectory(directory string) {
 
 func (s *Server) SetPhoneService(service *phone.Service) {
 	s.phone = service
-}
-
-// smsRateLimiter returns the SMS rate limiter, lazily creating it if needed.
-func (s *Server) smsRateLimiter() *smsRateLimiter {
-	if s.smsLimiter != nil {
-		return s.smsLimiter
-	}
-	s.smsLimiterMu.Lock()
-	defer s.smsLimiterMu.Unlock()
-	if s.smsLimiter == nil {
-		s.smsLimiter = newSMSRateLimiterWithConfig(
-			time.Now(), time.Now, s.cfg.SMSRateLimitDisabled,
-		)
-	}
-	return s.smsLimiter
 }
 
 // checkPassword 验证密码，支持 bcrypt 哈希和明文（向后兼容）
@@ -1171,22 +1150,6 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	deviceID := worker.ID
 	sendOpts := smscodec.SubmitOptions{Encoding: encoding}
 
-	if rate := s.smsRateLimiter().Allow(); !rate.Allowed {
-		retryAfterSeconds := int64(rate.RetryAfter.Seconds())
-		if retryAfterSeconds < 0 {
-			retryAfterSeconds = 0
-		}
-		c.JSON(http.StatusTooManyRequests, gin.H{
-			"status":              "error",
-			"code":                "sms_rate_limited",
-			"reason":              rate.Code,
-			"message":             rate.Message,
-			"retry_after_seconds": retryAfterSeconds,
-			"request_id":          requestID(c),
-		})
-		return
-	}
-
 	// 获取 IMSI 用于入库
 	imsi := worker.GetIMSI()
 	messageID := ""
@@ -1194,6 +1157,9 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	deliveryState := "acked"
 
 	routed, err := s.pool.SendRoutedSMS(c.Request.Context(), worker, req.Phone, req.Message, sendOpts)
+	if respondOutboundLimit(c, err) {
+		return
+	}
 	if routed.Outcome.PartsTotal > 0 {
 		partsTotal = routed.Outcome.PartsTotal
 	}

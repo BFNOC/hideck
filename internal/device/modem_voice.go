@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
-	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -125,18 +124,18 @@ func (p *Pool) prepareModemVoice(ctx context.Context, id string) (*host.Resource
 	if err != nil {
 		return nil, err
 	}
-	cache, err := qdc507.NewCache(filepath.Join(root, "bundles"), &http.Client{Timeout: 60 * time.Second})
+	bundle, err := qdc507.EmbeddedBundle()
 	if err != nil {
 		return nil, err
 	}
-	if err := cache.Download(ctx); err != nil {
-		return nil, fmt.Errorf("下载已固定版本的语音运行时: %w", err)
-	}
 	return prepareQDC507(ctx, port, qdc507Setup{adb: adb, state: filepath.Join(root, "adb"),
-		bundle: cache.Directory(), capture: capture, playback: playback})
+		bundle: bundle, capture: capture, playback: playback})
 }
 
-type qdc507Setup struct{ adb, state, bundle, capture, playback string }
+type qdc507Setup struct {
+	adb, state, capture, playback string
+	bundle                        fs.FS
+}
 
 func prepareQDC507(ctx context.Context, port *modemVoicePort, setup qdc507Setup) (*host.Resources, error) {
 	executor, err := qdc507.NewExec(qdc507.ExecOptions{Program: setup.adb, StateDirectory: setup.state})
@@ -148,7 +147,7 @@ func prepareQDC507(ctx context.Context, port *modemVoicePort, setup qdc507Setup)
 		return nil, err
 	}
 	manager, err := qdc507.NewManager(qdc507.Options{USB: filepath.Base(port.worker.Config.USBPath),
-		Firmware: "QDC507GLEFM21", Client: client, Source: os.DirFS(setup.bundle), Check: port.check})
+		Firmware: "QDC507GLEFM21", Client: client, Source: setup.bundle, Check: port.check})
 	if err != nil {
 		return nil, err
 	}

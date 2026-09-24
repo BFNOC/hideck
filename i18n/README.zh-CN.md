@@ -37,6 +37,8 @@
 
 协议说明：[VoWiFi](../docs/vowifi-protocol-alignment.md) · [VoLTE](../docs/volte-native.md) · [运营商](../docs/operator-notes.md) · [硬件](../docs/modem-hardware.md)
 
+外呼/短信按 SIM 独立限流，重启保留计数：[额度与配置说明](../docs/outbound-limits.md)。
+
 ## 快速开始
 
 推荐 Docker。需要 Linux、curl、Compose、host 网络、USB 权限。镜像已带通话录音用的 AMR/MP3 库。

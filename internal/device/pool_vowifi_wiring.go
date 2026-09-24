@@ -165,6 +165,10 @@ func (p *Pool) SimulateCallWithCellularData(
 	req voicehost.SimulateCallRequest,
 ) (*voicehost.SimulateCallResult, error) {
 	w := p.GetWorker(deviceID)
+	checkOwner := p.outboundOwnerCheck(w)
+	if err := p.AuthorizeOutboundCall(ctx, deviceID, req.Callee); err != nil {
+		return nil, err
+	}
 	cellular := w != nil && w.Config.PhoneMode == "cellular"
 	onDemand := cellular && w.Config.DataStrategy != "always"
 
@@ -188,6 +192,9 @@ func (p *Pool) SimulateCallWithCellularData(
 	voiceGW := p.GetVoiceGateway()
 	if voiceGW == nil {
 		return nil, fmt.Errorf("voice gateway is unavailable")
+	}
+	if err := checkOwner(); err != nil {
+		return nil, err
 	}
 	result, err := voiceGW.SimulateCall(ctx, deviceID, req)
 

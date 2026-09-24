@@ -24,11 +24,12 @@ type VoiceBackend interface {
 }
 
 type Mux struct {
-	IMS      VoiceBackend
-	Native   VoiceBackend
-	IsNative func(deviceID string) bool
-	Modem    VoiceBackend
-	IsModem  func(deviceID string) bool
+	BeforeDial func(context.Context, string, string) error
+	IMS        VoiceBackend
+	Native     VoiceBackend
+	IsNative   func(deviceID string) bool
+	Modem      VoiceBackend
+	IsModem    func(deviceID string) bool
 }
 
 func (m *Mux) native(deviceID string) bool {
@@ -103,6 +104,11 @@ func (m *Mux) SubscribeCallEvents(handler func(voicehost.CallEvent)) func() {
 }
 
 func (m *Mux) BeginCall(ctx context.Context, request voicehost.BeginCallRequest) (voicehost.CallSnapshot, error) {
+	if m.BeforeDial != nil {
+		if err := m.BeforeDial(ctx, request.DeviceID, request.Callee); err != nil {
+			return voicehost.CallSnapshot{}, err
+		}
+	}
 	return m.pick(request.DeviceID).BeginCall(ctx, request)
 }
 

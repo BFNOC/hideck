@@ -323,6 +323,9 @@ func (s *Server) requirePhone(c *gin.Context) bool {
 }
 
 func (s *Server) respondPhoneError(c *gin.Context, err error) {
+	if respondOutboundLimit(c, err) {
+		return
+	}
 	message := err.Error()
 	status := http.StatusBadRequest
 	code := "phone_error"

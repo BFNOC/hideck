@@ -37,6 +37,8 @@ Manage USB modems, cellular proxy, SMS, WiFi calling / IMS voice, eSIM, and sche
 
 Protocol notes: [VoWiFi](docs/vowifi-protocol-alignment.md) · [VoLTE](docs/volte-native.md) · [operators](docs/operator-notes.md) · [hardware](docs/modem-hardware.md)
 
+Outgoing call/SMS quotas are per SIM and survive restarts: [limits and configuration](docs/outbound-limits.md).
+
 ## Quick start
 
 Docker (recommended). Needs Linux, curl, Docker Compose, host networking, and USB access. The image includes AMR/MP3 libraries for call recording.

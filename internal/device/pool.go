@@ -175,8 +175,9 @@ type Worker struct {
 }
 
 type Pool struct {
-	workers    map[string]*Worker
-	rebuilding map[string]bool // 标记设备是否正在重载
+	outboundLimiter OutboundLimiter
+	workers         map[string]*Worker
+	rebuilding      map[string]bool // 标记设备是否正在重载
 	// rebuildAttempt 记录每个设备最近一次 AddWorkerFromConfig 尝试的递增 token。
 	// 用于让启动看门狗超时强制释放 rebuilding 后，滞后完成的旧启动流程能识别自己
 	// 已被新一轮尝试取代，从而放弃注册而不是用过期路径覆盖最新状态。

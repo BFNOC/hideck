@@ -82,6 +82,10 @@ func (p *Pool) SendRoutedSMS(
 	}
 	deviceID := worker.ID
 	destination := strings.TrimSpace(phone)
+	checkOwner := p.outboundOwnerCheck(worker)
+	if err := p.authorizeSMS(ctx, outboundSMSRequest{Worker: worker, To: destination, Text: message, Options: opts}); err != nil {
+		return routedSMSSendResult{}, err
+	}
 	p.mu.RLock()
 	sendVoWiFiHook := p.routedVoWiFiSMSSend
 	sendCSHook := p.routedCSSMSSend
@@ -89,16 +93,25 @@ func (p *Pool) SendRoutedSMS(
 	result, err := sendRoutedSMS(
 		p.ShouldRouteSMSViaVoWiFi(deviceID),
 		func() (messaging.SendOutcome, error) {
+			if err := checkOwner(); err != nil {
+				return messaging.SendOutcome{}, err
+			}
 			if sendVoWiFiHook != nil {
 				return sendVoWiFiHook(ctx, deviceID, destination, message, opts)
 			}
-			return p.SendVoWiFiSMSWithOptions(ctx, deviceID, destination, message, opts)
+			return p.sendVoWiFiSMS(ctx, voWiFiSMSSendRequest{
+				DeviceID: deviceID, To: destination, Text: message, Check: checkOwner,
+				Options: messaging.SendOptions{Encoding: string(opts.Encoding)},
+			})
 		},
 		func() error {
+			if err := checkOwner(); err != nil {
+				return err
+			}
 			if sendCSHook != nil {
 				return sendCSHook(deviceID, destination, message)
 			}
-			return worker.SendSMSWithOptions(destination, message, opts)
+			return worker.sendSMSWithOptions(destination, message, opts)
 		},
 	)
 	result.Destination = destination
@@ -133,6 +146,7 @@ type voWiFiSMSRuntime interface {
 }
 
 type voWiFiSMSSendRequest struct {
+	Check    func() error
 	DeviceID string
 	To       string
 	Text     string
@@ -141,17 +155,30 @@ type voWiFiSMSSendRequest struct {
 	Runtime  func() voWiFiSMSRuntime
 }
 
+func (r voWiFiSMSSendRequest) checkOwner() error {
+	if r.Check != nil {
+		return r.Check()
+	}
+	return nil
+}
+
 func sendVoWiFiSMSWhenReady(
 	ctx context.Context,
 	request voWiFiSMSSendRequest,
 ) (messaging.SendOutcome, error) {
 	lastReason := "VoWiFi 运行时尚未建立"
 	for {
+		if err := request.checkOwner(); err != nil {
+			return messaging.SendOutcome{}, err
+		}
 		runtime := currentVoWiFiSMSRuntime(request.Runtime)
 		if runtime != nil {
 			state := runtime.State()
 			lastReason = voWiFiSMSWaitReason(state)
 			if state.SMSMOReady || state.SMSReady || !shouldWaitForVoWiFiSMS(state) {
+				if err := request.checkOwner(); err != nil {
+					return messaging.SendOutcome{}, err
+				}
 				outcome, err := runtime.SendSMSWithOptions(ctx, request.To, request.Text, request.Options)
 				if err == nil || !errors.Is(err, messaging.ErrSMSNotReady) {
 					return outcome, err
