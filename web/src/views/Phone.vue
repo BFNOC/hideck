@@ -28,7 +28,7 @@ import { usePhoneIdentity } from '../composables/usePhoneIdentity'
 import { usePhoneDeviceSelection } from '../composables/usePhoneDeviceSelection'
 import { phoneContactsService } from '../services/phone-contacts'
 import { dialNumberError, formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
-import { confirmPhoneModeChange } from '../utils/phoneModeSwitch'
+import { confirmPhoneModeChange, phoneModeDisabledReason } from '../utils/phoneModeSwitch'
 
 const phone = usePhoneStore()
 const identities = usePhoneIdentity()
@@ -190,15 +190,14 @@ async function toggleWifiCalling(rawVal: string | number | boolean) {
   }
 }
 
-async function changePhoneMode(mode: string) {
+async function changePhoneMode(mode: string | number | boolean | undefined) {
+  if (typeof mode !== 'string') return
   if (!selected.value || !!call.value || modePending.value) return
   const target = { ...selected.value }
   const strategy = selectedStrategy.value
-  if ((mode === 'wifi' || mode === 'cellular') && selected.value?.software_ims_blocked) {
-    mode = 'volte'
-  }
-  if ((mode === 'cellular' || mode === 'volte' || mode === 'modem_voice') && selected.value?.rf_lock) {
-    ElMessage.warning('这张 Lebara UK 分享卡不能切蜂窝或 VoLTE，驻国内网会切到 20404，WiFi calling 会废')
+  const disabledReason = phoneModeDisabledReason(target, mode)
+  if (disabledReason) {
+    ElMessage.warning(disabledReason)
     return
   }
   if (mode === selectedMode.value) {
@@ -460,11 +459,12 @@ async function sendDTMF(digit: string) {
                 :model-value="selectedMode"
                 size="small"
                 :disabled="!!call || modePending"
+                @change="changePhoneMode"
               >
-                <el-radio-button value="wifi" :disabled="!!selected?.software_ims_blocked" @click="void changePhoneMode('wifi')">WiFi calling</el-radio-button>
-                <el-radio-button value="cellular" :disabled="!!selected?.rf_lock || !!selected?.software_ims_blocked" @click="void changePhoneMode('cellular')">蜂窝数据</el-radio-button>
-                <el-radio-button value="volte" :disabled="!!selected?.rf_lock" @click="void changePhoneMode('volte')">VoLTE</el-radio-button>
-                <el-radio-button value="modem_voice" :disabled="!!selected?.rf_lock" @click="void changePhoneMode('modem_voice')">模组直拨</el-radio-button>
+                <el-radio-button value="wifi" :disabled="!!phoneModeDisabledReason(selected, 'wifi')" :title="phoneModeDisabledReason(selected, 'wifi')">WiFi calling</el-radio-button>
+                <el-radio-button value="cellular" :disabled="!!phoneModeDisabledReason(selected, 'cellular')" :title="phoneModeDisabledReason(selected, 'cellular')">蜂窝数据</el-radio-button>
+                <el-radio-button value="volte" :disabled="!!phoneModeDisabledReason(selected, 'volte')" :title="phoneModeDisabledReason(selected, 'volte')">VoLTE</el-radio-button>
+                <el-radio-button value="modem_voice" :disabled="!!phoneModeDisabledReason(selected, 'modem_voice')" :title="phoneModeDisabledReason(selected, 'modem_voice')">模组直拨</el-radio-button>
               </el-radio-group>
               <el-select
                 v-if="selectedMode === 'cellular'"

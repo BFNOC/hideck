@@ -3,6 +3,16 @@ import { phoneModeCampsOnCell, phoneModeLabel } from './phoneMode'
 
 export type PhoneModeWarning = { title: string; message: string }
 
+export function phoneModeDisabledReason(device: PhoneDevice | undefined, mode: string): string | undefined {
+  if (!device) return '请先选择设备'
+  if ((mode === 'wifi' || mode === 'cellular') && device.software_ims_blocked) {
+    return '此 SIM 卡不支持软件 IMS，请使用 VoLTE 或模组直拨'
+  }
+  if (phoneModeCampsOnCell(mode) && device.rf_lock) {
+    return '此 SIM 卡禁止蜂窝驻网，不能切换到该模式'
+  }
+}
+
 export function phoneModeWarning(device: PhoneDevice, mode: string): PhoneModeWarning | undefined {
   if (!phoneModeCampsOnCell(mode)) return
   const label = phoneModeLabel(mode)
@@ -29,6 +39,8 @@ type ChangeOptions = {
 }
 
 export async function confirmPhoneModeChange(options: ChangeOptions): Promise<boolean> {
+  const disabledReason = phoneModeDisabledReason(options.target, options.mode)
+  if (disabledReason) throw new Error(disabledReason)
   const warning = phoneModeWarning(options.target, options.mode)
   if (warning) {
     try {

@@ -1,10 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { confirmPhoneModeChange, phoneModeWarning } from '../src/utils/phoneModeSwitch'
+import { confirmPhoneModeChange, phoneModeDisabledReason, phoneModeWarning } from '../src/utils/phoneModeSwitch'
+import { readFileSync } from 'node:fs'
 import type { PhoneDevice } from '../src/services/phone'
 
 const device = (): PhoneDevice => ({ id: 'wwan0', name: 'VOXI', iccid: 'card-a',
   phone_region: 'GB', phone_mode: 'wifi', vowifi_enabled: true, voice: {} })
+
+test('disabled software IMS and RF modes never prompt, apply or redirect to another mode', async () => {
+  for (const mode of ['wifi', 'cellular', 'volte', 'modem_voice']) {
+    const target = { ...device(), software_ims_blocked: true, rf_lock: 'locked' }
+    let prompted = false
+    let applied = false
+    await assert.rejects(confirmPhoneModeChange({
+      target, mode, current: () => target, hasCall: () => false,
+      confirm: async () => { prompted = true }, apply: async () => { applied = true }
+    }), /不支持软件 IMS|禁止蜂窝驻网/)
+    assert.equal(prompted, false)
+    assert.equal(applied, false)
+  }
+})
+
+test('mode availability follows SIM capability and RF lock, not country alone', () => {
+  const domestic = { ...device(), phone_region: 'CN', software_ims_blocked: true }
+  assert.ok(phoneModeDisabledReason(domestic, 'wifi'))
+  assert.ok(phoneModeDisabledReason(domestic, 'cellular'))
+  assert.equal(phoneModeDisabledReason(domestic, 'volte'), undefined)
+  assert.equal(phoneModeDisabledReason(domestic, 'modem_voice'), undefined)
+  assert.equal(phoneModeDisabledReason({ ...device(), rf_lock: 'locked' }, 'wifi'), undefined)
+  assert.equal(phoneModeDisabledReason(device(), 'wifi'), undefined)
+  assert.equal(phoneModeDisabledReason({ ...device(), phone_region: 'CN' }, 'wifi'), undefined)
+  assert.ok(phoneModeDisabledReason(undefined, 'wifi'))
+})
+
+test('mode radio buttons use the group change event, not clicks on disabled labels', () => {
+  const source = readFileSync(new URL('../src/views/Phone.vue', import.meta.url), 'utf8')
+  const group = source.match(/<el-radio-group[\s\S]*?<\/el-radio-group>/)![0]
+  assert.match(group, /@change="changePhoneMode"/)
+  assert.doesNotMatch(group, /@click/)
+  assert.equal((group.match(/:disabled="!!phoneModeDisabledReason/g) || []).length, 4)
+  assert.doesNotMatch(source, /mode = 'volte'/)
+})
 
 test('every RF mode warns before switching, including overseas cards and retries', () => {
   for (const mode of ['cellular', 'volte', 'modem_voice']) {
