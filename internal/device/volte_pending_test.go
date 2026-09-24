@@ -13,7 +13,7 @@ import (
 func TestNativeStartReplacementSupersedesStaleIdentity(t *testing.T) {
 	for _, change := range []string{"worker", "sim"} {
 		t.Run(change, func(t *testing.T) {
-			p, port := testPhoneWorker(t)
+			p, port := testModemVoicePort(t)
 			port.worker.Config.PhoneMode = PhoneModeVoLTE
 			old := p.beginNativeVoLTESchedule(port.worker.ID)
 			if change == "worker" {
@@ -43,7 +43,7 @@ func TestNativeStartReplacementSupersedesStaleIdentity(t *testing.T) {
 }
 
 func TestNativeStartLatestPolicyWaitsForOlderHandoff(t *testing.T) {
-	p, port := testPhoneWorker(t)
+	p, port := testModemVoicePort(t)
 	finish := p.beginNativeVoLTETransition(port.worker.ID)
 	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{
 		ICCID: port.iccid, PhoneMode: PhoneModeVoLTE, VoWiFiEnabled: true,
@@ -70,9 +70,9 @@ func TestNativeStartLatestPolicyWaitsForOlderHandoff(t *testing.T) {
 }
 
 func TestNativeStartQueuedIntentRechecksLatestPolicy(t *testing.T) {
-	for _, change := range []string{"disabled", "cellular", "airplane", "sim", "pool_stop"} {
+	for _, change := range []string{"disabled", "modem_voice", "airplane", "sim", "pool_stop"} {
 		t.Run(change, func(t *testing.T) {
-			p, port := testPhoneWorker(t)
+			p, port := testModemVoicePort(t)
 			port.worker.Config.PhoneMode = PhoneModeVoLTE
 			finish := p.beginNativeVoLTETransition(port.worker.ID)
 			start := p.beginNativeVoLTESchedule(port.worker.ID)
@@ -84,8 +84,8 @@ func TestNativeStartQueuedIntentRechecksLatestPolicy(t *testing.T) {
 			switch change {
 			case "disabled":
 				port.worker.Config.VoWiFiEnabled = false
-			case "cellular":
-				port.worker.Config.PhoneMode = PhoneModeCellular
+			case "modem_voice":
+				port.worker.Config.PhoneMode = PhoneModeModemVoice
 			case "airplane":
 				port.worker.Config.AirplaneEnabled = true
 			case "sim":
@@ -107,7 +107,7 @@ func TestNativeStartQueuedIntentRechecksLatestPolicy(t *testing.T) {
 }
 
 func TestNativeStartOverlappingTransitionsPreserveOnlyLatestIntent(t *testing.T) {
-	p, port := testPhoneWorker(t)
+	p, port := testModemVoicePort(t)
 	firstDone := p.beginNativeVoLTETransition(port.worker.ID)
 	old := p.beginNativeVoLTESchedule(port.worker.ID)
 	secondDone := p.beginNativeVoLTETransition(port.worker.ID)

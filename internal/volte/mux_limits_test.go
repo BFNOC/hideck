@@ -9,13 +9,14 @@ import (
 )
 
 func TestMuxLimitsEveryOutboundModeButNotInbound(t *testing.T) {
-	for _, mode := range []string{"wifi", "cellular", "volte"} {
+	for _, mode := range []string{"wifi", "volte", "modem"} {
 		t.Run(mode, func(t *testing.T) {
 			backend := &stubBackend{name: mode}
 			denied := errors.New("rate limited")
 			checks := 0
-			mux := &Mux{IMS: backend, Native: backend,
+			mux := &Mux{IMS: backend, Native: backend, Modem: backend,
 				IsNative:   func(string) bool { return mode == "volte" },
+				IsModem:    func(string) bool { return mode == "modem" },
 				BeforeDial: func(context.Context, string, string) error { checks++; return denied },
 			}
 			if _, err := mux.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "dev"}); !errors.Is(err, denied) {

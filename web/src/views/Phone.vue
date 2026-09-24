@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Backspace24Regular,
@@ -21,6 +21,7 @@ import PhoneCallHistory from '../components/PhoneCallHistory.vue'
 import PhoneContactsPanel from '../components/PhoneContactsPanel.vue'
 import PhoneDialPad from '../components/PhoneDialPad.vue'
 import type { PhoneCall, PhoneDevice } from '../services/phone'
+import { phoneService } from '../services/phone'
 import { devicesService } from '../services/devices'
 import { usePhoneStore } from '../stores/phone'
 import { usePhoneIdentity } from '../composables/usePhoneIdentity'
@@ -45,6 +46,7 @@ const lastDTMF = ref('')
 const call = computed(() => phone.currentCall)
 const callEnding = computed(() => call.value ? phone.isCallEnding(call.value.call_id) : false)
 const connected = computed(() => call.value?.status === 'connected')
+const modemCall = computed(() => call.value?.call_id.startsWith('modemvoice-') === true)
 const incoming = computed(() => call.value?.direction === 'inbound'
   && call.value.status === 'ringing'
   && !call.value.media_id)
@@ -74,6 +76,22 @@ onMounted(async () => {
   if (!phone.initialized) await phone.initialize()
 })
 
+const statusAbort = new AbortController()
+let statusPending = false
+let modeRevision = 0
+const statusTimer = window.setInterval(async () => {
+  if (selected.value?.phone_mode !== 'modem_voice' || statusPending || modePending.value) return
+  statusPending = true
+  const revision = modeRevision
+  try {
+    const devices = await phoneService.devices(statusAbort.signal)
+    if (!statusAbort.signal.aborted && !modePending.value && revision === modeRevision) phone.devices = devices
+  } catch (error) {
+    if (!statusAbort.signal.aborted) phone.error = phoneErrorMessage(error, '模组直拨状态刷新失败')
+  } finally { statusPending = false }
+}, 2_000)
+onUnmounted(() => { window.clearInterval(statusTimer); statusAbort.abort() })
+
 function isDeviceReady(device: PhoneDevice) {
   if (device.phone_mode === 'volte') {
     return device.voice.ready === true || device.native_volte?.ims_registered === true
@@ -87,6 +105,7 @@ function isDeviceBusy(device: PhoneDevice) {
 }
 
 function deviceModeLabel(device?: PhoneDevice) {
+  if (device?.phone_mode === 'modem_voice') return '模组直拨'
   if (device?.phone_mode === 'volte') return 'VoLTE'
   return device?.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'
 }
@@ -95,6 +114,12 @@ function deviceStatus(device?: PhoneDevice) {
   if (!device) return '未选择设备'
   if (isDeviceBusy(device)) return '通话占用'
   const mode = deviceModeLabel(device)
+  if (device.phone_mode === 'modem_voice') {
+    if (device.voice.phase === 'restarting') return `${mode} · 重启模组中`
+    if (device.voice.last_error) return `${mode} · 准备失败`
+    if (device.voice.phase === 'preparing') return `${mode} · 准备音频中`
+    return `${mode} · ${device.voice.ready ? '就绪' : '未就绪'}`
+  }
   if (isDeviceReady(device) || device.vowifi_active) return `${mode} · 就绪`
   if (device.phone_mode === 'volte' && device.vowifi_enabled) {
     if (device.native_volte?.ims_registered || device.native_volte?.phase === 'registered') return `${mode} · IMS 已注册`
@@ -114,7 +139,7 @@ function deviceStatus(device?: PhoneDevice) {
 
 const selectedMode = computed(() => {
   const mode = selected.value?.phone_mode
-  if (mode === 'cellular' || mode === 'volte') return mode
+  if (mode === 'cellular' || mode === 'volte' || mode === 'modem_voice') return mode
   return 'wifi'
 })
 const selectedStrategy = computed(() => selected.value?.data_strategy === 'always' ? 'always' : 'on_demand')
@@ -180,6 +205,7 @@ async function changePhoneMode(mode: string | number | boolean | undefined) {
     if (selected.value && (isDeviceReady(selected.value) || selected.value.vowifi_active)) return
   }
   modePending.value = true
+  modeRevision++
   phone.clearError()
   try {
     const changed = await confirmPhoneModeChange({
@@ -197,6 +223,8 @@ async function changePhoneMode(mode: string | number | boolean | undefined) {
     await phone.refresh()
     if (mode === 'cellular') {
       ElMessage.success('已切到蜂窝。会正常驻网；要走流量再到卡策略打开「网络」')
+    } else if (mode === 'modem_voice') {
+      ElMessage.success('已选择模组直拨，正在检查设备并准备音频')
     } else if (mode === 'volte') {
       ElMessage.success('已切到 VoLTE。会驻网并由模组原生 IMS 打电话；打开「网络」才会走上网流量')
     } else {
@@ -436,6 +464,7 @@ async function sendDTMF(digit: string) {
                 <el-radio-button value="wifi" :disabled="!!phoneModeDisabledReason(selected, 'wifi')" :title="phoneModeDisabledReason(selected, 'wifi')">WiFi calling</el-radio-button>
                 <el-radio-button value="cellular" :disabled="!!phoneModeDisabledReason(selected, 'cellular')" :title="phoneModeDisabledReason(selected, 'cellular')">蜂窝数据</el-radio-button>
                 <el-radio-button value="volte" :disabled="!!phoneModeDisabledReason(selected, 'volte')" :title="phoneModeDisabledReason(selected, 'volte')">VoLTE</el-radio-button>
+                <el-radio-button value="modem_voice" :disabled="!!phoneModeDisabledReason(selected, 'modem_voice')" :title="phoneModeDisabledReason(selected, 'modem_voice')">模组直拨</el-radio-button>
               </el-radio-group>
               <el-select
                 v-if="selectedMode === 'cellular'"
@@ -453,9 +482,14 @@ async function sendDTMF(digit: string) {
                   ? (selectedStrategy === 'always' ? '网络已开，数据会保持连接。' : '网络已开，只有拨号时才连数据，挂断后关闭。')
                   : '会正常驻网，待机不走流量。打蜂窝电话会临时打开数据。' }}
               </p>
+              <div v-if="selectedMode === 'modem_voice'" class="phone-mode-hint" role="status" aria-live="polite">
+                <p>使用 SIM 卡拨打和接听，声音通过网页传输。接通后可用键盘按键。</p>
+                <p v-if="selected?.voice.last_error" class="phone-mode-hint is-warn" role="alert">{{ selected.voice.last_error }}</p>
+                <el-button v-if="selected?.voice.phase === 'failed'" :loading="modePending" :disabled="!!call" @click="void changePhoneMode('modem_voice')">重新准备</el-button>
+              </div>
               <p v-if="selectedMode === 'volte'" class="phone-mode-hint">
                 {{ selected?.software_ims_blocked
-                  ? '这张卡需要使用模组原生 VoLTE 通话。打开「网络」才会用上网流量。'
+                  ? '这张卡需要使用模组驻网通话，可选择 VoLTE 或已适配的模组直拨。打开「网络」才会用上网流量。'
                   : selected?.native_volte?.uac_unusable
                     ? '这台模组的 USB 声卡不能开（会把 QMI 打挂）。VoLTE 信令能打，没有模组声音。'
                     : selected?.native_volte?.reboot_required
@@ -618,7 +652,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="!!action || callEnding || !connected || call.read_only"
+                :disabled="!!action || callEnding || !connected || call.read_only || modemCall"
                 :aria-pressed="!!call.held"
                 @click="toggleHold"
               >

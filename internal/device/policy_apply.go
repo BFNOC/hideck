@@ -53,6 +53,20 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 			}
 		}()
 	}
+	if !IsModemVoiceMode(pol.PhoneMode) || !pol.VoWiFiEnabled || pol.AirplaneEnabled {
+		if err := p.stopModemVoice(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "modem_voice_stop_failed", Err: err}
+		}
+	}
+	modemVoiceHandoff := IsModemVoiceMode(pol.PhoneMode) && pol.VoWiFiEnabled && !pol.AirplaneEnabled
+	if err := validate(); err != nil {
+		return policyApplyResult{ICCID: iccid, Reason: "owner_changed", Err: err}
+	}
+	if modemVoiceHandoff {
+		if err := p.stopNativeVoLTEForModemVoice(worker.ID); err != nil {
+			return policyApplyResult{ICCID: iccid, Reason: "native_volte_stop_failed", Err: err}
+		}
+	}
 	if err := validate(); err != nil {
 		return policyApplyResult{ICCID: iccid, Reason: "owner_changed", Err: err}
 	}
@@ -111,8 +125,10 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		p.clearDesiredVoWiFiRecoverState(worker.ID)
 		p.scheduleNativeVoLTE(worker.ID, reason)
 	} else {
-		p.stopNativeVoLTE(worker.ID, reason)
-		if PhoneServiceEnabled(effective) && !IsNativeVoLTEMode(effective.PhoneMode) && !cellularSoftwarePhoneHeld(worker, pol) {
+		if !modemVoiceHandoff {
+			p.stopNativeVoLTE(worker.ID, reason)
+		}
+		if PhoneServiceEnabled(effective) && !UsesModemPhoneControl(effective.PhoneMode) && !cellularSoftwarePhoneHeld(worker, pol) {
 			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 		} else {
 			p.clearDesiredVoWiFiRecoverState(worker.ID)
@@ -120,6 +136,9 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	}
 	if err := validate(); err != nil {
 		return policyApplyResult{ICCID: iccid, Reason: "owner_changed", Err: err}
+	}
+	if err := p.reconcileModemVoice(worker); err != nil {
+		return policyApplyResult{ICCID: iccid, Reason: "modem_voice_failed", Err: err}
 	}
 	return policyApplyResult{Applied: true, ICCID: iccid, Reason: reason}
 }

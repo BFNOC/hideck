@@ -5,7 +5,41 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/modemvoice"
 )
+
+func TestVoiceSessionReleasesStoppedATOwner(t *testing.T) {
+	for _, backend := range []string{"at", "mbim"} {
+		t.Run(backend, func(t *testing.T) {
+			cfg := config.DeviceConfig{ID: "voice", DeviceBackend: backend, ATPort: "/dev/test-at"}
+			factory := New
+			if backend == "mbim" {
+				factory = NewSMSAuxiliary
+			}
+			m, err := factory(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.setRunning(true)
+			s, err := modemvoice.NewSession(context.Background(), m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !m.StopAndWait(time.Second) {
+				t.Fatal("AT owner did not finish stopping")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			for range 2 {
+				if err := s.Close(ctx); err != nil {
+					t.Fatal("fully stopped owner prevented cleanup", err)
+				}
+			}
+		})
+	}
+}
 
 func TestVoiceFenceWaitsForStoppedOwnerLoop(t *testing.T) {
 	m := newRunningTestManager(t)

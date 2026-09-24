@@ -30,8 +30,8 @@ func TestPhysicalSIMRefreshRetainsRoundTripGeneration(t *testing.T) {
 	}
 }
 
-func TestSIMRoundTripRetiresNativeOwnership(t *testing.T) {
-	p, port := testPhoneWorker(t)
+func TestSIMRoundTripRetiresNativeAndModemVoiceOwnership(t *testing.T) {
+	p, port := testModemVoicePort(t)
 	w := port.worker
 	w.Config.PhoneMode = PhoneModeVoLTE
 	old := p.beginNativeVoLTESchedule(w.ID)
@@ -43,6 +43,9 @@ func TestSIMRoundTripRetiresNativeOwnership(t *testing.T) {
 	if err := p.validateNativeVoLTEStart(w.ID, old); err == nil {
 		t.Fatal("old native task accepted the same ICCID after a round trip")
 	}
+	if err := port.checkIdentity(context.Background()); err == nil {
+		t.Fatal("old modem call session accepted the same ICCID after a round trip")
+	}
 	next := p.beginNativeVoLTESchedule(w.ID)
 	if next == nil {
 		t.Fatal("new SIM generation was incorrectly deduplicated")
@@ -50,5 +53,11 @@ func TestSIMRoundTripRetiresNativeOwnership(t *testing.T) {
 	defer p.endNativeVoLTESchedule(w.ID, next)
 	if err := p.validateNativeVoLTEStart(w.ID, next); err != nil {
 		t.Fatal("new SIM generation cannot start", err)
+	}
+	w.Config.PhoneMode = PhoneModeModemVoice
+	sim := currentSIMOwnership(w)
+	freshPort := &modemVoicePort{pool: p, worker: w, iccid: sim.iccid, identityGeneration: sim.generation}
+	if err := freshPort.check(context.Background()); err != nil {
+		t.Fatal("new modem session rejected", err)
 	}
 }

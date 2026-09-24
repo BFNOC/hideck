@@ -6,7 +6,7 @@ import { phoneService, type PhoneCall } from '../src/services/phone'
 import { usePhoneStore } from '../src/stores/phone'
 
 const active: PhoneCall = {
-  call_id: 'ims-retained', device_id: 'wwan1', direction: 'inbound',
+  call_id: 'modemvoice-retained', device_id: 'wwan1', direction: 'inbound',
   peer: '10010', status: 'connected', started_at: '2026-09-22T12:00:00Z', read_only: true
 }
 

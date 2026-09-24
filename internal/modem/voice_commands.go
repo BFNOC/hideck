@@ -109,3 +109,59 @@ func isVoiceCommandFailure(command, response string) bool {
 		return false
 	}
 }
+
+// SubscribeVoiceChanges coalesces wakeups, not call state. Consumers fetch CLCC
+// after each wakeup; this never replaces existing RING/CLIP/SMS callbacks.
+func (m *Manager) SubscribeVoiceChanges() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	m.voiceURCMu.Lock()
+	select {
+	case <-m.stop:
+		close(ch)
+		m.voiceURCMu.Unlock()
+		return ch, func() {}
+	default:
+	}
+	if m.voiceURCSubs == nil {
+		m.voiceURCSubs = make(map[chan struct{}]struct{})
+	}
+	m.voiceURCSubs[ch] = struct{}{}
+	m.voiceURCMu.Unlock()
+	return ch, func() {
+		m.voiceURCMu.Lock()
+		if _, exists := m.voiceURCSubs[ch]; exists {
+			delete(m.voiceURCSubs, ch)
+			close(ch)
+		}
+		m.voiceURCMu.Unlock()
+	}
+}
+
+func (m *Manager) notifyVoiceURC(line string) {
+	key := urcKey(line)
+	if line == "MO CONNECTED" {
+		key = line
+	}
+	switch key {
+	case "RING", "+CLIP", "+CCWA", "NO CARRIER", "BUSY", "NO ANSWER", "CONNECT", "MO CONNECTED":
+	default:
+		return
+	}
+	m.voiceURCMu.Lock()
+	defer m.voiceURCMu.Unlock()
+	for ch := range m.voiceURCSubs {
+		select {
+		case ch <- struct{}{}:
+		default: // An outstanding wakeup already requests a fresh CLCC snapshot.
+		}
+	}
+}
+
+func (m *Manager) closeVoiceChanges() {
+	m.voiceURCMu.Lock()
+	defer m.voiceURCMu.Unlock()
+	for ch := range m.voiceURCSubs {
+		delete(m.voiceURCSubs, ch)
+		close(ch)
+	}
+}

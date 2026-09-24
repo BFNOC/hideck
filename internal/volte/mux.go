@@ -28,6 +28,8 @@ type Mux struct {
 	IMS        VoiceBackend
 	Native     VoiceBackend
 	IsNative   func(deviceID string) bool
+	Modem      VoiceBackend
+	IsModem    func(deviceID string) bool
 }
 
 func (m *Mux) native(deviceID string) bool {
@@ -38,6 +40,9 @@ func (m *Mux) native(deviceID string) bool {
 }
 
 func (m *Mux) pick(deviceID string) VoiceBackend {
+	if m.IsModem != nil && m.IsModem(deviceID) && m.Modem != nil {
+		return m.Modem
+	}
 	if m.native(deviceID) && m.Native != nil {
 		return m.Native
 	}
@@ -46,14 +51,23 @@ func (m *Mux) pick(deviceID string) VoiceBackend {
 
 // Existing calls retain their backend when a device's selected mode changes.
 func (m *Mux) pickCall(deviceID, callID string) VoiceBackend {
+	if strings.HasPrefix(callID, "modemvoice-") && m.Modem != nil {
+		return m.Modem
+	}
 	if strings.HasPrefix(callID, "volte-") && m.Native != nil {
 		return m.Native
+	}
+	if m.IsModem != nil && m.IsModem(deviceID) {
+		return m.IMS
 	}
 	return m.pick(deviceID)
 }
 
 func (m *Mux) SubscribeIncomingCalls(handler func(voicehost.IncomingCall)) func() {
 	var unsubs []func()
+	if m != nil && m.Modem != nil {
+		unsubs = append(unsubs, m.Modem.SubscribeIncomingCalls(handler))
+	}
 	if m != nil && m.IMS != nil {
 		unsubs = append(unsubs, m.IMS.SubscribeIncomingCalls(handler))
 	}
@@ -71,6 +85,9 @@ func (m *Mux) SubscribeIncomingCalls(handler func(voicehost.IncomingCall)) func(
 
 func (m *Mux) SubscribeCallEvents(handler func(voicehost.CallEvent)) func() {
 	var unsubs []func()
+	if m != nil && m.Modem != nil {
+		unsubs = append(unsubs, m.Modem.SubscribeCallEvents(handler))
+	}
 	if m != nil && m.IMS != nil {
 		unsubs = append(unsubs, m.IMS.SubscribeCallEvents(handler))
 	}
@@ -96,6 +113,11 @@ func (m *Mux) BeginCall(ctx context.Context, request voicehost.BeginCallRequest)
 }
 
 func (m *Mux) ActiveCall(deviceID string) *voicehost.CallSnapshot {
+	if m.Modem != nil {
+		if call := m.Modem.ActiveCall(deviceID); call != nil {
+			return call
+		}
+	}
 	return m.pick(deviceID).ActiveCall(deviceID)
 }
 

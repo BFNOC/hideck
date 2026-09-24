@@ -9,10 +9,14 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
+	modemhost "github.com/yibaiba/hideck/internal/modemvoice/host"
 )
 
 func TestIncomingCaptureCapabilityDoesNotMaskRealRecordingFailures(t *testing.T) {
-	unsupported := errors.ErrUnsupported
+	unsupported := (&modemhost.Controller{}).StartCallCapture("dev-1", "incoming", "")
+	if !errors.Is(unsupported, errors.ErrUnsupported) {
+		t.Fatal(unsupported)
+	}
 	for _, failure := range []error{unsupported, errors.New("capture I/O failed")} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			gateway, store := newFakeVoiceGateway(), newMemoryCallStore()

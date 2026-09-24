@@ -60,16 +60,16 @@ func TestMuxRoutesByMode(t *testing.T) {
 	}
 }
 
-func TestMuxRetainsNativeCallOwnerAfterModeSwitch(t *testing.T) {
-	ims, native := &stubBackend{name: "ims"}, &stubBackend{name: "native"}
+func TestMuxRetainsModemCallOwnerAfterModeSwitch(t *testing.T) {
+	ims, native, modem := &stubBackend{name: "ims"}, &stubBackend{name: "native"}, &stubBackend{name: "modem"}
 	selected := true
-	mux := &Mux{IMS: ims, Native: native, IsNative: func(string) bool { return selected }}
+	mux := &Mux{IMS: ims, Native: native, Modem: modem, IsModem: func(string) bool { return selected }}
 	got, err := mux.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "d"})
-	if err != nil || got.CallID != "native-d" {
+	if err != nil || got.CallID != "modem-d" {
 		t.Fatalf("%+v %v", got, err)
 	}
 	selected = false
-	if mux.pickCall("d", "volte-owned") != native {
+	if mux.pickCall("d", "modemvoice-owned") != modem {
 		t.Fatal("call followed new mode")
 	}
 	if mux.pick("d") != ims {

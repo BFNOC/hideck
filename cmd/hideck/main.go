@@ -223,6 +223,8 @@ func main() {
 		IMS:        voiceGW,
 		Native:     pool.NativeVoLTEController(),
 		IsNative:   pool.IsNativeVoLTE,
+		Modem:      pool.ModemVoiceController(),
+		IsModem:    pool.IsModemVoice,
 	}
 	phoneService, err := phone.NewService(phone.ServiceOptions{
 		Gateway: phoneGateway, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
