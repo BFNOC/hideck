@@ -9,9 +9,10 @@ import (
 // AT/MBIM reuse their existing owner. Pure QMI uses the same transient AT gate
 // as the terminal and polls CLCC; it never adds a competing serial reader.
 type modemVoicePort struct {
-	pool   *Pool
-	worker *Worker
-	iccid  string
+	pool               *Pool
+	worker             *Worker
+	iccid              string
+	identityGeneration uint64
 }
 
 func (port *modemVoicePort) check(ctx context.Context) error {
@@ -29,7 +30,7 @@ func (port *modemVoicePort) checkIdentity(ctx context.Context) error {
 		return err
 	}
 	w := port.worker
-	if port.pool.GetWorker(w.ID) != w || w.CurrentICCID() != port.iccid || port.pool.IsESIMSwitching(w.ID) {
+	if port.pool.GetWorker(w.ID) != w || currentSIMOwnership(w) != (simOwnership{port.iccid, port.identityGeneration}) || port.pool.IsESIMSwitching(w.ID) {
 		return errors.New("模组或 SIM 已更换，模组直拨会话已失效")
 	}
 	class, err := ClassifyWorkerLebaraUK(w)

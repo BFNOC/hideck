@@ -11,7 +11,7 @@ type nativeVoLTEStart struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	worker *Worker
-	iccid  string
+	sim    simOwnership
 	ready  <-chan struct{}
 }
 
@@ -24,12 +24,9 @@ func (p *Pool) beginNativeVoLTESchedule(deviceID string) *nativeVoLTEStart {
 	p.nativeVoLTEScheduleMu.Lock()
 	defer p.nativeVoLTEScheduleMu.Unlock()
 	w := p.GetWorker(deviceID)
-	iccid := ""
-	if w != nil {
-		iccid = w.CurrentICCID()
-	}
+	sim := currentSIMOwnership(w)
 	if old := p.nativeVoLTEScheduled[deviceID]; old != nil {
-		if old.worker == w && old.iccid == iccid && old.ctx.Err() == nil {
+		if old.worker == w && old.sim == sim && old.ctx.Err() == nil {
 			return nil
 		}
 		p.cancelNativeVoLTEStartLocked(deviceID)
@@ -38,7 +35,7 @@ func (p *Pool) beginNativeVoLTESchedule(deviceID string) *nativeVoLTEStart {
 		p.nativeVoLTEScheduled = make(map[string]*nativeVoLTEStart)
 	}
 	ctx, cancel := context.WithCancel(p.Context())
-	start := &nativeVoLTEStart{ctx: ctx, cancel: cancel, worker: w, iccid: iccid}
+	start := &nativeVoLTEStart{ctx: ctx, cancel: cancel, worker: w, sim: sim}
 	if transition := p.nativeVoLTETransitions[deviceID]; transition != nil {
 		start.ready = transition.done
 	}
@@ -125,7 +122,7 @@ func (p *Pool) validateNativeVoLTEStart(deviceID string, start *nativeVoLTEStart
 		return context.Canceled
 	}
 	w := p.GetWorker(deviceID)
-	if w == nil || w != start.worker || w.CurrentICCID() != start.iccid || p.IsESIMSwitching(deviceID) {
+	if w == nil || w != start.worker || currentSIMOwnership(w) != start.sim || p.IsESIMSwitching(deviceID) {
 		return errors.New("VoLTE 启动已失效：设备或 SIM 已更换或正在切卡")
 	}
 	if !IsNativeVoLTEMode(w.Config.PhoneMode) || !PhoneServiceEnabled(w.Config) || w.Config.AirplaneEnabled {

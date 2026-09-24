@@ -40,7 +40,8 @@ func (p *Pool) newModemVoiceController() *host.Controller {
 		if w == nil {
 			return ""
 		}
-		return fmt.Sprintf("%p:%s", w, w.CurrentICCID())
+		sim := currentSIMOwnership(w)
+		return fmt.Sprintf("%p:%s:%d", w, sim.iccid, sim.generation)
 	}, Listen: func() (net.PacketConn, error) {
 		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	}})
@@ -96,7 +97,8 @@ func (p *Pool) prepareModemVoice(ctx context.Context, id string) (*host.Resource
 	if w == nil || w.CurrentICCID() == "" {
 		return nil, errors.New("模组直拨需要已识别的 SIM 卡")
 	}
-	port := &modemVoicePort{pool: p, worker: w, iccid: w.CurrentICCID()}
+	sim := currentSIMOwnership(w)
+	port := &modemVoicePort{pool: p, worker: w, iccid: sim.iccid, identityGeneration: sim.generation}
 	if err := port.check(ctx); err != nil {
 		return nil, err
 	}

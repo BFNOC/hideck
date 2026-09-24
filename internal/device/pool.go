@@ -194,6 +194,8 @@ type Pool struct {
 	cfg                       *config.Config
 	notifier                  Notifier
 	mu                        sync.RWMutex
+	policyTransitionsMu       sync.Mutex
+	policyTransitions         map[string]*policyTransition
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	dataConnectHandlersMu     sync.RWMutex
@@ -353,6 +355,9 @@ func (p *Pool) registerWorkerStarting(worker *Worker) error {
 	if p == nil || worker == nil || strings.TrimSpace(worker.ID) == "" {
 		return fmt.Errorf("worker_nil")
 	}
+	transition := p.policyTransitionFor(worker.ID)
+	transition.Lock()
+	defer transition.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if current := p.workers[worker.ID]; current != nil && current != worker {
@@ -369,6 +374,9 @@ func (p *Pool) removeWorkerRegistrationIfCurrent(worker *Worker) {
 	if p == nil || worker == nil || strings.TrimSpace(worker.ID) == "" {
 		return
 	}
+	transition := p.policyTransitionFor(worker.ID)
+	transition.Lock()
+	defer transition.Unlock()
 	p.mu.Lock()
 	if current := p.workers[worker.ID]; current == worker {
 		delete(p.workers, worker.ID)
@@ -743,6 +751,12 @@ func (w *Worker) refreshIdentityLive(ctx context.Context, reason string) (liveSI
 	}
 	identityChangedForSPN := (iccid != "" && iccid != strings.TrimSpace(w.state.Identity.ICCID)) ||
 		(imsi != "" && imsi != strings.TrimSpace(w.state.Identity.IMSI))
+	// Physical swaps do not necessarily pass through the eSIM transition hook.
+	// Retain a generation change even if the original ICCID later returns.
+	if iccid != "" && w.state.Identity.ICCID != "" &&
+		normalizeSIMIdentityForCompare(iccid) != normalizeSIMIdentityForCompare(w.state.Identity.ICCID) {
+		w.state.Identity.Generation++
+	}
 	if iccid != "" {
 		w.state.Identity.ICCID = iccid
 	}
@@ -1169,7 +1183,25 @@ func (p *Pool) AbandonDevice(deviceID string) error {
 
 var ErrWorkerNotFound = errors.New("设备未找到")
 
+var errWorkerInitializing = errors.New("device worker is initializing")
+
 func (p *Pool) RemoveWorker(deviceID string) error {
+	transition := p.policyTransitionFor(deviceID)
+	for {
+		transition.Lock()
+		err := p.removeWorkerForPolicyTransition(deviceID)
+		transition.Unlock()
+		if !errors.Is(err, errWorkerInitializing) {
+			return err
+		}
+		// Initialization must be able to publish its Worker while we wait.
+		if !p.waitWorkerInitSettled(deviceID, 10*time.Second) {
+			return fmt.Errorf("设备 %s 正在初始化中，等待停止超时", deviceID)
+		}
+	}
+}
+
+func (p *Pool) removeWorkerForPolicyTransition(deviceID string) error {
 	if err := p.stopModemVoice(deviceID); err != nil {
 		return err
 	}
@@ -1189,10 +1221,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	p.mu.Unlock()
 
 	if worker == nil && alreadyRebuilding {
-		if !p.waitWorkerInitSettled(deviceID, 10*time.Second) {
-			return fmt.Errorf("设备 %s 正在初始化中，等待停止超时", deviceID)
-		}
-		return p.RemoveWorker(deviceID)
+		return errWorkerInitializing
 	}
 	if worker == nil {
 		return ErrWorkerNotFound
