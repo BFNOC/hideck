@@ -27,6 +27,18 @@ func TestSelectTransportUsesUSBWithMissingSerial(t *testing.T) {
 	}
 }
 
+func TestSelectTransportExplainsMissingAndAmbiguousUSB(t *testing.T) {
+	_, err := selectTransport("serial device usb:3-2.1 transport_id:1", "3-2.2")
+	if err == nil || !strings.Contains(err.Error(), "USB 3-2.2 未找到 ADB 连接") {
+		t.Fatalf("missing target diagnostic: %v", err)
+	}
+	output := "serial device usb:3-2.2 transport_id:1\nother device usb:3-2.2 transport_id:2"
+	_, err = selectTransport(output, "3-2.2")
+	if err == nil || !strings.Contains(err.Error(), "匹配到 2 个 ADB 连接") {
+		t.Fatalf("ambiguous target diagnostic: %v", err)
+	}
+}
+
 func TestShellStatusRequiresExactFinalStatus(t *testing.T) {
 	for _, output := range []string{"OK", "\n" + shellStatus + "0\nextra", "\n" + shellStatus + "-1", "\n" + shellStatus + "256"} {
 		if _, err := parseShell(output); err == nil {

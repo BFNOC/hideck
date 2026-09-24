@@ -28,6 +28,7 @@ import { usePhoneIdentity } from '../composables/usePhoneIdentity'
 import { usePhoneDeviceSelection } from '../composables/usePhoneDeviceSelection'
 import { phoneContactsService } from '../services/phone-contacts'
 import { dialNumberError, formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
+import { confirmPhoneModeChange } from '../utils/phoneModeSwitch'
 
 const phone = usePhoneStore()
 const identities = usePhoneIdentity()
@@ -114,7 +115,7 @@ function deviceStatus(device?: PhoneDevice) {
   if (isDeviceBusy(device)) return '通话占用'
   const mode = deviceModeLabel(device)
   if (device.phone_mode === 'modem_voice') {
-    if (device.voice.last_error) return `${mode} · ${device.voice.last_error}`
+    if (device.voice.last_error) return `${mode} · 准备失败`
     if (device.voice.phase === 'preparing') return `${mode} · 准备音频中`
     return `${mode} · ${device.voice.ready ? '就绪' : '未就绪'}`
   }
@@ -189,7 +190,9 @@ async function toggleWifiCalling(rawVal: string | number | boolean) {
 }
 
 async function changePhoneMode(mode: string) {
-  if (!selectedDevice.value || !!call.value || modePending.value) return
+  if (!selected.value || !!call.value || modePending.value) return
+  const target = { ...selected.value }
+  const strategy = selectedStrategy.value
   if ((mode === 'wifi' || mode === 'cellular') && selected.value?.software_ims_blocked) {
     mode = 'volte'
   }
@@ -205,11 +208,18 @@ async function changePhoneMode(mode: string) {
   modeRevision++
   phone.clearError()
   try {
-    const result = await devicesService.enableVoWiFi(selectedDevice.value, {
-      mode,
-      data_strategy: selectedStrategy.value
+    const changed = await confirmPhoneModeChange({
+      target, mode, current: () => selected.value, hasCall: () => !!call.value,
+      confirm: ({ title, message }) => ElMessageBox.confirm(message, title, {
+        confirmButtonText: '确认切换', cancelButtonText: '保持当前模式', type: 'warning',
+        distinguishCancelAndClose: true, closeOnClickModal: false
+      }),
+      apply: async () => {
+        const result = await devicesService.enableVoWiFi(target.id, { mode, data_strategy: strategy })
+        if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
+      }
     })
-    if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
+    if (!changed) return
     await phone.refresh()
     if (mode === 'cellular') {
       ElMessage.success('已切到蜂窝。会正常驻网；要走流量再到卡策略打开「网络」')
@@ -431,7 +441,7 @@ async function sendDTMF(digit: string) {
               v-model="selectedDevice"
               aria-label="语音设备"
               placeholder="选择语音设备"
-              :disabled="!!call"
+              :disabled="!!call || modePending"
               popper-class="phone-device-dropdown"
               @change="rememberDevice"
             >
@@ -473,6 +483,7 @@ async function sendDTMF(digit: string) {
               </p>
               <div v-if="selectedMode === 'modem_voice'" class="phone-mode-hint" role="status" aria-live="polite">
                 <p>使用 SIM 卡拨打和接听，声音通过网页传输。接通后可用键盘按键。</p>
+                <p v-if="selected?.voice.last_error" class="phone-mode-hint is-warn" role="alert">{{ selected.voice.last_error }}</p>
                 <el-button v-if="selected?.voice.phase === 'failed'" :loading="modePending" :disabled="!!call" @click="void changePhoneMode('modem_voice')">重新准备</el-button>
               </div>
               <p v-if="selectedMode === 'volte'" class="phone-mode-hint">

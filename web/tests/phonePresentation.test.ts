@@ -24,6 +24,15 @@ test('dialer remembers explicit device choices and keeps modem help concise', ()
   assert.match(phoneView, /重新准备/)
 })
 
+test('RF mode changes confirm first and keep full preparation errors outside device labels', () => {
+  assert.match(phoneView, /await confirmPhoneModeChange\(\{/)
+  assert.match(phoneView, /enableVoWiFi\(target\.id/)
+  assert.match(phoneView, /confirmButtonText: '确认切换', cancelButtonText: '保持当前模式'/)
+  assert.match(phoneView, /:disabled="!!call \|\| modePending"[\s\S]*popper-class="phone-device-dropdown"/)
+  assert.match(phoneView, /role="alert">\{\{ selected\.voice\.last_error \}\}/)
+  assert.match(phoneView, /if \(device.voice.last_error\) return `\$\{mode\} · 准备失败`/)
+})
+
 test('phone route and navigation remain available outside the phone page', () => {
   assert.match(router, /path: '\/phone'/)
   assert.match(shell, /<PhoneCallBar\s*\/>/)

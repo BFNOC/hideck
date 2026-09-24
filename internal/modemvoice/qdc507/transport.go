@@ -46,8 +46,11 @@ func selectTransport(output, usb string) (transport, error) {
 			matches = append(matches, transport{id: id, usb: usb})
 		}
 	}
-	if len(matches) != 1 {
-		return transport{}, fmt.Errorf("qdc507: expected one ADB transport for USB %s, found %d", usb, len(matches))
+	if len(matches) == 0 {
+		return transport{}, fmt.Errorf("qdc507: USB %s 未找到 ADB 连接；请检查此模组是否已开启 ADB，以及宿主机或容器能否访问该 USB 接口", usb)
+	}
+	if len(matches) > 1 {
+		return transport{}, fmt.Errorf("qdc507: USB %s 匹配到 %d 个 ADB 连接，无法唯一确认目标模组", usb, len(matches))
 	}
 	return matches[0], nil
 }

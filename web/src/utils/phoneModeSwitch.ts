@@ -1,0 +1,50 @@
+import type { PhoneDevice } from '../services/phone'
+import { phoneModeCampsOnCell, phoneModeLabel } from './phoneMode'
+
+export type PhoneModeWarning = { title: string; message: string }
+
+export function phoneModeWarning(device: PhoneDevice, mode: string): PhoneModeWarning | undefined {
+  if (!phoneModeCampsOnCell(mode)) return
+  const label = phoneModeLabel(mode)
+  const region = device.phone_region?.toUpperCase()
+  const roaming = region && region !== 'CN'
+    ? '这是一张境外 SIM 卡；在归属地以外驻网或通话可能产生漫游费用，也可能受运营商漫游限制。'
+    : '在 SIM 卡归属地以外使用，可能产生漫游费用。'
+  const audio = mode === 'modem_voice'
+    ? '模组直拨还需要该模组已适配的 USB 音频和 ADB 接口；切换模式不会自动开启 ADB。'
+    : ''
+  return {
+    title: `切换到${label}？`,
+    message: `设备 ${device.name || device.id}（${device.id}）将使用蜂窝驻网，并退出飞行模式；若正在使用 WiFi calling，其服务将停止。${roaming}${audio}是否继续？`
+  }
+}
+
+type ChangeOptions = {
+  target: PhoneDevice
+  mode: string
+  current: () => PhoneDevice | undefined
+  hasCall: () => boolean
+  confirm: (warning: PhoneModeWarning) => Promise<unknown>
+  apply: () => Promise<void>
+}
+
+export async function confirmPhoneModeChange(options: ChangeOptions): Promise<boolean> {
+  const warning = phoneModeWarning(options.target, options.mode)
+  if (warning) {
+    try {
+      await options.confirm(warning)
+    } catch (error) {
+      if (error === 'cancel' || error === 'close') return false
+      throw error
+    }
+  }
+  const current = options.current()
+  const target = options.target
+  if (!current || options.hasCall() || current.id !== target.id || current.iccid !== target.iccid
+    || current.phone_mode !== target.phone_mode || current.vowifi_enabled !== target.vowifi_enabled
+    || current.rf_lock !== target.rf_lock || current.software_ims_blocked !== target.software_ims_blocked) {
+    throw new Error('设备、SIM 卡或通话状态已变化，请重新确认切换')
+  }
+  await options.apply()
+  return true
+}
