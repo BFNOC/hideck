@@ -121,7 +121,7 @@ func (s *Service) registerLocked(ctx context.Context) error {
 		switch {
 		case againErr == nil:
 			expires = again
-		case s.keepRegistrationAfterFailedOutboundRefresh():
+		case !errors.Is(againErr, errRegisterContactMissing) && s.keepRegistrationAfterFailedOutboundRefresh():
 			logging.WarnRate("ims-outbound-refresh-"+s.DeviceID(), 30*time.Second,
 				"IMS outbound binding refresh failed; keep current registration",
 				"device", s.DeviceID(), "err", againErr)
@@ -838,6 +838,10 @@ func (s *Service) registrationFlowIntactLocked() bool {
 // refused the extra REGISTER, the existing Contact is still live, and
 // switching transports would only close the flow that is carrying it.
 func (s *Service) keepRegistrationAfterFailedRefresh(hadBinding bool, err error) bool {
+	// A healthy flow does not prove a binding omitted from a successful response.
+	if errors.Is(err, errRegisterContactMissing) {
+		return false
+	}
 	if !hadBinding || s == nil || errors.Is(err, enginesim.ErrAPDUBusy) || !s.registrationFlowIntact() {
 		return false
 	}

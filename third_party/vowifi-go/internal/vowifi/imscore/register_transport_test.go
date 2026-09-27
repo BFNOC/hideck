@@ -750,6 +750,13 @@ func serveRegistrationSequence(conn *net.UDPConn, seen chan<- string, statuses [
 }
 
 func registerWireResponse(request string, status int, extraHeaders string) string {
+	if status >= 200 && status < 300 && sipRequestMethod(request) == "REGISTER" && !strings.Contains(strings.ToLower(extraHeaders), "contact:") {
+		contact := sipHeaderValue(request, "Contact")
+		start, end := sipAddressSpan(contact)
+		if contact != "*" && end > start {
+			extraHeaders += "Contact: <" + contact[start:end] + ">\r\n"
+		}
+	}
 	return fmt.Sprintf(
 		"SIP/2.0 %d Test\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: 0\r\n\r\n",
 		status,

@@ -899,7 +899,7 @@ func TestRegisterKeepsItsBindingWhenStaleContactsAreAdvertised(t *testing.T) {
 	service.transport.SetSendFn(func(request string) error {
 		requests <- request
 		service.transport.DeliverResponse(registerResponseForRequest(request, 200, map[string]string{
-			"Contact": `<sip:contact-1@new.example>, <sip:stale@old.example>`,
+			"Contact": sipHeaderValue(request, "Contact") + `, <sip:stale@old.example>`,
 		}))
 		return nil
 	})

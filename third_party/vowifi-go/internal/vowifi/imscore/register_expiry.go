@@ -9,16 +9,19 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
+var errRegisterContactMissing = errors.New("imscore: REGISTER response does not contain the requested Contact binding")
+
 func registrationExpires(response *sipResponse, requestContact string, configured time.Duration) (time.Duration, error) {
-	if response != nil {
-		contact := matchingRegisterContact(response, requestContact)
-		// RFC 3261 10.2.4: only our binding's Contact parameter overrides Expires.
-		if value, exists := contactParameterValue(contact, "expires"); exists {
-			return parseRegistrationLifetime(value)
-		}
-		if value := strings.TrimSpace(response.Header("Expires")); value != "" {
-			return parseRegistrationLifetime(value)
-		}
+	contact := matchingRegisterContact(response, requestContact)
+	if contact == "" {
+		return 0, errRegisterContactMissing
+	}
+	// RFC 3261 10.2.4: only our binding's Contact parameter overrides Expires.
+	if value, exists := contactParameterValue(contact, "expires"); exists {
+		return parseRegistrationLifetime(value)
+	}
+	if value := strings.TrimSpace(response.Header("Expires")); value != "" {
+		return parseRegistrationLifetime(value)
 	}
 	// Preserve the existing configured/default lifetime when none was supplied.
 	if configured <= 0 {
