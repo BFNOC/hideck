@@ -101,6 +101,7 @@ RUN apk add --no-cache \
       lame-libs \
       libqmi \
       opencore-amr \
+      pcsc-lite-libs \
       psmisc \
       tzdata \
       vo-amrwbenc && \
@@ -108,6 +109,7 @@ RUN apk add --no-cache \
     test -e /usr/lib/libopencore-amrwb.so.0 && \
     test -e /usr/lib/libvo-amrwbenc.so.0 && \
     test -e /usr/lib/libmp3lame.so.0 && \
+    test -e /usr/lib/libpcsclite.so.1 && \
     test -x /usr/libexec/qmi-proxy && \
     adb version && arecord --version && aplay --version
 
