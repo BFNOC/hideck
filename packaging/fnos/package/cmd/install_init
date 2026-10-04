@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if [ "${wizard_hardware_access:-}" != yes ]; then
+  message='请先确认 HiDeck 的 host 网络、特权容器和 USB 设备访问权限。'
+  printf '%s\n' "$message" >&2
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then printf '%s\n' "$message" > "$TRIM_TEMP_LOGFILE"; fi
+  exit 1
+fi

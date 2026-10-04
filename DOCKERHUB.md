@@ -94,6 +94,8 @@ Web 入口：`http://YOUR_IP:7575`
 
 ## 模组直拨依赖
 
+飞牛 fnOS 应用中心的 `.fpk` 打包、权限说明及验证边界见[飞牛应用包](packaging/fnos/README.md)。包内复用本镜像，不另行修改电话或 VoWiFi 协议。
+
 四种镜像构建路径都安装 ADB 和 `alsa-utils`（提供 `arecord`、`aplay`），并在构建时检查程序可执行以及 ADB 的 `-t` / `-L` 能力。已适配固件 `QDC507GLEFM21` 使用的模组端驱动和音频桥接程序内嵌在 HiDeck 二进制中，不需要首次联网下载，也不需要另行挂载 `data/modem-voice/bundles/`。
 
 容器不提供宿主机内核驱动。Linux 宿主机需要内置或已安装 `snd_usb_audio`；可在宿主机检查：

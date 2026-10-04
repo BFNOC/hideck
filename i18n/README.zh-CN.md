@@ -63,6 +63,8 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
 
 镜像：`yibaiba/hideck:latest`。Compose 使用 `network_mode: host`、`privileged: true`、`/dev`，数据在 `config/`、`data/`、`logs/`。见 [DOCKERHUB.md](../DOCKERHUB.md) 和 [HTTPS / WebRTC](../docs/https-webrtc.md)。
 
+飞牛 fnOS 可使用独立的 [FPK 打包方案](../packaging/fnos/README.md)，复用 Docker 镜像并提供桌面入口和应用持久化目录；仍需 fnOS 真机验收。
+
 ```bash
 docker compose ps
 docker compose logs -f hideck

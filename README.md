@@ -63,6 +63,8 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
 
 Image: `yibaiba/hideck:latest`. Compose uses `network_mode: host`, `privileged: true`, `/dev`, and persists `config/`, `data/`, `logs/`. See [DOCKERHUB.md](DOCKERHUB.md) and [HTTPS / WebRTC](docs/https-webrtc.md).
 
+For Feiniu fnOS, the optional [FPK packaging](packaging/fnos/README.md) reuses the Docker image with an application entry and persistent app directories; on-device validation is still required.
+
 ```bash
 docker compose ps
 docker compose logs -f hideck
