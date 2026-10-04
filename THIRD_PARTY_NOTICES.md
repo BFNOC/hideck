@@ -46,9 +46,9 @@ binaries easier to inspect.
 
 ## Optional QDC507 voice runtime
 
-The experimental `internal/modemvoice/qdc507` adapter can verify a local runtime
-bundle or explicitly download it into a versioned cache. These runtime binaries
-are not embedded in the Go executable or copied into the Docker images.
+The `internal/modemvoice/qdc507` adapter embeds a pinned runtime bundle in the Go
+executable, including executables distributed in Docker and OpenWrt packages.
+See `internal/modemvoice/qdc507/ASSETS.md` for the embedded artifact manifest.
 
 - Upstream: https://github.com/moluncn/mavo
 - Pinned revision: `0443dfdaf8aec086fd76ba2ee9152fd908114524`
@@ -61,9 +61,21 @@ are not embedded in the Go executable or copied into the Docker images.
 The repository records fixed sizes and SHA-256 hashes for the selected artifacts.
 The report bundled upstream describes an older runtime revision in places; the
 pinned artifact list, not that prose, determines which modules are loaded.
-Any future redistribution of these binary artifacts must separately address
-their corresponding source and applicable notices. This experimental downloader
-does not establish that a public combined runtime distribution is ready.
+Redistribution of these binary artifacts must address their corresponding source
+and applicable notices; embedding does not remove those obligations.
+
+## Optional OpenWrt ADB package
+
+`packaging/openwrt/hideck-adb` builds only the ADB target from
+[android-tools 37.0.0](https://github.com/nmeum/android-tools/releases/tag/37.0.0),
+using its patched AOSP sources and bundled BoringSSL and fmt. It also statically
+links [Brotli 1.2.0](https://github.com/google/brotli/releases/tag/v1.2.0).
+GoogleTest headers bundled with BoringSSL supply libzip's friend-test declaration;
+no GoogleTest test runtime is linked.
+The recipe pins both source archive SHA-256 hashes and installs license notices
+under `/usr/share/licenses/hideck-adb`. Licenses include Apache-2.0, MIT,
+BSD-3-Clause, ISC and OpenSSL. Other runtime libraries are dependencies supplied
+by the matching OpenWrt feeds, not embedded copies.
 
 ## License compatibility note
 

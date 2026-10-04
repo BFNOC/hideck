@@ -108,9 +108,9 @@ func (p *Pool) prepareModemVoice(ctx context.Context, id string) (*host.Resource
 	if !hasFirmware(firmware, "QDC507GLEFM21") {
 		return nil, errors.New("当前固件没有已验证的模组直拨音频适配器")
 	}
-	adb, err := exec.LookPath("adb")
+	adb, err := qdc507.FindADB()
 	if err != nil {
-		return nil, errors.New("未找到 adb，请安装 Android platform-tools 后重试")
+		return nil, err
 	}
 	capture, err := exec.LookPath("arecord")
 	if err != nil {

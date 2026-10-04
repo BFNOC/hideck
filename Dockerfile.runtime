@@ -1,5 +1,5 @@
 # 运行时底包：录音库和证书只在这里装一次。发版镜像只 COPY 已经打好的二进制。
-FROM alpine:3.24
+FROM alpine:3.24 AS runtime-base
 WORKDIR /app
 
 # ca-certificates / tzdata：HTTPS 和时区
@@ -27,6 +27,10 @@ RUN apk add --no-cache \
     test -e /usr/lib/libpcsclite.so.1 && \
     test -x /usr/libexec/qmi-proxy && \
     adb version && arecord --version && aplay --version && \
+    adb help > /tmp/hideck-adb-help 2>&1 && \
+    grep -Eq '^[[:space:]]*-t[[:space:]]' /tmp/hideck-adb-help && \
+    grep -Eq '^[[:space:]]*-L[[:space:]]' /tmp/hideck-adb-help && \
+    rm /tmp/hideck-adb-help && \
     mkdir -p /app/config /app/data /app/logs
 
 EXPOSE 7575/tcp 7576/tcp 7580/udp

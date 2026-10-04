@@ -9,9 +9,15 @@ on:
       - 'pkg/g711/**'
       - 'cmd/modem-voice-probe/**'
       - 'Dockerfile*'
+      - 'deploy-binary.sh'
+      - 'deploy.sh'
+      - 'docker-compose.yml'
+      - 'packaging/openwrt/**'
+      - 'packaging/tests/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/modem-voice-ci.yml'
+      - '.github/workflows/openwrt-packages.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +36,12 @@ jobs:
         run: timeout 60s go test -race -timeout 60s ./internal/modemvoice/... ./internal/modem ./internal/phone ./internal/volte ./cmd/modem-voice-probe ./pkg/g711
       - name: Vet
         run: timeout 60s go vet ./internal/modemvoice/... ./cmd/modem-voice-probe ./pkg/g711
+      - name: Deployment dependency contracts
+        run: |
+          sh -n deploy-binary.sh
+          sh -n deploy.sh
+          for script in packaging/openwrt/*.sh; do sh -n "$script"; done
+          timeout 60s python3 -m unittest discover -s packaging/tests -v
 
   compile:
     runs-on: ubuntu-latest
@@ -67,6 +79,9 @@ jobs:
   runtime-image:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        dockerfile: [Dockerfile.runtime, Dockerfile.release]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -76,8 +91,9 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.runtime
+          file: ${{ matrix.dockerfile }}
+          target: runtime-base
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=modem-voice-runtime
-          cache-to: type=gha,mode=max,scope=modem-voice-runtime
+          cache-from: type=gha,scope=modem-voice-${{ matrix.dockerfile }}
+          cache-to: type=gha,mode=max,scope=modem-voice-${{ matrix.dockerfile }}

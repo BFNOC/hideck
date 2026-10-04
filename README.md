@@ -41,7 +41,7 @@ Outgoing call/SMS quotas are per SIM and survive restarts: [limits and configura
 
 ## Quick start
 
-Docker (recommended). Needs Linux, curl, Docker Compose, host networking, and USB access. The image includes AMR/MP3 libraries for call recording.
+Docker (recommended). Needs Linux, curl, Docker Compose, host networking, and USB access. The image includes ADB, ALSA tools, AMR/MP3 libraries, and the embedded module-side voice runtime. The host still needs a USB audio driver; see [module voice prerequisites](DOCKERHUB.md#module-voice-dependencies).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
@@ -86,6 +86,10 @@ Compose override described in [Docker PC/SC setup](DOCKERHUB.md#pcsc-smart-card-
 | ![Commands](docs/images/commands.jpg) | ![Proxy](docs/images/console-proxy.jpg) |
 
 ## Binary install
+
+The installer also installs ADB, ALSA tools and recording libraries, then checks ADB capabilities and host USB audio support. Missing dependencies produce a nonzero exit status even if the HiDeck service was installed; they are not reported as a fully successful deployment. These checks do not connect to or reboot a modem.
+
+OpenWrt keeps module voice optional: use the separate `hideck-adb` and `hideck-modem-voice` packages. See [OpenWrt packaging](packaging/openwrt/README.md) for IPK/APK installation and target matching.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | sh

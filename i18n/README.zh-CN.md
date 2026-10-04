@@ -41,7 +41,7 @@
 
 ## 快速开始
 
-推荐 Docker。需要 Linux、curl、Compose、host 网络、USB 权限。镜像已带通话录音用的 AMR/MP3 库。
+推荐 Docker。需要 Linux、curl、Compose、host 网络、USB 权限。镜像已带 ADB、ALSA 工具、AMR/MP3 库和内嵌模组语音资源；宿主机仍需 USB 音频驱动，见[模组直拨依赖](../DOCKERHUB.md#module-voice-dependencies)。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
@@ -83,6 +83,10 @@ docker compose logs -f hideck
 | ![命令](../docs/images/commands.jpg) | ![代理](../docs/images/console-proxy.jpg) |
 
 ## 二进制
+
+安装脚本会补装 ADB、ALSA 和录音依赖，并检查 ADB 能力与宿主机 USB 音频支持。依赖未通过时，即使服务已安装，脚本也会明确报错并返回非零退出码，不会报告完整部署成功；检查不会连接或重启模组。
+
+OpenWrt 默认不装模组直拨依赖，可另装 `hideck-adb` 和 `hideck-modem-voice`。IPK/APK 安装方式及架构匹配见 [OpenWrt 打包说明](../packaging/openwrt/README.md)。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | sh

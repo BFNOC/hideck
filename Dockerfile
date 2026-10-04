@@ -111,7 +111,11 @@ RUN apk add --no-cache \
     test -e /usr/lib/libmp3lame.so.0 && \
     test -e /usr/lib/libpcsclite.so.1 && \
     test -x /usr/libexec/qmi-proxy && \
-    adb version && arecord --version && aplay --version
+    adb version && arecord --version && aplay --version && \
+    adb help > /tmp/hideck-adb-help 2>&1 && \
+    grep -Eq '^[[:space:]]*-t[[:space:]]' /tmp/hideck-adb-help && \
+    grep -Eq '^[[:space:]]*-L[[:space:]]' /tmp/hideck-adb-help && \
+    rm /tmp/hideck-adb-help
 
 # 管理 HTTP、电话 HTTPS、WebRTC UDP mux
 EXPOSE 7575/tcp 7576/tcp 7580/udp
