@@ -42,6 +42,7 @@ type Stats struct {
 	Muted        uint64
 	RejectedPeer uint64
 	OtherPayload uint64
+	PlaybackPeak uint64
 }
 
 type Bridge struct {
@@ -66,6 +67,7 @@ type Bridge struct {
 	muted        atomic.Uint64
 	rejectedPeer atomic.Uint64
 	otherPayload atomic.Uint64
+	playbackPeak atomic.Uint64
 }
 
 // NewBridge transfers ownership of Conn and PCM only on success. Remote is
@@ -130,7 +132,7 @@ func (b *Bridge) SetListenOnly(enabled bool) error {
 
 func (b *Bridge) Stats() Stats {
 	return Stats{FromModem: b.fromModem.Load(), ToModem: b.toModem.Load(), Muted: b.muted.Load(),
-		RejectedPeer: b.rejectedPeer.Load(), OtherPayload: b.otherPayload.Load()}
+		RejectedPeer: b.rejectedPeer.Load(), OtherPayload: b.otherPayload.Load(), PlaybackPeak: b.playbackPeak.Load()}
 }
 
 // SetRemote accepts only a relay authorized by the phone control lease.

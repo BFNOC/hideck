@@ -70,7 +70,7 @@ export const usePhoneStore = defineStore('phone', {
         && !this.isCallEnding(call.call_id)
     },
     mediaReady(state) {
-      return state.mediaState === 'connecting' || state.mediaState === 'connected'
+      return state.mediaState === 'connected'
     },
     secureContext() {
       return typeof window !== 'undefined' && window.location.protocol === 'https:' && window.isSecureContext

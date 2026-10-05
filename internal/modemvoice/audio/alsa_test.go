@@ -33,6 +33,10 @@ func TestPCMProgramHelper(t *testing.T) {
 	case "playback":
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
+	case "playback-stalled":
+		for {
+			time.Sleep(time.Second)
+		}
 	case "fail":
 		fmt.Fprintln(os.Stderr, "PCM device unavailable")
 		os.Exit(7)

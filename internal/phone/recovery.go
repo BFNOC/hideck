@@ -11,6 +11,7 @@ import (
 const disconnectHangupTimeout = 10 * time.Second
 
 func (s *Service) handleMediaState(mediaID string, state webrtc.PeerConnectionState) {
+	logger.Info("浏览器媒体连接状态", "media_id", mediaID, "state", state.String())
 	if state == webrtc.PeerConnectionStateConnected {
 		s.cancelDisconnectTimer(mediaID)
 		return
@@ -76,6 +77,7 @@ func (s *Service) expireDisconnectedMedia(callID, mediaID string) {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, disconnectHangupTimeout)
 	defer cancel()
+	logger.Warn("浏览器媒体连接未恢复，自动挂断", "device_id", deviceID, "call_id", resolvedCallID)
 	if err := s.gateway.HangupCall(ctx, deviceID, resolvedCallID); err != nil {
 		logger.Error("媒体恢复超时挂断失败", "device_id", deviceID, "call_id", resolvedCallID, "err", err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/modemvoice/media"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 func offer(conn net.PacketConn) string {
@@ -130,6 +131,8 @@ func (c *Controller) endMedia(d *device, reason string) error {
 	}
 	var err error
 	if current.bridge != nil {
+		stats := current.bridge.Stats()
+		logger.Info("模组音频转发统计", "device_id", d.id, "from_modem", stats.FromModem, "to_modem", stats.ToModem, "playback_peak", stats.PlaybackPeak, "muted", stats.Muted, "rejected_peer", stats.RejectedPeer, "other_payload", stats.OtherPayload, "end_reason", reason)
 		err = current.bridge.Close()
 	} else if current.conn != nil {
 		err = current.conn.Close()
