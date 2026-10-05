@@ -128,7 +128,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            org.opencontainers.image.title=HiDeck
+            org.opencontainers.image.source=https://github.com/yibaiba/hideck
+            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.tag.outputs.sha }}
           provenance: false
           sbom: false
           build-args: |
