@@ -2,7 +2,7 @@ name: hideck-fnos
 
 services:
   hideck:
-    image: "yibaiba/hideck:@VERSION@"
+    image: "@IMAGE@"
     container_name: hideck-fnos
     restart: unless-stopped
     init: true

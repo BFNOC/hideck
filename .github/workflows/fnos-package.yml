@@ -4,18 +4,34 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Published Docker version, e.g. 2.1.23'
+        description: 'Published Docker release with modem voice dependencies'
         required: true
       http_port:
         description: 'HiDeck management HTTP port'
         required: true
         default: '7575'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      image_digest:
+        required: true
+        type: string
+      source_revision:
+        required: true
+        type: string
+      http_port:
+        default: '7575'
+        type: string
   pull_request:
     paths:
       - 'packaging/fnos/**'
       - 'packaging/tests/**'
       - 'config/config.example.yaml'
+      - '.github/actions/setup-fnpack/**'
       - '.github/workflows/fnos-package.yml'
+      - '.github/workflows/docker-publish.yml'
 
 permissions:
   contents: read
@@ -27,46 +43,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Package and lifecycle tests
-        run: timeout 60 python3 -m unittest discover -s packaging/tests -v
+        run: timeout 60 python3 -B -m unittest discover -s packaging/tests -v
+      - uses: ./.github/actions/setup-fnpack
+      - name: Real fnpack and Compose format checks (test fixture, not a release)
+        run: timeout 90 python3 -B packaging/fnos/test_package.py --fnpack "$FNPACK"
 
   package:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     needs: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PACKAGE_VERSION: ${{ inputs.version }}
       HTTP_PORT: ${{ inputs.http_port }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      SOURCE_REVISION: ${{ inputs.source_revision }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: docker/setup-buildx-action@v3
-      - name: Validate release inputs
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: ./.github/actions/setup-fnpack
+      - name: Verify pinned image, matching source and both architectures; build FPK
+        shell: bash
         run: |
-          python3 - <<'PY'
-          import os, sys
-          sys.path.insert(0, 'packaging/fnos')
-          from build import release_version, http_port
-          version = release_version(os.environ['PACKAGE_VERSION'])
-          http_port(os.environ['HTTP_PORT'])
-          with open(os.environ['GITHUB_ENV'], 'a') as output:
-              output.write(f'PACKAGE_VERSION={version}\n')
-          PY
-      - name: Check published image architectures
-        run: |
-          timeout 60 docker buildx imagetools inspect --raw "yibaiba/hideck:$PACKAGE_VERSION" > "$RUNNER_TEMP/image.json"
-          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | index("amd64") != null and index("arm64") != null' "$RUNNER_TEMP/image.json"
-      - name: Download pinned official fnpack
-        run: |
-          curl -fL --connect-timeout 10 --max-time 60 \
-            https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64 -o "$RUNNER_TEMP/fnpack"
-          printf '%s  %s\n' 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93 "$RUNNER_TEMP/fnpack" | sha256sum -c -
-          chmod +x "$RUNNER_TEMP/fnpack"
-      - name: Build FPK
-        run: |
-          timeout 90 python3 packaging/fnos/build.py --version "$PACKAGE_VERSION" \
-            --http-port "$HTTP_PORT" --fnpack "$RUNNER_TEMP/fnpack" --output dist/fnos
+          arguments=(--version "$PACKAGE_VERSION" --http-port "$HTTP_PORT" --fnpack "$FNPACK" --output dist/fnos)
+          if [ -n "$IMAGE_DIGEST" ]; then arguments+=(--image-digest "$IMAGE_DIGEST"); fi
+          if [ -n "$SOURCE_REVISION" ]; then arguments+=(--source-revision "$SOURCE_REVISION"); fi
+          timeout 600 python3 -B packaging/fnos/build.py "${arguments[@]}"
       - uses: actions/upload-artifact@v4
         with:
-          name: hideck-fnos-${{ env.PACKAGE_VERSION }}
+          name: hideck-fnos-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/fnos/*
           if-no-files-found: error

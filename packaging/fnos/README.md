@@ -1,6 +1,6 @@
 # 飞牛 fnOS 应用包
 
-本目录生成供飞牛应用中心手动安装测试的 `.fpk`，内部复用 `yibaiba/hideck:<版本>` Docker 镜像，不是第二套电话/VoWiFi 实现。尚未完成 fnOS 真机安装、升级、USB 热插拔和通话验收，也不代表已上架飞牛应用中心。
+本目录生成供飞牛应用中心手动安装测试的 `.fpk`，内部复用 `yibaiba/hideck:<版本>@sha256:<摘要>` Docker 镜像，不是第二套电话/VoWiFi 实现。尚未完成 fnOS 真机安装、升级、USB 热插拔和通话验收，也不代表已上架飞牛应用中心。
 
 实现依据：[官方 Docker 应用案例](https://developer.fnnas.com/docs/examples/docker/)、[环境变量](https://developer.fnnas.com/docs/core-concepts/environment-variables/)、[应用入口](https://developer.fnnas.com/docs/core-concepts/app-entry/)、[fnpack](https://developer.fnnas.com/docs/cli/fnpack/)。
 
@@ -14,24 +14,39 @@
 
 容器沿用主项目的 `network_mode: host`、`privileged: true`、`/dev:/dev`，这意味着广泛的宿主机设备访问。安装向导要求明确确认。安装脚本不安装宿主机软件包、不改内核或设备权限，不自动开启 ADB、切换 RF/通话模式或重启模组。
 
-宿主机生命周期脚本使用飞牛包用户；容器内仍是特权运行，两者不是同一层权限。若飞牛调用生命周期脚本时无法访问 Docker，状态检查会明确报错，不把权限错误伪装成“未运行”，也不自动授予 Docker 用户组权限。
+宿主机生命周期脚本使用飞牛包用户；容器内仍是特权运行，两者不是同一层权限。安装、升级和启动前会检查 Docker daemon 和 Compose 是否可用；每次查询最多等待 5 秒，终止宽限 1 秒。缺少 `docker` / `timeout`、服务不可达、权限不足或超时均明确报错，不自动提权、加入 Docker 用户组或重启 Docker。
+
+官方 Docker 示例未明确给出可用于 `install_dep_apps` 的 Docker 应用 ID，所以本包不猜测依赖名称。请先在应用中心启用 Docker；由上述真实查询验证依赖。包用户实际可用权限仍需真机确认。
 
 ## 打包与安装
 
-先从[官方 fnpack 下载页](https://developer.fnnas.com/docs/cli/fnpack/)取得适合开发机的工具。使用 Python 3.9+，不需要额外 Python 依赖：
+先从[官方 fnpack 下载页](https://developer.fnnas.com/docs/cli/fnpack/)取得适合开发机的工具。使用 Python 3.9+、Git、Docker 和 Buildx，不需要额外 Python 依赖。仓库中必须有目标 release tag；打包会访问镜像仓库、拉取两个架构并检查工具，非本机架构需要已配置的 QEMU/binfmt（CI 会配置）。不会在本机自动安装模拟器。
+
+将下面版本替换为**已经发布、包含模组直拨依赖的版本**，再执行：
 
 ```sh
-python3 packaging/fnos/build.py --version 2.1.23 \
+HIDECK_RELEASE_VERSION='填写已发布的新版本号'
+python3 packaging/fnos/build.py --version "$HIDECK_RELEASE_VERSION" \
   --fnpack /absolute/path/to/fnpack --output /tmp/hideck-fnos-output
 ```
 
-输出 `hideck_2.1.23_fnos.fpk` 和对应 SHA256 校验文件。版本必须对应已发布镜像；本地打包不隐式拉取镜像，不能把“打包通过”当成镜像或真机验收。需要调整管理端口可增加 `--http-port 17575`，会同步更新 manifest 和桌面入口；容器读取飞牛注入的 `TRIM_SERVICE_PORT`，不使用 bridge 端口映射。
+输出 `hideck_<版本>_fnos.fpk` 和对应 SHA256 校验文件。需要调整管理 HTTP 端口可增加 `--http-port 17575`，会同步更新 manifest 和默认桌面入口；容器读取飞牛注入的 `TRIM_SERVICE_PORT`，不使用 bridge 端口映射。
 
-**`2.1.23` 仅是已发布镜像的打包示例，不包含最近的模组直拨及依赖完善。** 验收这些新功能前，需要先发布包含当前改动的新版本 Docker 镜像，再以该版本生成 FPK；生成 FPK 不会编译或发布当前工作区的应用代码。
+`2.1.23` 不包含最近的模组直拨及依赖完善，现在会因依赖检查失败而拒绝生成正式 FPK。需要先发布包含这些改动的新镜像；打包器不会编译或发布当前工作区的应用代码，也没有跳过依赖验证的正式打包参数。
 
-也可手动运行 GitHub Actions 的 **Build fnOS package**：先确认目标镜像包含 amd64/arm64，再打包并上传工作流产物，不会发布 Release 或部署设备。
+打包按以下顺序验证：
 
-1. 在与包相同的目录核对 `sha256sum -c hideck_2.1.23_fnos.fpk.sha256`。
+1. 解析版本 tag 对应的 Git commit，以及镜像多架构 index digest。
+2. 通过不可变的子镜像 digest 检查 amd64/arm64 的源码、版本和架构标签，必须都与目标 tag 一致。
+3. 默认配置和 LICENSE 通过 `git show <commit>:<path>` 获取，不复制当前工作区可能较新或未提交的内容。
+4. 在无网络、无宿主挂载、无硬件访问、只读且非 root 的临时容器中检查 ADB 的 `-t` / `-L` 能力、ALSA 程序及 HiDeck 可执行文件存在。只运行工具版本/帮助命令，不启动 HiDeck 或 ADB 服务；超时清理本次唯一命名的检查容器。
+5. FPK 的 Compose 固定到 index digest；`app/defaults/release.json` 记录版本、源码 commit、镜像和默认配置哈希。
+
+这些检查证明镜像工具可执行和版本一致，不替代模组真机功能验收。镜像同名标签后续变化不会改变已经生成的 FPK 所使用的内容。
+
+GitHub Actions 的 **Build and Push Docker Image** 成功后，会把该次发布的版本、源码 commit 和 digest 交给 **Build fnOS package**，不是重新读取可能已经变化的 `latest`。也可手动触发后者。只上传工作流产物，不自动上传 Release 或部署设备。FPK 失败会显示为工作流失败，不回滚已发布的 Docker 镜像。
+
+1. 在与包相同的目录核对 `sha256sum -c hideck_<版本>_fnos.fpk.sha256`。
 2. 在飞牛应用中心选择手动安装此包，选择应用存储位置并确认权限提示。
 3. 从桌面打开 HiDeck；默认管理地址为 `http://NAS_IP:7575`，初始账号为 `admin / admin`，首次登录立即修改密码。
 4. 在 HiDeck 中检查设备后，再明确选择需要的通话模式。安装包本身不改变原有运营商兼容策略。
@@ -50,9 +65,13 @@ python3 packaging/fnos/build.py --version 2.1.23 \
 
 首次安装仅在配置不存在时复制主项目模板。重新启动、安装回调和升级回调不会覆盖已有配置、通知绑定或数据库；卸载钩子仅交还平台处理，不主动删除数据。**这不保证飞牛卸载流程一定保留应用目录**：卸载、迁移或回退前，先停止应用并备份上述三个目录，按飞牛卸载界面的实际选项处理。回退镜像不能替代数据库备份。
 
-每个 FPK 固定引用指定版本镜像，不跟随 `latest` 自动更新。通过新版 FPK 升级；不要同时让外部容器自动更新工具改动此项目。容器名为 `hideck-fnos`，由飞牛 `docker-project` 负责启停。
+每个 FPK 固定引用指定镜像 digest，不跟随 `latest` 或被覆盖的版本标签更新。通过新版 FPK 升级；不要同时让外部容器自动更新工具改动此项目。容器名为 `hideck-fnos`，由飞牛 `docker-project` 负责启停。
 
 ## HTTPS、IPv6 与 WebRTC
+
+安装向导和安装后的应用配置向导可修改桌面入口协议、端口。例如，先在 HiDeck 启用 HTTPS、信任证书并验证 `https://NAS_IP:7576`，再把入口选为 `https`、`7576`。配置保存在 `${TRIM_PKGETC}/fnos-entry.conf`，重启、升级后重新生成入口，不会被包内 HTTP 默认值覆盖。
+
+入口仍使用访问飞牛桌面的主机名/IP，不支持另填不同域名；不同域名的反向代理地址应直接用浏览器访问。设置入口不改变 HiDeck 的 HTTP/HTTPS 监听、不生成证书，也不转发 WebRTC UDP。使用当前协议/端口成功打开桌面不能证明证书或语音媒体链路已正常。
 
 - 管理 HTTP 默认 `7575/TCP`；内置 HTTPS 默认 `7576/TCP`，只有配置启用后才监听；WebRTC 媒体默认 `7580/UDP`。
 - 使用 host 网络，不额外关闭 IPv6。实际 IPv4/IPv6 可达性仍取决于 NAS、路由器和防火墙；不是“有 HTTPS 就有音频”。
@@ -64,6 +83,8 @@ PC/SC 读卡器还需要宿主机 pcscd 与 socket 共享，见 [Docker PC/SC �
 
 ## 验证范围
 
-本地测试覆盖包结构、端口一致性、显式权限确认、首次配置初始化、升级保留数据，以及运行/未运行/同名冲突/Docker 失败状态。遵循飞牛生命周期约定，`status=0` 只表示本项目容器正在运行，不宣称业务就绪；`/ping` 健康检查独立保留在 Docker 中，避免首次健康探测尚未执行时把冷启动误判成失败。容器启动和停止交给飞牛管理。
+本地测试覆盖镜像与源码绑定、依赖检查失败、包结构、端口一致性、显式权限确认、首次配置初始化、升级保留数据及 HTTPS 入口，以及运行/未运行/同名冲突/Docker 失败和超时状态。PR CI 还会调用真实 `fnpack` 构建临时测试夹具、读取包内文件并通过 `docker compose config` 校验；夹具不拉取镜像、不作为发行包上传。
+
+遵循飞牛生命周期约定，`status=0` 只表示本项目容器正在运行，不宣称业务就绪；`/ping` 健康检查独立保留在 Docker 中，避免首次健康探测尚未执行时把冷启动误判成失败。容器启动和停止交给飞牛管理。
 
 真机验收仍需验证：应用中心安装与存储目录、包用户 Docker 查询权限、启停和升级、USB 重枚举、多设备、真实短信，以及 HTTPS 下的双向通话。宿主机缺少驱动时应先解决驱动问题，不能靠换包、强装其他内核模块或自动重启模组掩盖。

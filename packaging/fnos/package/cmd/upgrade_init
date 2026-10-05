@@ -1,3 +1,4 @@
 #!/bin/sh
-# Required fnOS hook. No data migration; fnOS manages the Docker lifecycle.
-exit 0
+set -eu
+. "$(dirname "$0")/common"
+preflight
