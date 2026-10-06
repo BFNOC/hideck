@@ -145,6 +145,7 @@ type EffectiveCarrierConfig struct {
 	DPDKeepaliveIntervalSeconds   int
 	ReauthIntervalSeconds         int
 	IKERekeyIntervalSeconds       int
+	WithholdDeviceIdentity        bool
 	IMSRegisterTemplate           IMSRegisterTemplate
 	IMSRegisterPolicySource       string
 	SMSRoutingMethod              string

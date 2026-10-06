@@ -102,6 +102,7 @@ type Config struct {
 	VerifyFinalResponderAUTH  bool
 	EnableDeviceIdentitySpoof bool
 	DeviceIdentityIMEI        string
+	WithholdDeviceIdentity    bool // keep DEVICE_IDENTITY out of the first IKE_AUTH
 	IKEIdentityMode           string
 	AKAChallengeMode          string
 	AKAIdentityMode           string

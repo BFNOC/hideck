@@ -56,7 +56,7 @@ func CarrierPlanFromEffectiveConfig(config EffectiveCarrierConfig) CarrierPlan {
 		SMS: SMSPlan{RoutingMethod: config.SMSRoutingMethod, RoutingGW: config.SMSRoutingGW, ForceSMSCAuth: config.ForceSMSCAuth},
 		Device: DeviceIdentityPlan{
 			IdentityIMEI: config.DeviceIdentityIMEI, IdentityEnabled: config.DeviceIdentityEnabled,
-			Model: config.DeviceModel,
+			Withhold: config.WithholdDeviceIdentity, Model: config.DeviceModel,
 		},
 	}
 }
@@ -98,6 +98,7 @@ func EffectiveCarrierConfigFromCarrierPlan(plan CarrierPlan) EffectiveCarrierCon
 		SMSRoutingMethod:              plan.SMS.RoutingMethod, SMSRoutingGW: plan.SMS.RoutingGW,
 		ForceSMSCAuth: plan.SMS.ForceSMSCAuth, DeviceIdentityIMEI: plan.Device.IdentityIMEI,
 		DeviceIdentityEnabled: plan.Device.IdentityEnabled, DeviceModel: plan.Device.Model,
+		WithholdDeviceIdentity: plan.Device.Withhold,
 	}
 	syncCompatibilityProjection(&config)
 	return config

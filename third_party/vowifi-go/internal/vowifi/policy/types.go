@@ -126,6 +126,7 @@ type CarrierOverride struct {
 	AKAIdentityMode               string                      `yaml:"aka_identity_mode"`
 	DeviceIdentityEnabled         *bool                       `yaml:"device_identity_enabled"`
 	DeviceIdentityIMEI            string                      `yaml:"device_identity_imei"`
+	WithholdDeviceIdentity        bool                        `yaml:"withhold_device_identity"`
 	NATKeepaliveSeconds           *int                        `yaml:"nat_keepalive_seconds"`
 	DPDIntervalSeconds            *int                        `yaml:"dpd_interval_seconds"`
 	EnableLegacyCiphers           *bool                       `yaml:"enable_legacy_ciphers"`
@@ -171,6 +172,7 @@ type CarrierPreset struct {
 	IKEIdentityMode, AKAIdentityMode string
 	DeviceIdentityIMEI               string
 	DeviceIdentityEnabled            *bool
+	WithholdDeviceIdentity           bool
 	NATKeepaliveSeconds              *int
 	DPDIntervalSeconds               *int
 	EnableLegacyCiphers              *bool
@@ -211,6 +213,7 @@ type EffectiveCarrierConfig struct {
 	AllowedLegacyCiphers                               []string
 	AlgorithmPolicy, DeviceIdentityIMEI                string
 	DeviceIdentityEnabled                              bool
+	WithholdDeviceIdentity                             bool
 	DeviceModel, IMSDomain, IMSRealm                   string
 	IMSRegistrar, IMSPCSCF, IMSUserAgent               string
 	IMSTransport, IMSIdentitySource                    string
@@ -277,6 +280,7 @@ type SMSPlan struct {
 type DeviceIdentityPlan struct {
 	IdentityIMEI    string
 	IdentityEnabled bool
+	Withhold        bool
 	Model           string
 }
 type CarrierPlan struct {

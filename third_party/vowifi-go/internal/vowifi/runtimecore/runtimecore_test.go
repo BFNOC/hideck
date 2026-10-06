@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"net"
 	"reflect"
 	"strings"
@@ -984,3 +985,16 @@ func TestDeliveryStoreAdapterPreservesStatusMetadata(t *testing.T) {
 }
 
 var _ imsendpoint.Endpoint = (*imscore.Service)(nil)
+
+func TestCarrierPresetKeysReachSWUConfig(t *testing.T) {
+	build := func(mcc, mnc string) *swu.Config {
+		plan := carrierPlanFromCompatibility(carrier.ResolveEffectiveCarrierConfig(mcc, mnc))
+		return BuildSWUConfig(SessionConfig{Prepared: profile.PreparedSession{CarrierPlan: plan}})
+	}
+	if spark := build("530", "05"); !spark.WithholdDeviceIdentity {
+		t.Fatalf("Spark NZ SWu config = %+v", spark)
+	}
+	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity {
+		t.Fatalf("Lebara UK SWu config = %+v", lebara)
+	}
+}
