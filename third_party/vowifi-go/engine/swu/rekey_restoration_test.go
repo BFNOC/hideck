@@ -379,6 +379,33 @@ func TestChildSANotFoundCreatesChildSAFromScratch(t *testing.T) {
 	}
 }
 
+func TestRefusedReplacementAfterChildSANotFoundKeepsNotFound(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	reject := func(notifyType uint16) {
+		request, _ := childRekeyRequestHasRekeySA(t, session, receiveFragmentPacket(t, transport.sentIKE))
+		raw, err := session.encryptAndWrap(&ikev2.IKEPacket{
+			InitiatorSPI: request.InitiatorSPI, ResponderSPI: request.ResponderSPI,
+			Version: 0x20, ExchangeType: request.ExchangeType,
+			Flags: ikeResponseFlag, MessageID: request.MessageID,
+			Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: notifyType}},
+		})
+		if err != nil {
+			t.Errorf("encrypt notify %d: %v", notifyType, err)
+			return
+		}
+		transport.ike <- raw
+	}
+	go func() {
+		reject(ikev2.CHILD_SA_NOT_FOUND)
+		reject(ikev2.NO_ADDITIONAL_SAS)
+	}()
+	err := session.RekeyChildSA()
+	if !isChildSANotFoundError(err) || isNoAdditionalSAsError(err) {
+		t.Fatalf("RekeyChildSA error = %v, want CHILD_SA_NOT_FOUND kept and no decline", err)
+	}
+}
+
 func TestTemporaryFailureGetsSeveralMinutesOfRekeyRetries(t *testing.T) {
 	temporary := fmt.Errorf("wrapped: %w", &createChildSARejectError{NotifyType: ikev2.TEMPORARY_FAILURE})
 	if got := rekeyFailureLimit(temporary); got != rekeyTemporaryFailureRetries {

@@ -28,7 +28,7 @@ type rekeyTimerSpec struct {
 	target        **time.Timer
 	action        func() error
 	immediateFail func(error) bool
-	// declined stops this timer and keeps the current SA in service.
+	// declined keeps the current SA in service and asks again next interval.
 	declined      func(error) bool
 	retryInterval time.Duration
 }
@@ -85,10 +85,13 @@ func (s *Session) startChildSARekeyTimer(interval time.Duration) {
 
 // isNoAdditionalSAsError reports a peer that refuses UE-initiated CHILD_SA
 // rekey (RFC 7296 1.3). The SA keeps working; the ePDG may rekey it itself
-// (RFC 7296 2.8), so tearing the tunnel down only causes an outage.
+// (RFC 7296 2.8), so tearing the tunnel down only causes an outage. It never
+// matches once the peer said the SA is gone (CHILD_SA_NOT_FOUND).
+// ponytail: no cap on the kept SA's age; add one if an ePDG never rekeys.
 func isNoAdditionalSAsError(err error) bool {
 	var rejection *createChildSARejectError
-	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_ADDITIONAL_SAS
+	return !isChildSANotFoundError(err) &&
+		errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_ADDITIONAL_SAS
 }
 
 func rekeyFailureLimit(err error) int {
@@ -146,7 +149,11 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 			}
 			if spec.declined != nil && spec.declined(err) {
 				s.Logger.Warn("peer declined "+spec.name+" rekey; keeping current SA", zap.Error(err))
-				return
+				failures = 0
+				if !s.resetRekeyTimer(timer, rekeyDelay(spec.interval)) {
+					return
+				}
+				continue
 			}
 			failures++
 			if failures >= rekeyFailureLimit(err) || spec.immediateFail != nil && spec.immediateFail(err) {

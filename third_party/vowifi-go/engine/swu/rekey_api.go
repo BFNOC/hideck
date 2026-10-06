@@ -40,7 +40,13 @@ func (s *Session) RekeyChildSA() error {
 		// RFC 7296 2.25: the peer no longer has this Child SA; replace it with
 		// a new one from scratch instead of tearing down the IKE SA.
 		logger.Warn("CHILD_SA rekey got CHILD_SA_NOT_FOUND; creating a new CHILD_SA", zap.Error(err))
-		err = s.performChildSARekey(s.ctx, true)
+		if replaceErr := s.performChildSARekey(s.ctx, true); replaceErr != nil {
+			// The old Child SA is gone: keep CHILD_SA_NOT_FOUND in the chain so
+			// even a declined replacement tears the tunnel down for a reconnect.
+			err = errors.Join(err, replaceErr)
+		} else {
+			err = nil
+		}
 	}
 	if err == nil {
 		s.Logger.Info("CHILD_SA rekey completed")
