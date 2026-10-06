@@ -190,8 +190,10 @@ func (s *Session) sendRekeyCollisionResponse(msgID uint32) error {
 
 func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
 	for _, payload := range payloads {
+		// RFC 7296 2.7: a request may offer several proposals; the protocol of
+		// the first one identifies the SA being rekeyed.
 		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
-		if !ok || len(sa.Proposals) != 1 || sa.Proposals[0] == nil {
+		if !ok || len(sa.Proposals) == 0 || sa.Proposals[0] == nil {
 			continue
 		}
 		protocolID := sa.Proposals[0].ProtocolID
