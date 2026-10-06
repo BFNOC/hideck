@@ -30,7 +30,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 		"hotlink_my_50212.yaml":    "e3aae045a505983376a7b9627a5e43e13af136a747f545087c7b97d0a8a67c8c",
 		"kddi_44051.yaml":          "b6ea22aecd795b8265b7dddd59e8a83831f11201515b8dc9439b1892d5f0fd45",
 		"kpn_nl_20408.yaml":        "86d9fb6ba92179511f4aa7c13b1a10f2658ca4485df82b337b87dc2348c94eb9",
-		"lebara_uk_23487.yaml":     "b972d1eb613659a6fbad16791f8b5aca8d2aed6ccab59cea53680eed59aab7bc",
+		"lebara_uk_23487.yaml":     "4c469de01cd7fc78119045a5855547d1b7ed862e557d0c8486770eecc038605a",
 		"lycamobile_uk_23426.yaml": "4a176cd79fc7390b8e49a35cb3c3a6c9153a6a0a086e4d22b7f69bad73b92687",
 		"mtn_ng_62130.yaml":        "64d0de150cdd6f393ed78faecf92b0d2b70ca1625eb0526b0dc8077e436cc6cc",
 		"o2_de_26203.yaml":         "4772a3f0babe9f5da7cc160315f3344b63e0221b1d94fb8d18ee8739eec0d5a6",

@@ -144,7 +144,7 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	lebaraUK := ResolveEffectiveCarrierConfig("234", "87")
 	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
 		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
-		lebaraUK.EPDGAddrSource != "standard" ||
+		lebaraUK.EPDGAddrSource != "standard" || lebaraUK.IKERekeyIntervalSeconds != 9000 ||
 		lebaraUK.IMSRegisterTemplate.ID != "lebara_uk_23487" {
 		t.Fatalf("lebara uk = %+v", lebaraUK)
 	}
