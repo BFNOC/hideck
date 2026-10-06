@@ -74,6 +74,7 @@ func (s *Session) resetAfterSessionResumeFailure() {
 	s.lastIKERequestSet = nil
 	s.nextOutboundID = 1
 	s.responderAuthenticated = false
+	s.deviceIDRequested, s.deviceIDAnswered = false, false
 	s.eapOnlyAuthentication = false
 	s.eapOnlyRequested = false
 	s.eapSuccessReceived = false

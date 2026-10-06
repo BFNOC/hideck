@@ -296,6 +296,11 @@ func (s *Session) advanceIKEAuthStage() error {
 
 // sendIKEAuthRequest encrypts and sends an IKE_AUTH request.
 func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
+	device, err := s.pendingDeviceIdentity()
+	if err != nil {
+		return err
+	}
+	payloads = append(payloads, device...)
 	if s.shouldFragment(payloads) {
 		packets, err := s.fragmentMessage(payloads, ikev2.IKE_AUTH)
 		if err != nil {
@@ -369,12 +374,9 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		payloads = append(payloads, childKE)
 	}
 	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket)
-	payloads = append(payloads, s.initialContactNotify()...)
-	devicePayloads, err := s.deviceIdentityPayloads()
-	if err != nil {
-		return nil, err
-	}
-	return append(payloads, devicePayloads...), nil
+	// DEVICE_IDENTITY is never volunteered here: Spark NZ rejects an
+	// unsolicited one with INVALID_SYNTAX before EAP starts (TS 24.302 7.2.2).
+	return append(payloads, s.initialContactNotify()...), nil
 }
 
 func (s *Session) initialContactNotify() []ikev2.Payload {
@@ -419,6 +421,33 @@ func (s *Session) initialIKEIdentity() (string, error) {
 	return buildNAI(imsi, s.cfg), nil
 }
 
+// noteDeviceIdentityRequest remembers an ePDG DEVICE_IDENTITY request carried
+// in an IKE_AUTH response (TS 24.302 7.2.2).
+func (s *Session) noteDeviceIdentityRequest(payloads []ikev2.Payload) {
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok && notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP {
+			s.deviceIDRequested = true
+			return
+		}
+	}
+}
+
+// pendingDeviceIdentity answers a remembered request once, and only after the
+// ePDG has been authenticated by its certificate AUTH.
+func (s *Session) pendingDeviceIdentity() ([]ikev2.Payload, error) {
+	if !s.deviceIDRequested || s.deviceIDAnswered || !s.responderAuthenticated || s.eapOnlyAuthentication {
+		return nil, nil
+	}
+	payloads, err := s.deviceIdentityPayloads()
+	if err != nil {
+		return nil, err
+	}
+	s.deviceIDAnswered = true
+	return payloads, nil
+}
+
+// deviceIdentityPayloads encodes one DEVICE_IDENTITY Notify per TS 24.302
+// Figure 8.2.9.2: 2-byte length (9), identity type 1 (IMEI), 8-byte BCD IMEI.
 func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
 	imei := strings.TrimSpace(s.cfg.DeviceIdentityIMEI)
 	if imei == "" && s.cfg.EnableDeviceIdentitySpoof {
@@ -435,15 +464,12 @@ func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := append([]byte{1, byte(len(encoded))}, encoded...)
-	return []ikev2.Payload{
-		&ikev2.EncryptedPayloadNotify{
-			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: data,
-		},
-		&ikev2.EncryptedPayloadNotify{
-			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY, NotifyData: append([]byte(nil), data...),
-		},
-	}, nil
+	// ponytail: IMEI only; add type 2 + 16-digit IMEISV when a carrier asks for it.
+	data := append([]byte{0, byte(1 + len(encoded)), 1}, encoded...)
+	// Protocol ID 0: no SPI (RFC 7296 3.10, TS 24.302 Figure 8.2.9.2-1).
+	return []ikev2.Payload{&ikev2.EncryptedPayloadNotify{
+		NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: data,
+	}}, nil
 }
 
 func encodeIMEITBCD(imei string) ([]byte, error) {
@@ -486,6 +512,11 @@ func (s *Session) executeIKEAuthDecision(resp *ikev2.IKEPacket) (string, error) 
 // applyEAPHandlingResult processes the decrypted IKE_AUTH response payloads and
 // returns the next decision.
 func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
+	// Mid-EAP rejections arrive as notify-only responses after the responder
+	// was already authenticated; keep them typed instead of "no EAP payload".
+	if err := ikeAuthenticationError(payloads); err != nil {
+		return "", err
+	}
 	if !s.responderAuthenticated {
 		deferred, err := s.authenticateInitialResponder(payloads)
 		if err != nil {
@@ -495,6 +526,7 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			s.responderAuthenticated = true
 		}
 	}
+	s.noteDeviceIdentityRequest(payloads)
 	for _, pl := range payloads {
 		switch pl.Type() {
 		case ikev2.PayloadEAP:

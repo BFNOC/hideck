@@ -43,7 +43,7 @@ func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
 		s.stage = stageFinal
 		return nil, nil
 	case eapaka.CodeFailure:
-		return nil, errors.New("swu: EAP authentication failed")
+		return nil, ErrEAPAuthenticationFailed
 	default:
 		return nil, fmt.Errorf("swu: unexpected EAP code %d", packet.Code)
 	}

@@ -1,10 +1,14 @@
 package swu
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
+
+// ErrEAPAuthenticationFailed reports an EAP-Failure from the ePDG/AAA.
+var ErrEAPAuthenticationFailed = errors.New("swu: EAP authentication failed")
 
 // NegotiationError is returned when the IKEv2 SA or algorithm negotiation with
 // the ePDG fails. Recovered from the decompiled (*NegotiationError).Error,

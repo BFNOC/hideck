@@ -291,6 +291,8 @@ type Session struct {
 	authPayload            []byte // responder AUTH payload (for verification)
 	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
 	responderAuthenticated bool
+	deviceIDRequested      bool // ePDG sent DEVICE_IDENTITY in an IKE_AUTH response
+	deviceIDAnswered       bool
 	eapOnlyAuthentication  bool
 	eapOnlyRequested       bool
 	responderIDType        byte

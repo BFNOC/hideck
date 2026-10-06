@@ -2,6 +2,7 @@ package swu
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
@@ -116,35 +117,103 @@ func TestBuildCPRequestPayloadHonorsIPStack(t *testing.T) {
 	}
 }
 
-func TestInitialIKEAuthRestoresNotifyOrderAndDeviceIdentity(t *testing.T) {
-	session := NewSession(&Config{
-		IMSI: "234102356143376", APN: "ims", DeviceIdentityIMEI: "358983361433761",
-	})
-	payloads, err := session.buildIKEAuthInitPayloads()
-	if err != nil {
-		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
-	}
-	wantNotify := []uint16{
-		ikev2.EAP_ONLY_AUTHENTICATION, ikev2.MOBIKE_SUPPORTED,
-		ikev2.TICKET_REQUEST, ikev2.INITIAL_CONTACT,
-		ikev2.DEVICE_IDENTITY_3GPP, ikev2.DEVICE_IDENTITY,
-	}
+func notifyPayloads(payloads []ikev2.Payload) []*ikev2.EncryptedPayloadNotify {
 	var notifications []*ikev2.EncryptedPayloadNotify
 	for _, payload := range payloads {
 		if notification, ok := payload.(*ikev2.EncryptedPayloadNotify); ok {
 			notifications = append(notifications, notification)
 		}
 	}
-	if len(notifications) != len(wantNotify) {
-		t.Fatalf("notifications = %d, want %d", len(notifications), len(wantNotify))
-	}
-	for index, want := range wantNotify {
-		if notifications[index].NotifyType != want {
-			t.Errorf("notification[%d] = %d, want %d", index, notifications[index].NotifyType, want)
+	return notifications
+}
+
+// Spark NZ (530/05) answers an unsolicited DEVICE_IDENTITY with INVALID_SYNTAX.
+func TestInitialIKEAuthNeverCarriesDeviceIdentity(t *testing.T) {
+	for name, config := range map[string]*Config{
+		"no IMEI":    {IMSI: "530050000000001", APN: "ims"},
+		"IMEI":       {IMSI: "530050000000001", APN: "ims", DeviceIdentityIMEI: "490154203237518"},
+		"spoof only": {IMSI: "530050000000001", APN: "ims", EnableDeviceIdentitySpoof: true},
+	} {
+		payloads, err := NewSession(config).buildIKEAuthInitPayloads()
+		if err != nil {
+			t.Fatalf("%s: buildIKEAuthInitPayloads: %v", name, err)
+		}
+		want := []uint16{
+			ikev2.EAP_ONLY_AUTHENTICATION, ikev2.MOBIKE_SUPPORTED,
+			ikev2.TICKET_REQUEST, ikev2.INITIAL_CONTACT,
+		}
+		notifications := notifyPayloads(payloads)
+		if len(notifications) != len(want) {
+			t.Fatalf("%s: notifications = %d, want %d", name, len(notifications), len(want))
+		}
+		for index, notifyType := range want {
+			if got := notifications[index].NotifyType; got != notifyType {
+				t.Errorf("%s: notification[%d] = %d, want %d", name, index, got, notifyType)
+			}
 		}
 	}
-	if !bytes.Equal(notifications[4].NotifyData, notifications[5].NotifyData) || len(notifications[4].NotifyData) != 10 {
-		t.Fatalf("device identity notify data = %x / %x", notifications[4].NotifyData, notifications[5].NotifyData)
+}
+
+func sentIKEAuthNotifies(t *testing.T, session *Session, transport *testIKETransport) []*ikev2.EncryptedPayloadNotify {
+	t.Helper()
+	packet, err := ikev2.DecodePacket(<-transport.sentIKE)
+	if err != nil {
+		t.Fatalf("DecodePacket: %v", err)
+	}
+	payloads, err := session.decryptAndParse(packet)
+	if err != nil {
+		t.Fatalf("decryptAndParse: %v", err)
+	}
+	return notifyPayloads(payloads)
+}
+
+func TestDeviceIdentityAnsweredOnceAfterEPDGRequest(t *testing.T) {
+	session := NewSession(&Config{IMSI: "530050000000001", DeviceIdentityIMEI: "358983361433761"})
+	transport := newTestIKETransport()
+	session.socket = transport
+	session.ikeKeys = testIKEKeys()
+	session.stage = stageEAP
+	session.responderAuthenticated = true // ePDG certificate AUTH already verified
+	identityRequest := func(id byte) *ikev2.EncryptedPayloadEAP {
+		return &ikev2.EncryptedPayloadEAP{EAPMessage: []byte{eapaka.CodeRequest, id, 0, 5, eapTypeIdentity}}
+	}
+	request := &ikev2.EncryptedPayloadNotify{
+		ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: []byte{0, 1, 1},
+	}
+
+	if _, err := session.applyEAPHandlingResult([]ikev2.Payload{identityRequest(1)}); err != nil {
+		t.Fatalf("unrequested: %v", err)
+	}
+	if got := sentIKEAuthNotifies(t, session, transport); len(got) != 0 {
+		t.Fatalf("unrequested EAP response carried notifies %#v", got)
+	}
+
+	if _, err := session.applyEAPHandlingResult([]ikev2.Payload{identityRequest(2), request}); err != nil {
+		t.Fatalf("requested: %v", err)
+	}
+	got := sentIKEAuthNotifies(t, session, transport)
+	want := []byte{0x00, 0x09, 0x01, 0x53, 0x98, 0x38, 0x63, 0x41, 0x33, 0x67, 0xf1}
+	if len(got) != 1 || got[0].NotifyType != ikev2.DEVICE_IDENTITY_3GPP || !bytes.Equal(got[0].NotifyData, want) {
+		t.Fatalf("DEVICE_IDENTITY answer = %#v, want one 41101 with %x", got, want)
+	}
+
+	if _, err := session.applyEAPHandlingResult([]ikev2.Payload{identityRequest(3), request}); err != nil {
+		t.Fatalf("repeat: %v", err)
+	}
+	if got := sentIKEAuthNotifies(t, session, transport); len(got) != 0 {
+		t.Fatalf("DEVICE_IDENTITY answered twice: %#v", got)
+	}
+}
+
+func TestDeviceIdentityWithheldUntilEPDGCertificateVerified(t *testing.T) {
+	session := NewSession(&Config{IMSI: "530050000000001", DeviceIdentityIMEI: "358983361433761"})
+	session.deviceIDRequested = true
+	if payloads, err := session.pendingDeviceIdentity(); err != nil || payloads != nil {
+		t.Fatalf("unauthenticated ePDG: payloads=%#v err=%v", payloads, err)
+	}
+	session.responderAuthenticated, session.eapOnlyAuthentication = true, true
+	if payloads, err := session.pendingDeviceIdentity(); err != nil || payloads != nil {
+		t.Fatalf("EAP-only ePDG without certificate: payloads=%#v err=%v", payloads, err)
 	}
 }
 
@@ -248,5 +317,36 @@ func testAKAResult() AKAResult {
 		RES: bytes.Repeat([]byte{0x53}, 8),
 		CK:  bytes.Repeat([]byte{0x14}, 16),
 		IK:  bytes.Repeat([]byte{0x25}, 16),
+	}
+}
+
+func TestMidEAPAuthenticationFailedStaysTyped(t *testing.T) {
+	session := NewSession(&Config{IMSI: "530050000000001"})
+	session.stage = stageEAP
+	session.responderAuthenticated = true
+	_, err := session.applyEAPHandlingResult([]ikev2.Payload{
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.AUTHENTICATION_FAILED},
+	})
+	var authErr *IKEAuthError
+	if !errors.As(err, &authErr) || authErr.NotifyType != ikev2.AUTHENTICATION_FAILED {
+		t.Fatalf("mid-EAP rejection = %v, want IKEAuthError(24)", err)
+	}
+}
+
+func TestDeviceIdentityRequestedWithEAPSuccessRidesFinalAUTH(t *testing.T) {
+	session := NewSession(&Config{IMSI: "530050000000001", DeviceIdentityIMEI: "358983361433761"})
+	session.stage = stageEAP
+	session.responderAuthenticated = true
+	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x11}, eapaka.KeyLengthMSK)}
+	decision, err := session.applyEAPHandlingResult([]ikev2.Payload{
+		&ikev2.EncryptedPayloadEAP{EAPMessage: []byte{eapaka.CodeSuccess, 4, 0, 4}},
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: []byte{0, 1, 1}},
+	})
+	if err != nil || decision != "final" {
+		t.Fatalf("decision=%q err=%v", decision, err)
+	}
+	payloads, err := session.pendingDeviceIdentity()
+	if err != nil || len(payloads) != 1 {
+		t.Fatalf("final AUTH device identity = %#v err=%v", payloads, err)
 	}
 }

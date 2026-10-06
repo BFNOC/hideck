@@ -240,10 +240,10 @@ const (
 	SA_RESOURCE_INFO                    uint16 = 16444
 	USE_PPK_INT                         uint16 = 16445
 	PPK_IDENTITY_KEY                    uint16 = 16446
-	DEVICE_IDENTITY                     uint16 = 16432
-	DEVICE_IDENTITY_3GPP                uint16 = 41101
-	N3GPP_GENERIC_ERROR                 uint16 = 40960
-	N3GPP_NETWORK_FAILURE               uint16 = 41042
+	// TS 24.302 8.1.2.3 DEVICE_IDENTITY. 16432 is CLONE_IKE_SA_SUPPORTED.
+	DEVICE_IDENTITY_3GPP  uint16 = 41101
+	N3GPP_GENERIC_ERROR   uint16 = 40960
+	N3GPP_NETWORK_FAILURE uint16 = 41042
 )
 
 const (
