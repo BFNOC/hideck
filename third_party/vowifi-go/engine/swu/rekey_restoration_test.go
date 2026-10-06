@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,8 +47,9 @@ func TestGenerateIKESARekeyKeysUsesExplicitInputsWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestBuildChildSARekeyPayloadsUsesRemoteSPIAndLegacyOrder(t *testing.T) {
+func TestBuildChildSARekeyPayloadsUsesInboundSPIAndLegacyOrder(t *testing.T) {
 	session := NewSession(&Config{})
+	session.espLocalSPI = 0x0a0b0c0d
 	session.espRemoteSPI = 0x50607080
 	tsi, tsr := buildTrafficSelectorsForIPStack([]byte{10, 0, 0, 2})
 	payloads := session.buildChildSARekeyPayloads(childSARekeyRequest{
@@ -60,8 +62,8 @@ func TestBuildChildSARekeyPayloadsUsesRemoteSPIAndLegacyOrder(t *testing.T) {
 		}
 	}
 	notify := payloads[2].(*ikev2.EncryptedPayloadNotify)
-	if got := binary.BigEndian.Uint32(notify.SPI); got != session.espRemoteSPI {
-		t.Fatalf("REKEY_SA SPI = %08x, want remote SPI %08x", got, session.espRemoteSPI)
+	if got := binary.BigEndian.Uint32(notify.SPI); got != session.espLocalSPI {
+		t.Fatalf("REKEY_SA SPI = %08x, want our inbound SPI %08x", got, session.espLocalSPI)
 	}
 }
 
@@ -319,5 +321,73 @@ func TestRetiringChildSACleansKernelOverlap(t *testing.T) {
 	session.retireInboundChildSA(3)
 	if plane.retiredSPI != 3 {
 		t.Fatalf("retired kernel SPI = %d, want 3", plane.retiredSPI)
+	}
+}
+
+func childRekeyRequestHasRekeySA(t *testing.T, session *Session, raw []byte) (*ikev2.IKEPacket, bool) {
+	t.Helper()
+	request, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatalf("decode rekey request: %v", err)
+	}
+	payloads, err := session.decryptAndParse(request)
+	if err != nil {
+		t.Fatalf("decrypt rekey request: %v", err)
+	}
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok && notify.NotifyType == ikev2.NotifyTypeRekeySA {
+			return request, true
+		}
+	}
+	return request, false
+}
+
+// RFC 7296 2.25: CHILD_SA_NOT_FOUND replaces the Child SA from scratch
+// instead of failing the IKE SA.
+func TestChildSANotFoundCreatesChildSAFromScratch(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	const remoteSPI = uint32(0xa1b2c3d4)
+	go func() {
+		request, hasRekeySA := childRekeyRequestHasRekeySA(t, session, receiveFragmentPacket(t, transport.sentIKE))
+		if !hasRekeySA {
+			t.Error("first rekey request omitted REKEY_SA")
+		}
+		reject, err := session.encryptAndWrap(&ikev2.IKEPacket{
+			InitiatorSPI: request.InitiatorSPI, ResponderSPI: request.ResponderSPI,
+			Version: 0x20, ExchangeType: request.ExchangeType,
+			Flags: ikeResponseFlag, MessageID: request.MessageID,
+			Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.CHILD_SA_NOT_FOUND}},
+		})
+		if err != nil {
+			t.Errorf("encrypt CHILD_SA_NOT_FOUND: %v", err)
+			return
+		}
+		transport.ike <- reject
+		raw := receiveFragmentPacket(t, transport.sentIKE)
+		if _, hasRekeySA := childRekeyRequestHasRekeySA(t, session, raw); hasRekeySA {
+			t.Error("from-scratch CREATE_CHILD_SA still carried REKEY_SA")
+		}
+		transport.sentIKE <- raw
+		respondToChildSARekey(t, session, transport, remoteSPI, bytes.Repeat([]byte{0x92}, 32))
+	}()
+	if err := session.RekeyChildSA(); err != nil {
+		t.Fatalf("RekeyChildSA after CHILD_SA_NOT_FOUND: %v", err)
+	}
+	if session.espRemoteSPI != remoteSPI {
+		t.Fatalf("new CHILD_SA remote SPI = %08x, want %08x", session.espRemoteSPI, remoteSPI)
+	}
+}
+
+func TestTemporaryFailureGetsSeveralMinutesOfRekeyRetries(t *testing.T) {
+	temporary := fmt.Errorf("wrapped: %w", &createChildSARejectError{NotifyType: ikev2.TEMPORARY_FAILURE})
+	if got := rekeyFailureLimit(temporary); got != rekeyTemporaryFailureRetries {
+		t.Fatalf("TEMPORARY_FAILURE limit = %d", got)
+	}
+	if got := rekeyFailureLimit(&IKEAuthError{NotifyType: ikev2.TEMPORARY_FAILURE}); got != rekeyTemporaryFailureRetries {
+		t.Fatalf("IKE TEMPORARY_FAILURE limit = %d", got)
+	}
+	if got := rekeyFailureLimit(errors.New("timeout")); got != rekeyMaxFailures {
+		t.Fatalf("other failure limit = %d", got)
 	}
 }

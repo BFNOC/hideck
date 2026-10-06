@@ -15,7 +15,9 @@ const (
 	defaultChildRekeyInterval = 1800 * time.Second
 	childRekeyStartOffset     = 30 * time.Second
 	rekeyMaxFailures          = 2
-	rekeyRetryInterval        = 60 * time.Second
+	// RFC 7296 2.25: TEMPORARY_FAILURE MAY be retried over several minutes.
+	rekeyTemporaryFailureRetries = 5
+	rekeyRetryInterval           = 60 * time.Second
 )
 
 type rekeyTimerSpec struct {
@@ -78,6 +80,16 @@ func (s *Session) startChildSARekeyTimer(interval time.Duration) {
 	})
 }
 
+func rekeyFailureLimit(err error) int {
+	var childRejection *createChildSARejectError
+	var ikeRejection *IKEAuthError
+	if errors.As(err, &childRejection) && childRejection.NotifyType == ikev2.TEMPORARY_FAILURE ||
+		errors.As(err, &ikeRejection) && ikeRejection.NotifyType == ikev2.TEMPORARY_FAILURE {
+		return rekeyTemporaryFailureRetries
+	}
+	return rekeyMaxFailures
+}
+
 func isChildSANotFoundError(err error) bool {
 	var rejection *createChildSARejectError
 	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.CHILD_SA_NOT_FOUND
@@ -122,7 +134,7 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 				continue
 			}
 			failures++
-			if failures >= rekeyMaxFailures || spec.immediateFail != nil && spec.immediateFail(err) {
+			if failures >= rekeyFailureLimit(err) || spec.immediateFail != nil && spec.immediateFail(err) {
 				s.failEstablishedControl(fmt.Errorf("swu: %s rekey failed: %w", spec.name, err))
 				return
 			}

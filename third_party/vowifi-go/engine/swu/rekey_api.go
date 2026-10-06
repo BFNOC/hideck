@@ -7,6 +7,8 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 const rekeyCooldown = 30 * time.Second
@@ -29,7 +31,14 @@ func (s *Session) RekeyChildSA() error {
 	if s.childRekeyInCooldown() {
 		return nil
 	}
-	return s.performChildSARekey(s.ctx)
+	err := s.performChildSARekey(s.ctx, false)
+	if isChildSANotFoundError(err) {
+		// RFC 7296 2.25: the peer no longer has this Child SA; replace it with
+		// a new one from scratch instead of tearing down the IKE SA.
+		logger.Warn("CHILD_SA rekey got CHILD_SA_NOT_FOUND; creating a new CHILD_SA", zap.Error(err))
+		err = s.performChildSARekey(s.ctx, true)
+	}
+	return err
 }
 
 func (s *Session) HandleRekeyIKESARequest(msgID uint32, payloads []ikev2.Payload) error {

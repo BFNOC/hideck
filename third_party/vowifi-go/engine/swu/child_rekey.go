@@ -27,9 +27,11 @@ type childSARekeyRequest struct {
 	tsi      *ikev2.EncryptedPayloadTS
 	tsr      *ikev2.EncryptedPayloadTS
 	dh       *enginecrypto.DiffieHellman
+	// fromScratch omits REKEY_SA to create a new Child SA (RFC 7296 2.25).
+	fromScratch bool
 }
 
-func (s *Session) performChildSARekey(ctx context.Context) error {
+func (s *Session) performChildSARekey(ctx context.Context, fromScratch bool) error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
 	if s.transport() == nil || s.ikeKeys == nil || s.State() != stateEstablished {
@@ -45,7 +47,7 @@ func (s *Session) performChildSARekey(ctx context.Context) error {
 		return err
 	}
 	payloads := s.buildChildSARekeyPayloads(childSARekeyRequest{
-		localSPI: localSPI, nonce: ni, tsi: tsi, tsr: tsr, dh: newDH,
+		localSPI: localSPI, nonce: ni, tsi: tsi, tsr: tsr, dh: newDH, fromScratch: fromScratch,
 	})
 	response, err := s.sendEncryptedWithRetry(payloads, ikev2.CREATE_CHILD_SA)
 	if err != nil {
@@ -199,8 +201,10 @@ func (s *Session) buildChildSARekeyRequest(localSPI uint32, nonce []byte, tsi, t
 }
 
 func (s *Session) buildChildSARekeyPayloads(request childSARekeyRequest) []ikev2.Payload {
+	// RFC 7296 1.3.3: REKEY_SA carries the SPI the initiator expects on
+	// inbound ESP. Sending the peer's SPI gets CHILD_SA_NOT_FOUND (44).
 	s.childSAMu.RLock()
-	oldRemoteSPI := s.espRemoteSPI
+	oldInboundSPI := s.espLocalSPI
 	s.childSAMu.RUnlock()
 	proposals := buildESPProposalsForSession(s, request.localSPI)
 	if request.dh != nil {
@@ -215,11 +219,13 @@ func (s *Session) buildChildSARekeyPayloads(request childSARekeyRequest) []ikev2
 			DHGroup: ikev2.AlgorithmType(request.dh.Group), KEData: request.dh.PublicKeyBytes(),
 		})
 	}
-	return append(payloads,
-		&ikev2.EncryptedPayloadNotify{
+	if !request.fromScratch {
+		payloads = append(payloads, &ikev2.EncryptedPayloadNotify{
 			ProtocolID: ikev2.ProtoESP,
-			NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldRemoteSPI),
-		},
+			NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldInboundSPI),
+		})
+	}
+	return append(payloads,
 		cloneTrafficSelectorPayload(request.tsi),
 		cloneTrafficSelectorPayload(request.tsr),
 	)
