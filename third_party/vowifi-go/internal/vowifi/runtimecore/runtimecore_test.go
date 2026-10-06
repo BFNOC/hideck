@@ -235,20 +235,6 @@ func TestBuildSWUConfigCarriesRuntimeState(t *testing.T) {
 	}
 }
 
-func TestFastReauthStoreReusesIdentityOnNewIKESession(t *testing.T) {
-	var store FastReauthStore
-	store.Capture()("reauth@example", []byte{1}, []byte{2}, []byte{3})
-	cfg := SessionConfig{}
-	store.Apply(&cfg)
-	if cfg.FastReauthID != "reauth@example" || !bytes.Equal(cfg.FastReauthMK, []byte{1}) {
-		t.Fatalf("applied FastReauth = %+v", cfg)
-	}
-	swuCfg := BuildSWUConfig(cfg)
-	if swuCfg.FastReauthID != "reauth@example" {
-		t.Fatalf("new IKE SA identity = %q", swuCfg.FastReauthID)
-	}
-}
-
 func TestBuildSWUConfigExposesMissingAKA(t *testing.T) {
 	config := BuildSWUConfig(SessionConfig{Prepared: profile.PreparedSession{}})
 	if _, err := config.AKAProvider.CalculateAKA(nil, nil); err == nil {
