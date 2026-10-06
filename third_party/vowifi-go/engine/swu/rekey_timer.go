@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 const (
@@ -27,6 +28,8 @@ type rekeyTimerSpec struct {
 	target        **time.Timer
 	action        func() error
 	immediateFail func(error) bool
+	// declined stops this timer and keeps the current SA in service.
+	declined      func(error) bool
 	retryInterval time.Duration
 }
 
@@ -76,8 +79,16 @@ func (s *Session) startChildSARekeyTimer(interval time.Duration) {
 	s.startRekeyTimer(rekeyTimerSpec{
 		name: "CHILD_SA", interval: interval,
 		reset: reset, target: &s.childRekeyTimer, action: s.RekeyChildSA,
-		immediateFail: isChildSANotFoundError,
+		immediateFail: isChildSANotFoundError, declined: isNoAdditionalSAsError,
 	})
+}
+
+// isNoAdditionalSAsError reports a peer that refuses UE-initiated CHILD_SA
+// rekey (RFC 7296 1.3). The SA keeps working; the ePDG may rekey it itself
+// (RFC 7296 2.8), so tearing the tunnel down only causes an outage.
+func isNoAdditionalSAsError(err error) bool {
+	var rejection *createChildSARejectError
+	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_ADDITIONAL_SAS
 }
 
 func rekeyFailureLimit(err error) int {
@@ -132,6 +143,10 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 					return
 				}
 				continue
+			}
+			if spec.declined != nil && spec.declined(err) {
+				s.Logger.Warn("peer declined "+spec.name+" rekey; keeping current SA", zap.Error(err))
+				return
 			}
 			failures++
 			if failures >= rekeyFailureLimit(err) || spec.immediateFail != nil && spec.immediateFail(err) {

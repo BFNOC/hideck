@@ -45,6 +45,26 @@ func TestChildSANotFoundFailsTimerWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestNoAdditionalSAsStopsChildRekeyWithoutFailingSession(t *testing.T) {
+	session := NewSession(&Config{})
+	attempts := 0
+	session.startRekeyTimer(rekeyTimerSpec{
+		name: "CHILD_SA", interval: time.Millisecond, target: &session.childRekeyTimer,
+		retryInterval: time.Millisecond, declined: isNoAdditionalSAsError,
+		action: func() error {
+			attempts++
+			return &createChildSARejectError{NotifyType: ikev2.NO_ADDITIONAL_SAS}
+		},
+	})
+	session.rekeyTimerWG.Wait()
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+	if err := session.TerminalError(); err != nil {
+		t.Fatalf("terminal error = %v, want session kept", err)
+	}
+}
+
 func waitForRekeyTimerFailure(t *testing.T, session *Session) {
 	t.Helper()
 	select {
