@@ -22,7 +22,11 @@ func (s *Session) RekeyIKESA() error {
 	if s.hasRetiredIKESA() {
 		return errors.New("swu: previous IKE SA is awaiting Delete")
 	}
-	return s.performIKESARekey(s.ctx)
+	if err := s.performIKESARekey(s.ctx); err != nil {
+		return err
+	}
+	s.Logger.Info("IKE SA rekey completed")
+	return nil
 }
 
 func (s *Session) RekeyChildSA() error {
@@ -37,6 +41,9 @@ func (s *Session) RekeyChildSA() error {
 		// a new one from scratch instead of tearing down the IKE SA.
 		logger.Warn("CHILD_SA rekey got CHILD_SA_NOT_FOUND; creating a new CHILD_SA", zap.Error(err))
 		err = s.performChildSARekey(s.ctx, true)
+	}
+	if err == nil {
+		s.Logger.Info("CHILD_SA rekey completed")
 	}
 	return err
 }
