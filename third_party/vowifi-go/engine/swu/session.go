@@ -360,6 +360,7 @@ type Session struct {
 	controlRunning    bool
 	controlStopping   bool
 	taskMgr           *TaskManager
+	peerResponse      peerResponseCache // replayed on peer retransmit (RFC 7296 2.1)
 	ikeWaiters        map[ikeWaitKey]chan []byte
 	ikePending        map[ikeWaitKey][]byte
 	terminalErr       error

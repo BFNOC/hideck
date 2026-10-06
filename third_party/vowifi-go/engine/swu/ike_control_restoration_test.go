@@ -1,6 +1,7 @@
 package swu
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -59,7 +60,8 @@ func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
 	}
 }
 
-func TestControlLoopRejectsUnexpectedEstablishedSPIs(t *testing.T) {
+// RFC 7296 2.21.4: a datagram outside the known IKE SA is discarded.
+func TestControlLoopDropsUnexpectedEstablishedSPIs(t *testing.T) {
 	session, transport := newEstablishedControlSession(t)
 	defer stopControlTestSession(session)
 	invalid, err := (&ikev2.IKEPacket{
@@ -74,10 +76,10 @@ func TestControlLoopRejectsUnexpectedEstablishedSPIs(t *testing.T) {
 	transport.ike <- invalid
 	select {
 	case <-session.done:
-	case <-time.After(time.Second):
-		t.Fatal("invalid established response did not terminate control loop")
+		t.Fatalf("unexpected-SPI datagram terminated the session: %v", session.TerminalError())
+	case <-time.After(200 * time.Millisecond):
 	}
-	if terminal := session.TerminalError(); terminal == nil || !strings.Contains(terminal.Error(), "unexpected SPIs") {
+	if terminal := session.TerminalError(); terminal != nil {
 		t.Fatalf("terminal error = %v", terminal)
 	}
 }
@@ -134,5 +136,35 @@ func receiveSentIKE(t *testing.T, transport *testIKETransport) []byte {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for sent IKE packet")
 		return nil
+	}
+}
+
+// RFC 7296 2.1: a retransmitted peer request gets the identical response and
+// is not processed again; an older Message ID is ignored.
+func TestControlLoopReplaysResponseToRetransmittedPeerRequest(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	peerRequest := func(msgID uint32) []byte {
+		raw, err := session.encryptAndWrap(&ikev2.IKEPacket{
+			Header: newIKEHeader(session.spiI, session.spiR, ikev2.INFORMATIONAL, 0, msgID),
+		})
+		if err != nil {
+			t.Fatalf("encrypt peer request %d: %v", msgID, err)
+		}
+		return raw
+	}
+	request := peerRequest(41)
+	transport.ike <- request
+	first := receiveSentIKE(t, transport)
+	transport.ike <- request
+	second := receiveSentIKE(t, transport)
+	if !bytes.Equal(first, second) {
+		t.Fatal("retransmitted peer request was processed again instead of replaying the response")
+	}
+	transport.ike <- peerRequest(40)
+	select {
+	case raw := <-transport.sentIKE:
+		t.Fatalf("stale peer request was answered: %x", raw[:8])
+	case <-time.After(200 * time.Millisecond):
 	}
 }

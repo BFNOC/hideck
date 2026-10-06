@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"time"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
@@ -108,7 +109,7 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 		s.retiredIKEDelete = nil
 		s.retiredIKESA = &ikeSAContext{
 			spiI: rekey.oldSPIi, spiR: rekey.oldSPIr,
-			keys: oldKeys, localInitiator: rekey.oldInitiator,
+			keys: oldKeys, localInitiator: rekey.oldInitiator, retiredAt: time.Now(),
 		}
 	}
 	s.spiI, s.spiR = rekey.initiatorSPI, selection.responderSPI
@@ -218,7 +219,7 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	oldDHSecret := s.dhSharedSecret
 	oldContext := &ikeSAContext{
 		spiI: s.spiI, spiR: s.spiR, keys: oldKeys,
-		localInitiator: s.localIKEInitiator,
+		localInitiator: s.localIKEInitiator, retiredAt: time.Now(),
 	}
 	displaced := s.retiredIKESA
 	s.retiredIKEDelete = nil

@@ -391,3 +391,15 @@ func TestTemporaryFailureGetsSeveralMinutesOfRekeyRetries(t *testing.T) {
 		t.Fatalf("other failure limit = %d", got)
 	}
 }
+
+func TestRetiredIKESAExpiresWhenPeerNeverDeletes(t *testing.T) {
+	session := NewSession(&Config{})
+	session.retiredIKESA = &ikeSAContext{retiredAt: time.Now()}
+	if !session.hasRetiredIKESA() {
+		t.Fatal("fresh retired IKE SA was dropped")
+	}
+	session.retiredIKESA.retiredAt = time.Now().Add(-retiredIKESALinger - time.Second)
+	if session.hasRetiredIKESA() || session.retiredIKESA != nil {
+		t.Fatal("retired IKE SA still blocks rekey after the linger window")
+	}
+}

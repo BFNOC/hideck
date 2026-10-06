@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 const (
@@ -144,8 +147,13 @@ func (s *Session) runIKEDispatchLoop(
 			}
 			s.markInboundActivity()
 			if err := s.dispatchIKEPacket(raw, taskManager, requests); err != nil {
-				s.failEstablishedControl(err)
-				return
+				if s.ctx.Err() != nil {
+					s.failEstablishedControl(err)
+					return
+				}
+				// RFC 7296 2.21.4 / RFC 7383 2.6.2: a malformed, unauthenticated,
+				// or unknown-SPI datagram is discarded; it must not end the SA.
+				logger.Warn("SWu dropped inbound IKE packet", zap.Error(err))
 			}
 		}
 	}
@@ -260,6 +268,9 @@ func (s *Session) ikeRequestLoop(requests <-chan []byte) {
 			if !ok {
 				return
 			}
+			if s.peerResponse.replay(s, raw) {
+				continue
+			}
 			if err := s.handleIncomingIKE(raw); err != nil {
 				s.failEstablishedControl(err)
 				return
@@ -310,4 +321,42 @@ func (s *Session) failEstablishedControl(err error) {
 	}
 	s.stopTimers()
 	s.failSession(err)
+}
+
+// peerResponseCache implements RFC 7296 2.1: a retransmitted peer request gets
+// the same response again instead of being processed a second time, and an
+// older request on the same IKE SA is ignored.
+type peerResponseCache struct {
+	mu         sync.Mutex
+	spiI, spiR uint64
+	msgID      uint32
+	packets    [][]byte
+}
+
+func (c *peerResponseCache) record(spiI, spiR [8]byte, msgID uint32, packets [][]byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spiI, c.spiR, c.msgID = ikeSPIUint64(spiI), ikeSPIUint64(spiR), msgID
+	c.packets = clonePacketSet(packets)
+}
+
+// replay reports whether raw was a retransmitted or stale peer request that
+// has been answered from the cache (or dropped) and must not be processed.
+func (c *peerResponseCache) replay(s *Session, raw []byte) bool {
+	header, err := ikev2.DecodeHeader(raw)
+	if err != nil {
+		return false
+	}
+	c.mu.Lock()
+	sameSA := c.packets != nil && header.SPIi == c.spiI && header.SPIr == c.spiR
+	retransmit := sameSA && header.MessageID == c.msgID
+	stale := sameSA && header.MessageID < c.msgID
+	packets := clonePacketSet(c.packets)
+	c.mu.Unlock()
+	if retransmit {
+		if err := s.sendIKEPacketSet(s.transport(), packets); err != nil {
+			logger.Warn("SWu resend cached IKE response failed", zap.Error(err))
+		}
+	}
+	return retransmit || stale
 }

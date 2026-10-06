@@ -4,14 +4,21 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
+
+// retiredIKESALinger bounds how long a rekeyed-away IKE SA waits for the
+// peer's Delete. RFC 7296 2.8 leaves the Delete to the peer and sets no
+// deadline; without one a silent peer blocks every later IKE rekey.
+const retiredIKESALinger = 5 * time.Minute
 
 type ikeSAContext struct {
 	spiI, spiR     [8]byte
 	keys           *IKEKeys
 	localInitiator bool
+	retiredAt      time.Time
 }
 
 type retiredIKEDeleteReceipt struct {
@@ -19,8 +26,12 @@ type retiredIKEDeleteReceipt struct {
 }
 
 func (s *Session) hasRetiredIKESA() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if retired := s.retiredIKESA; retired != nil && time.Since(retired.retiredAt) > retiredIKESALinger {
+		wipeIKEKeys(retired.keys)
+		s.retiredIKESA = nil
+	}
 	return s.retiredIKESA != nil
 }
 

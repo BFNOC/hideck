@@ -186,6 +186,7 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 		if len(packets) == 0 {
 			return errors.New("swu: response fragmentation produced no SKF packets")
 		}
+		s.peerResponse.record(s.spiI, s.spiR, msgID, packets)
 		return s.sendIKEPacketSet(transport, packets)
 	}
 	packet := &ikev2.IKEPacket{
@@ -198,6 +199,7 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 	if err != nil {
 		return err
 	}
+	s.peerResponse.record(s.spiI, s.spiR, msgID, [][]byte{raw})
 	if err := transport.SendIKE(raw); err != nil {
 		return fmt.Errorf("swu: send IKE response: %w", err)
 	}
