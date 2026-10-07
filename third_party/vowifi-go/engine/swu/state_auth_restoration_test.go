@@ -23,6 +23,55 @@ func TestNormalizeAKAChallengeModeMatchesLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestMinimalAKAChallengePreservesEmptyCheckcode(t *testing.T) {
+	session := NewSession(&Config{AKAChallengeMode: "minimal"})
+	request := eapaka.Packet{
+		Type:       eapaka.TypeAKA,
+		Attributes: []eapaka.Attribute{eapaka.CheckcodeAttribute(nil)},
+	}
+
+	attrs := session.appendAKAChallengeMetaAttrs(nil, request)
+	checkcode, ok := eapaka.FindAttribute(attrs, eapaka.AttributeCheckcode)
+	if !ok {
+		t.Fatal("empty AT_CHECKCODE was omitted")
+	}
+	value, err := checkcode.CheckcodeValue()
+	if err != nil {
+		t.Fatalf("parse AT_CHECKCODE: %v", err)
+	}
+	if len(value) != 0 {
+		t.Fatalf("AT_CHECKCODE = %x, want empty value", value)
+	}
+}
+
+func TestCheckcodeModePreservesCompleteServerValue(t *testing.T) {
+	want := bytes.Repeat([]byte{0x5a}, 20)
+	session := NewSession(&Config{AKAChallengeMode: "checkcode"})
+	request := eapaka.Packet{
+		Type: eapaka.TypeAKA,
+		Attributes: []eapaka.Attribute{
+			eapaka.CheckcodeAttribute(want),
+			eapaka.ResultIndAttribute(),
+		},
+	}
+
+	attrs := session.appendAKAChallengeMetaAttrs(nil, request)
+	checkcode, ok := eapaka.FindAttribute(attrs, eapaka.AttributeCheckcode)
+	if !ok {
+		t.Fatal("AT_CHECKCODE was omitted")
+	}
+	value, err := checkcode.CheckcodeValue()
+	if err != nil {
+		t.Fatalf("parse AT_CHECKCODE: %v", err)
+	}
+	if !bytes.Equal(value, want) {
+		t.Fatalf("AT_CHECKCODE = %x, want %x", value, want)
+	}
+	if _, ok := eapaka.FindAttribute(attrs, eapaka.AttributeResultInd); !ok {
+		t.Fatal("AT_RESULT_IND was omitted in checkcode mode")
+	}
+}
+
 func TestLegacyIdentitySelectionAndKeyDerivationFallback(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376", FastReauthID: "fast@example"})
 	if got := session.currentIKEIdentity(); got != "fast@example" {
