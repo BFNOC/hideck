@@ -95,6 +95,17 @@ func (b *Bridge) writePCM(samples []int16) error {
 	if err := b.pcm.WriteFrame(frame); err != nil {
 		return fmt.Errorf("modem media: write PCM: %w", err)
 	}
+	for _, sample := range frame {
+		magnitude := int64(sample)
+		if magnitude < 0 {
+			magnitude = -magnitude
+		}
+		for old := b.playbackPeak.Load(); uint64(magnitude) > old; old = b.playbackPeak.Load() {
+			if b.playbackPeak.CompareAndSwap(old, uint64(magnitude)) {
+				break
+			}
+		}
+	}
 	if b.listenOnly {
 		b.muted.Add(1)
 	} else {

@@ -1,10 +1,13 @@
 package host
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/modemvoice"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 func (c *Controller) applyCall(d *device, change modemvoice.Change) error {
@@ -24,9 +27,24 @@ func (c *Controller) applyCall(d *device, change modemvoice.Change) error {
 		return nil
 	}
 	if change.Ended {
+		logger.Info("模组检测到通话结束", "device_id", d.id, "last_state", int(change.Call.Call.State), "mode", change.Call.Call.Mode, "remaining_calls", len(d.session.Calls()))
 		reason := current.endReason
 		if reason == "" {
 			reason = "remote_hangup"
+			if d.resources != nil && d.resources.Port != nil {
+				ctx, cancel := context.WithTimeout(d.ctx, 3*time.Second)
+				response, err := d.resources.Port.ExecuteATContext(ctx, "AT+CEER", 3*time.Second)
+				cancel()
+				// Retain only the extended error line, never CLCC numbers or SIM IDs.
+				for _, line := range strings.Split(response, "\n") {
+					if strings.HasPrefix(strings.TrimSpace(line), "+CEER:") {
+						logger.Info("模组通话结束原因", "device_id", d.id, "reason", strings.TrimSpace(line))
+					}
+				}
+				if err != nil {
+					logger.Warn("读取模组通话结束原因失败", "device_id", d.id, "err", err)
+				}
+			}
 		}
 		if err := c.endMedia(d, reason); err != nil {
 			d.setStatus("failed", err)

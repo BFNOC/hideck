@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yibaiba/hideck/internal/modemvoice/media"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 // ALSA runs the standard alsa-utils tools; it does not select an endpoint or
@@ -57,6 +58,7 @@ type programPCM struct {
 	once                            sync.Once
 	done                            chan struct{}
 	err                             error
+	playbackQueue                   *playbackQueue
 }
 
 func openPrograms(ctx context.Context, programs pcmPrograms) (pcm media.PCM, err error) {
@@ -85,6 +87,10 @@ func openPrograms(ctx context.Context, programs pcmPrograms) (pcm media.PCM, err
 		return nil, err
 	}
 	p.streamPCM = &streamPCM{capture: p.captureReader, playback: p.playbackWriter, stop: func() error { return p.finish(nil) }}
+	p.playbackQueue = newPlaybackQueue(p.done)
+	p.playbackQueue.start(p.streamPCM.WriteFrame, func() (int, error) {
+		return queuedPipeBytes(p.playbackWriter)
+	}, func(err error) { p.finish(err) })
 	go p.monitor(ctx)
 	return p, nil
 }
@@ -179,6 +185,9 @@ func (p *programPCM) finish(cause error) error {
 		}
 		p.err = errors.Join(cause, awaitStopped(p.captureProcess, "capture", &p.captureLog), awaitStopped(p.playbackProcess, "playback", &p.playbackLog))
 		close(p.done)
+		if p.playbackQueue != nil {
+			logger.Info("声卡播放队列统计", "discarded_frames", p.playbackQueue.dropped.Load(), "silence_frames", p.playbackQueue.silence.Load())
+		}
 	})
 	return p.err
 }
@@ -213,9 +222,13 @@ func (p *programPCM) ReadFrame() ([]int16, error) {
 }
 
 func (p *programPCM) WriteFrame(frame []int16) error {
-	err := p.streamPCM.WriteFrame(frame)
-	if err != nil {
-		return errors.Join(err, p.finish(err))
+	return p.playbackQueue.offer(frame)
+}
+
+func (p *programPCM) Close() error {
+	err := p.finish(nil)
+	if p.playbackQueue != nil {
+		<-p.playbackQueue.stopped
 	}
-	return nil
+	return err
 }

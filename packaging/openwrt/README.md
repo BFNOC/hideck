@@ -1,6 +1,6 @@
 # OpenWrt 安装与打包
 
-OpenWrt 必须使用 `hideck_*_openwrt_*`（musl 静态、无 UPX），不能使用依赖 glibc 的 `linux_*`。程序及语音资源体积较大，小闪存设备需要 extroot；不提供 MIPS 包。
+OpenWrt 必须使用 musl 构建、无 UPX 的程序，不能使用依赖 glibc 的 `linux_*`。现有发布和安装包使用 `hideck_*_openwrt_*` 静态构建；需要通话 MP3 编码时，使用下文的动态 musl 二进制构建。程序及语音资源体积较大，小闪存设备需要 extroot；不提供 MIPS 包。
 
 ## 三个独立安装包
 
@@ -88,6 +88,40 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
 录音编解码库与 USB PCM 是两类依赖：现有脚本还会请求 `lame-lib`、`libopencore-amrnb`、`libopencore-amrwb`、`libvo-amrwbenc`。本次固定的标准 feeds 未提供上述 AMR 包，未额外制作编解码器包；使用缺少它们的软件源时脚本会明确报告录音依赖未装全。三个安装包不代表 AMR 录音已验收，也不会把此限制误报为模组 PCM 已通过通话测试。
 
 配置：`/etc/hideck/config.yaml`；数据：`/var/lib/hideck`；服务：`/etc/init.d/hideck`。OpenWrt 的 `/var` 通常在内存中，需要持久数据时请在配置中指定持久挂载目录。`qmi-proxy` 默认 `/usr/libexec/qmi-proxy`，保持 `system.openwrt_dynamic_interfaces: true`。
+
+## 原生动态 musl 二进制（通话录音）
+
+HiDeck 使用动态加载的编码库生成 MP3。静态 musl 程序调用 `dlopen` 会报
+`Dynamic loading not supported`；仅安装 `lame-lib` 不能解决这一问题。
+`build.sh` 支持 `LINK_MODE=dynamic`，使用与设备匹配的 OpenWrt SDK 编译器，
+保留动态加载能力。默认值仍为 `static`，现有安装包流程只接受静态产物。
+
+以下以 Linux 构建机、OpenWrt 25.12.2 x86/64 SDK 为例，不使用 Docker。
+先将对应版本 SDK 解压到本地，然后在仓库根目录执行：
+
+```sh
+npm ci --prefix web
+npm run build --prefix web
+rm -rf internal/web/dist
+cp -R web/dist internal/web/dist
+
+SDK_DIR=/path/to/openwrt-sdk-25.12.2-x86-64
+export STAGING_DIR="$SDK_DIR/staging_dir"
+export CC="$STAGING_DIR/toolchain-x86_64_gcc-14.3.0_musl/bin/x86_64-openwrt-linux-musl-gcc"
+GOARCH=amd64 LINK_MODE=dynamic VERSION=v2.1.24+dynamic \
+  OUT=out/hideck-openwrt-dynamic sh packaging/openwrt/build.sh
+```
+
+其他固件/架构应使用自己的 SDK 和编译器路径。脚本检查动态产物的解释器
+是 `/lib/ld-musl-*`，避免把构建机的 glibc 程序当作 OpenWrt 程序。
+部署前检查 `readelf -d out/hideck-openwrt-dynamic` 中的 `NEEDED`；
+本次 x86/64 产物依赖系统 musl 和 `libgcc_s.so.1`。在设备安装 `libgcc`
+和 `lame-lib`（使用 `opkg install` 或 `apk add`），然后在无活动通话时
+备份现有程序并替换实际 procd 服务使用的二进制。配置、数据库和账号
+不需要迁移；不要在通话中替换或重启服务。
+
+PCMU 模组直拨的 MP3 编码已验证；AMR 实时编解码仍需对应库。
+详细音频修复与验证范围见 [模组直拨排障](../../docs/modem-voice-troubleshooting.md)。
 
 ## 本地 SDK 构建
 

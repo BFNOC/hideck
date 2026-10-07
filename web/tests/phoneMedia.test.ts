@@ -13,7 +13,7 @@ const RECVONLY_PCMU_OFFER = `${PCMU_OFFER}a=recvonly\r\n`
 
 type FakeTrack = MediaStreamTrack & { stopped: boolean }
 
-function mediaFixture(secure = true) {
+function mediaFixture(secure = true, connectAutomatically = true) {
   const states: PhoneMediaState[] = []
   const track = {
     enabled: true,
@@ -26,6 +26,8 @@ function mediaFixture(secure = true) {
     getTracks: () => [track]
   } as unknown as MediaStream
   const peers: FakePeer[] = []
+  const timers = new Map<number, () => void>()
+  let nextTimer = 0
   let requestedConstraints: MediaStreamConstraints | null = null
   const requestedOffers: string[] = []
   const microphoneStoppedAtMediaCreation: boolean[] = []
@@ -37,6 +39,7 @@ function mediaFixture(secure = true) {
     },
     createPeer: () => {
       const peer = new FakePeer()
+      peer.connectAutomatically = connectAutomatically
       peers.push(peer)
       return peer as unknown as RTCPeerConnection
     },
@@ -47,8 +50,8 @@ function mediaFixture(secure = true) {
       const suffix = requestedOffers.length
       return { media_id: `media-${suffix}`, lease: `lease-${suffix}`, sdp: PCMU_OFFER }
     },
-    setTimer: () => 1,
-    clearTimer: () => {}
+    setTimer: (handler) => { const id = ++nextTimer; timers.set(id, handler); return id },
+    clearTimer: (id) => { timers.delete(id) }
   }
   const controller = new PhoneMediaController({
     onState: (state) => states.push(state),
@@ -59,6 +62,7 @@ function mediaFixture(secure = true) {
     states,
     track,
     peers,
+    timers,
     constraints: () => requestedConstraints,
     offers: () => requestedOffers,
     microphoneStoppedAtMediaCreation: () => microphoneStoppedAtMediaCreation
@@ -99,7 +103,7 @@ test('switching from two-way to receive-only stops microphone capture before rep
 test('prepares PCMU media, controls mute, and releases browser resources', async () => {
   const fixture = mediaFixture()
   assert.deepEqual(await fixture.controller.prepare(), { mediaId: 'media-1', lease: 'lease-1' })
-  assert.deepEqual(fixture.states, ['requesting', 'connecting'])
+  assert.deepEqual(fixture.states, ['requesting', 'connecting', 'connected'])
   assert.equal((fixture.constraints()?.audio as MediaTrackConstraints).channelCount, 1)
   assert.deepEqual(fixture.offers(), [PCMU_OFFER])
   assert.equal(fixture.peers[0].remoteDescription?.sdp, PCMU_OFFER)
@@ -128,6 +132,7 @@ class FakePeer extends EventTarget {
   localDescription: RTCSessionDescription | null = null
   remoteDescription: RTCSessionDescription | null = null
   closed = false
+  connectAutomatically = true
   transceiverDirection = ''
   private readonly transceiver = { sender: {}, setCodecPreferences: () => {} } as unknown as RTCRtpTransceiver
 
@@ -146,6 +151,49 @@ class FakePeer extends EventTarget {
   }
   async setRemoteDescription(description: RTCSessionDescriptionInit) {
     this.remoteDescription = description as RTCSessionDescription
+    if (this.connectAutomatically) this.setConnectionState('connected')
   }
-  close() { this.closed = true }
+  setConnectionState(state: RTCPeerConnectionState) {
+    this.connectionState = state
+    this.dispatchEvent(new Event('connectionstatechange'))
+  }
+  close() { this.closed = true; this.setConnectionState('closed') }
 }
+
+test('does not return dialable media before the peer actually connects', async () => {
+  const fixture = mediaFixture(true, false)
+  let ready = false
+  const preparing = fixture.controller.prepare().then((result) => { ready = true; return result })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(ready, false)
+  assert.equal(fixture.peers[0].remoteDescription?.sdp, PCMU_OFFER)
+  fixture.peers[0].setConnectionState('connected')
+  await preparing
+  assert.equal(ready, true)
+  assert.equal(fixture.timers.size, 0)
+  fixture.controller.close()
+})
+
+test('failed ICE rejects preparation and releases the microphone', async () => {
+  const fixture = mediaFixture(true, false)
+  const preparing = fixture.controller.prepare()
+  const rejected = assert.rejects(preparing, /UDP 媒体通道/)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  fixture.peers[0].setConnectionState('failed')
+  await rejected
+  assert.equal(fixture.track.stopped, true)
+  assert.equal(fixture.peers[0].closed, true)
+  assert.equal(fixture.timers.size, 0)
+})
+
+test('an unreachable media channel times out without returning dialable media', async () => {
+  const fixture = mediaFixture(true, false)
+  const preparing = fixture.controller.prepare()
+  const rejected = assert.rejects(preparing, /听筒连接超时/)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(fixture.timers.size, 1)
+  for (const expire of fixture.timers.values()) expire()
+  await rejected
+  assert.equal(fixture.track.stopped, true)
+  assert.equal(fixture.timers.size, 0)
+})

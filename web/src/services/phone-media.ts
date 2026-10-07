@@ -25,6 +25,7 @@ export type PreparedPhoneMedia = {
 type PrepareMediaOptions = { microphone?: boolean }
 
 const ICE_GATHERING_TIMEOUT_MS = 10_000
+const MEDIA_CONNECTION_TIMEOUT_MS = 15_000
 
 export class PhoneMediaController {
   private microphone: MediaStream | null = null
@@ -53,6 +54,7 @@ export class PhoneMediaController {
       this.callbacks.onState('connecting')
       const answer = await this.dependencies.createMedia(offer)
       await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
+      await waitForMediaConnection(peer, this.dependencies)
       return { mediaId: answer.media_id, lease: answer.lease }
     } catch (error) {
       this.releaseFailedMedia(peer)
@@ -217,6 +219,30 @@ function browserMediaDependencies(): PhoneMediaDependencies {
     setTimer: (handler, timeout) => window.setTimeout(handler, timeout),
     clearTimer: (timer) => window.clearTimeout(timer)
   }
+}
+
+function waitForMediaConnection(peer: RTCPeerConnection, dependencies: PhoneMediaDependencies) {
+  if (peer.connectionState === 'connected') return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const timeout = dependencies.setTimer(
+      () => finish(new Error('听筒连接超时，请检查浏览器到 HiDeck 的 UDP 媒体通道')),
+      MEDIA_CONNECTION_TIMEOUT_MS
+    )
+    const onChange = () => {
+      if (peer.connectionState === 'connected') finish()
+      else if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+        finish(new Error('听筒媒体连接失败，请检查浏览器到 HiDeck 的 UDP 媒体通道'))
+      }
+    }
+    const finish = (error?: Error) => {
+      dependencies.clearTimer(timeout)
+      peer.removeEventListener('connectionstatechange', onChange)
+      if (error) reject(error)
+      else resolve()
+    }
+    peer.addEventListener('connectionstatechange', onChange)
+    onChange()
+  })
 }
 
 function toMediaError(error: unknown, fallback: string) {
