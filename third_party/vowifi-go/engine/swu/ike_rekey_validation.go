@@ -8,6 +8,9 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
+// errIKERekeyNoNewSA marks an IKE SA rekey answer that carries no SA, nonce or KE.
+var errIKERekeyNoNewSA = errors.New("swu: IKE rekey response carries no new SA")
+
 func (s *Session) validateIKESARekeyResponse(payloads []ikev2.Payload) (*ikeSARekeySelection, error) {
 	var sa *ikev2.EncryptedPayloadSA
 	var nonce, peerKey []byte
@@ -35,8 +38,13 @@ func (s *Session) validateIKESARekeyResponse(payloads []ikev2.Payload) (*ikeSARe
 			}
 		}
 	}
+	// Only an answer with nothing to build an SA from is a decline. A partial
+	// answer may mean the peer already switched, so it still fails.
+	if sa == nil && len(nonce) == 0 && len(peerKey) == 0 {
+		return nil, fmt.Errorf("%w (payloads: %s)", errIKERekeyNoNewSA, ikePayloadTypes(payloads))
+	}
 	if sa == nil || len(sa.Proposals) != 1 || len(nonce) == 0 || len(peerKey) == 0 {
-		return nil, errors.New("swu: IKE rekey response missing SA, nonce, or KE")
+		return nil, fmt.Errorf("swu: incomplete IKE rekey response (payloads: %s)", ikePayloadTypes(payloads))
 	}
 	if err := s.validateIKERekeyProposal(sa.Proposals[0]); err != nil {
 		return nil, err

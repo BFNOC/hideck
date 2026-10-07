@@ -67,6 +67,7 @@ func (s *Session) startIKESARekeyTimer(interval time.Duration) {
 	s.startRekeyTimer(rekeyTimerSpec{
 		name: "IKE SA", interval: interval,
 		reset: reset, target: &s.ikeRekeyTimer, action: s.RekeyIKESA,
+		declined: isIKERekeyDeclined,
 	})
 }
 
@@ -107,6 +108,16 @@ func rekeyFailureLimit(err error) int {
 func isChildSANotFoundError(err error) bool {
 	var rejection *createChildSARejectError
 	return errors.As(err, &rejection) && rejection.NotifyType == ikev2.CHILD_SA_NOT_FOUND
+}
+
+// isIKERekeyDeclined reports an ePDG that answered an IKE SA rekey without
+// installing a new SA. Nothing changed on either side and the current IKE SA
+// still works. Spark NZ answers this way and later deletes the IKE SA at its
+// fixed 8h lifetime, so reconnecting at once only adds an outage.
+func isIKERekeyDeclined(err error) bool {
+	var rejection *IKEAuthError
+	return errors.Is(err, errIKERekeyNoNewSA) ||
+		errors.As(err, &rejection) && rejection.NotifyType == ikev2.NO_ADDITIONAL_SAS
 }
 
 func (s *Session) startRekeyTimer(spec rekeyTimerSpec) {
@@ -160,6 +171,7 @@ func (s *Session) runRekeyTimer(timer *time.Timer, spec rekeyTimerSpec) {
 				s.failEstablishedControl(fmt.Errorf("swu: %s rekey failed: %w", spec.name, err))
 				return
 			}
+			s.Logger.Warn(spec.name+" rekey failed; retrying", zap.Error(err), zap.Int("attempt", failures))
 			retryInterval := spec.retryInterval
 			if retryInterval <= 0 {
 				retryInterval = rekeyRetryInterval

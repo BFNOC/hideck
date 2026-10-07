@@ -254,6 +254,8 @@ func ikeAuthenticationError(payloads []ikev2.Payload) error {
 	return nil
 }
 
+// ikePayloadTypes names payload types, notify types and SA proposal counts
+// for error messages.
 func ikePayloadTypes(payloads []ikev2.Payload) string {
 	types := make([]string, 0, len(payloads))
 	for _, payload := range payloads {
@@ -261,7 +263,20 @@ func ikePayloadTypes(payloads []ikev2.Payload) string {
 			types = append(types, "nil")
 			continue
 		}
+		if sa, ok := payload.(*ikev2.EncryptedPayloadSA); ok {
+			types = append(types, fmt.Sprintf("SA(%d proposals)", len(sa.Proposals)))
+			continue
+		}
+		if payload.Type() == ikev2.PayloadNotify {
+			if notifyType, _, ok := parseNotifyPayload(payload); ok {
+				types = append(types, "N("+ikev2.NotifyTypeToString(notifyType)+")")
+				continue
+			}
+		}
 		types = append(types, fmt.Sprintf("%d", payload.Type()))
+	}
+	if len(types) == 0 {
+		return "none"
 	}
 	return strings.Join(types, ",")
 }

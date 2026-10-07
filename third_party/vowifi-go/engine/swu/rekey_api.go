@@ -78,7 +78,7 @@ func (s *Session) handleRekeyIKESAResp(
 		return fmt.Errorf("swu: decrypt IKE SA rekey response: %w", err)
 	}
 	if err := ikeAuthenticationError(payloads); err != nil {
-		return err
+		return fmt.Errorf("swu: IKE SA rekey rejected: %w", err)
 	}
 	s.mu.RLock()
 	oldInitiator := s.localIKEInitiator
