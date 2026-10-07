@@ -151,7 +151,7 @@ jobs:
   build-openwrt:
     name: Build OpenWrt ${{ matrix.artifact_arch }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: frontend
     strategy:
       fail-fast: false
@@ -159,15 +159,15 @@ jobs:
         include:
           - goarch: amd64
             goarm: ''
-            musl_triple: ''
+            sdk_id: 24.10.8-x86-64
             artifact_arch: amd64
           - goarch: arm64
             goarm: ''
-            musl_triple: aarch64-linux-musl
+            sdk_id: 24.10.8-armsr-armv8
             artifact_arch: arm64
           - goarch: arm
             goarm: '7'
-            musl_triple: arm-linux-musleabihf
+            sdk_id: 24.10.8-mvebu-cortexa9
             artifact_arch: armv7
 
     steps:
@@ -193,30 +193,32 @@ jobs:
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "buildtime=${BUILDTIME}" >> "${GITHUB_OUTPUT}"
 
-      - name: Install musl toolchain
+      - name: Install pinned OpenWrt musl toolchain
+        env:
+          SDK_ID: ${{ matrix.sdk_id }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${{ matrix.musl_triple }}" ]; then
-            sudo apt-get update
-            sudo apt-get install -y musl-tools
-            echo "CC=musl-gcc" >> "${GITHUB_ENV}"
-            exit 0
+          entry=$(jq -cer --arg id "$SDK_ID" '.include[] | select(.id == $id)' packaging/openwrt/sdk-matrix.json)
+          release=$(jq -r '.release' <<<"$entry")
+          target=$(jq -r '.target' <<<"$entry")
+          sdk=$(jq -r '.sdk' <<<"$entry")
+          digest=$(jq -r '.sha256' <<<"$entry")
+          url="https://downloads.openwrt.org/releases/${release}/targets/${target}/${sdk}"
+          archive="$RUNNER_TEMP/$sdk"
+          sdk_dir="$RUNNER_TEMP/openwrt-sdk"
+          curl -fL --retry 3 --connect-timeout 20 --max-time 600 "$url" -o "$archive"
+          printf '%s  %s\n' "$digest" "$archive" | sha256sum -c -
+          mkdir -p "$sdk_dir"
+          tar --zstd -xf "$archive" -C "$sdk_dir" --strip-components=1
+          mapfile -t compilers < <(find "$sdk_dir/staging_dir" -path '*/bin/*-openwrt-linux-musl*-gcc' -print)
+          if [ "${#compilers[@]}" -ne 1 ]; then
+            printf 'expected one OpenWrt musl compiler, found %s\n' "${#compilers[@]}" >&2
+            printf '%s\n' "${compilers[@]}" >&2
+            exit 1
           fi
-          case "${{ matrix.goarch }}" in
-            arm64) zig_target=aarch64-linux-musl ;;
-            arm) zig_target=arm-linux-musleabihf ;;
-            *) echo "unsupported goarch ${{ matrix.goarch }}" >&2; exit 1 ;;
-          esac
-          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 \
-            "https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz" \
-            | tar -C "$RUNNER_TEMP" -xJ
-          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "${GITHUB_PATH}"
-          wrapper="$RUNNER_TEMP/musl-cc"
-          printf '#!/bin/sh\nexec "%s/zig-linux-x86_64-0.13.0/zig" cc -target %s "$@"\n' \
-            "$RUNNER_TEMP" "$zig_target" > "$wrapper"
-          chmod +x "$wrapper"
-          echo "CC=${wrapper}" >> "${GITHUB_ENV}"
+          echo "CC=${compilers[0]}" >> "${GITHUB_ENV}"
+          echo "STAGING_DIR=${sdk_dir}/staging_dir" >> "${GITHUB_ENV}"
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4

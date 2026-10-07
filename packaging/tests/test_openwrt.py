@@ -80,6 +80,10 @@ class OpenWrtTests(unittest.TestCase):
 
         self.assertIn("LINK_MODE=dynamic", release)
         self.assertIn("openwrt_dynamic_${{ matrix.artifact_arch }}", release)
+        for sdk_id in ("24.10.8-x86-64", "24.10.8-armsr-armv8", "24.10.8-mvebu-cortexa9"):
+            self.assertIn(f"sdk_id: {sdk_id}", release)
+        self.assertIn("*-openwrt-linux-musl*-gcc", release)
+        self.assertNotIn("zig-linux", release)
         self.assertIn('asset="hideck_${HIDECK_VERSION}_openwrt_${BINARY_ARCH}"', packages)
         self.assertNotIn("openwrt_dynamic_${BINARY_ARCH}", packages)
 

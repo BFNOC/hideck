@@ -98,7 +98,9 @@ HiDeck 使用动态加载的编码库生成 MP3。静态 musl 程序调用 `dlop
 Release 自动提供 `hideck_<版本>_openwrt_dynamic_<架构>` 及其 SHA256 文件。
 它保留动态加载能力，但不会被 IPK/APK 打包流程或 `deploy-binary.sh` 自动选择，
 避免给不需要录音的设备增加运行库要求。设备需安装 `libgcc` 和 `lame-lib`
-（使用 `opkg install` 或 `apk add`），并核对 Release 中的 SHA256SUMS。
+（使用 `opkg install` 或 `apk add`），并核对 Release 中的 SHA256SUMS。发布流程
+使用 [sdk-matrix.json](sdk-matrix.json) 固定的 OpenWrt 24.10 SDK 构建三个架构，
+不使用只能生成 static PIE 的通用 ARM 交叉工具链冒充动态产物。
 
 `build.sh` 仍支持 `LINK_MODE=dynamic`，可用与设备固件匹配的 OpenWrt SDK
 自行构建。以下方式用于 Release 没有覆盖的目标或自定义固件：
