@@ -53,6 +53,8 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     env:
       PACKAGE_VERSION: ${{ inputs.version }}
       HTTP_PORT: ${{ inputs.http_port }}
@@ -79,3 +81,12 @@ jobs:
           name: hideck-fnos-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/fnos/*
           if-no-files-found: error
+      - name: Upload FPK to the existing GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="v${PACKAGE_VERSION#v}"
+          gh release view "$release_tag" >/dev/null
+          gh release upload "$release_tag" dist/fnos/*.fpk dist/fnos/*.fpk.sha256 --clobber

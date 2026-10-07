@@ -44,7 +44,7 @@ python3 packaging/fnos/build.py --version "$HIDECK_RELEASE_VERSION" \
 
 这些检查证明镜像工具可执行和版本一致，不替代模组真机功能验收。镜像同名标签后续变化不会改变已经生成的 FPK 所使用的内容。
 
-GitHub Actions 的 **Build and Push Docker Image** 成功后，会把该次发布的版本、源码 commit 和 digest 交给 **Build fnOS package**，不是重新读取可能已经变化的 `latest`。也可手动触发后者。只上传工作流产物，不自动上传 Release 或部署设备。FPK 失败会显示为工作流失败，不回滚已发布的 Docker 镜像。
+GitHub Actions 的 **Build and Push Docker Image** 成功后，会把该次发布的版本、源码 commit 和 digest 交给 **Build fnOS package**，不是重新读取可能已经变化的 `latest`。也可手动触发后者。构建完成后会同时保留 Actions 产物，并把 `.fpk` 与校验文件上传到已经存在的同版本 GitHub Release；Release 不存在时明确失败，不会自动创建其他版本。FPK 构建或上传失败会显示为工作流失败，但不回滚已经发布的 Docker 镜像，也不会部署设备。
 
 1. 在与包相同的目录核对 `sha256sum -c hideck_<版本>_fnos.fpk.sha256`。
 2. 在飞牛应用中心选择手动安装此包，选择应用存储位置并确认权限提示。

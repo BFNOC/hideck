@@ -148,6 +148,8 @@ jobs:
   fnos:
     needs: build
     if: needs.build.outputs.digest != ''
+    permissions:
+      contents: write
     uses: ./.github/workflows/fnos-package.yml
     with:
       version: ${{ needs.build.outputs.version }}

@@ -68,6 +68,18 @@ class FnOSTests(unittest.TestCase):
             with self.assertRaises(argparse.ArgumentTypeError):
                 BUILD.http_port(value)
 
+    def test_release_workflow_uploads_fpk_to_existing_release(self):
+        workflow = (ROOT / ".github/workflows/fnos-package.yml").read_text()
+        caller = (ROOT / ".github/workflows/docker-publish.yml").read_text()
+
+        self.assertIn('release_tag="v${PACKAGE_VERSION#v}"', workflow)
+        self.assertIn('gh release view "$release_tag"', workflow)
+        self.assertIn('gh release upload "$release_tag"', workflow)
+        self.assertIn("dist/fnos/*.fpk.sha256 --clobber", workflow)
+        self.assertIn("fnos:\n    needs: build", caller)
+        self.assertIn("fnos:\n    needs: build\n    if:", caller)
+        self.assertIn("permissions:\n      contents: write\n    uses:", caller)
+
     def build_options(self):
         return argparse.Namespace(version="2.1.23", http_port=7575,
                                   fnpack="fnpack", output=self.directory / "output",
