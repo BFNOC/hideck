@@ -38,15 +38,17 @@ func (s *Service) cancelDisconnectTimer(mediaID string) {
 }
 
 func (s *Service) scheduleDisconnectHangup(mediaID string) {
-	mediaExists := s.media.Get(mediaID) != nil
 	s.mu.Lock()
+	mediaExists := s.media.Get(mediaID) != nil
 	callID := s.mediaCalls[mediaID]
 	call := s.calls[callID]
 	if call == nil || call.terminal || call.mediaID != mediaID || call.disconnectTimer != nil {
 		if callID == "" && mediaExists && s.pendingMediaDrops[mediaID] == nil {
 			pending := &pendingMediaDrop{}
-			pending.timer = time.AfterFunc(s.recoveryGrace, func() { s.expireUnboundMedia(mediaID, pending) })
 			s.pendingMediaDrops[mediaID] = pending
+			if s.mediaReservations[mediaID] == nil {
+				s.armUnboundMediaDropLocked(mediaID, pending)
+			}
 		}
 		s.mu.Unlock()
 		return
@@ -54,11 +56,6 @@ func (s *Service) scheduleDisconnectHangup(mediaID string) {
 	call.disconnectTimer = time.AfterFunc(s.recoveryGrace, func() { s.expireDisconnectedMedia(callID, mediaID) })
 	s.mu.Unlock()
 	s.publish("media_disconnected", call)
-}
-
-func (s *Service) bindMediaLocked(callID, mediaID string) bool {
-	s.mediaCalls[mediaID] = callID
-	return s.clearPendingMediaDropLocked(mediaID)
 }
 
 func (s *Service) resumePendingMediaDrop(mediaID string, pending bool) {
@@ -89,14 +86,18 @@ func (s *Service) expireDisconnectedMedia(callID, mediaID string) {
 
 func (s *Service) expireUnboundMedia(mediaID string, pending *pendingMediaDrop) {
 	s.mu.Lock()
-	if s.pendingMediaDrops[mediaID] != pending || s.mediaCalls[mediaID] != "" {
+	if s.pendingMediaDrops[mediaID] != pending || s.mediaCalls[mediaID] != "" || s.mediaReservations[mediaID] != nil {
 		s.mu.Unlock()
 		return
 	}
 	delete(s.pendingMediaDrops, mediaID)
+	media := s.media.detach(mediaID)
 	s.mu.Unlock()
+	if media == nil {
+		return
+	}
 	logger.Warn("未绑定电话的浏览器媒体连接未恢复，释放服务端会话", "media_id", mediaID)
-	s.media.Remove(mediaID)
+	_ = media.Close()
 }
 
 func (s *Service) clearPendingMediaDropLocked(mediaID string) bool {
@@ -109,6 +110,27 @@ func (s *Service) clearPendingMediaDropLocked(mediaID string) bool {
 		drop.timer.Stop()
 	}
 	return true
+}
+
+func (s *Service) pausePendingMediaDropLocked(mediaID string) {
+	pending := s.pendingMediaDrops[mediaID]
+	if pending == nil || pending.timer == nil {
+		return
+	}
+	pending.timer.Stop()
+	pending.timer = nil
+}
+
+func (s *Service) resumeUnboundMediaDropLocked(mediaID string) {
+	pending := s.pendingMediaDrops[mediaID]
+	if pending == nil || pending.timer != nil || s.media.Get(mediaID) == nil {
+		return
+	}
+	s.armUnboundMediaDropLocked(mediaID, pending)
+}
+
+func (s *Service) armUnboundMediaDropLocked(mediaID string, pending *pendingMediaDrop) {
+	pending.timer = time.AfterFunc(s.recoveryGrace, func() { s.expireUnboundMedia(mediaID, pending) })
 }
 
 func (s *Service) stopPendingMediaDropTimers() {

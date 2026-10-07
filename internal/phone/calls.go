@@ -23,10 +23,12 @@ func (s *Service) StartCall(request StartCallRequest) (CallView, error) {
 	if request.DeviceID == "" || !calleePattern.MatchString(request.Callee) {
 		return CallView{}, errors.New("phone: device and a valid callee are required")
 	}
-	media, err := s.controlMedia(request.Owner, request.MediaID, request.Lease)
+	media, reservation, err := s.reserveControlledMedia(request.Owner, request.MediaID, request.Lease)
 	if err != nil {
 		return CallView{}, err
 	}
+	defer s.releaseMediaReservation(reservation)
+	request.MediaID = reservation.mediaID
 	if err := s.reserveDevice(request.DeviceID); err != nil {
 		return CallView{}, err
 	}
@@ -43,12 +45,19 @@ func (s *Service) StartCall(request StartCallRequest) (CallView, error) {
 	}
 	call := s.newOutboundCall(request, snapshot, startedAt)
 	s.mu.Lock()
-	s.calls[call.view.CallID] = call
-	s.deviceCalls[call.view.DeviceID] = call.view.CallID
-	pendingMediaDrop := s.bindMediaLocked(call.view.CallID, call.mediaID)
+	pendingMediaDrop, bindErr := s.bindMediaLocked(call.view.CallID, reservation)
+	if bindErr == nil {
+		s.calls[call.view.CallID] = call
+		s.deviceCalls[call.view.DeviceID] = call.view.CallID
+	}
 	pendingEvents := s.pendingEvents[call.view.CallID]
 	delete(s.pendingEvents, call.view.CallID)
 	s.mu.Unlock()
+	if bindErr != nil {
+		s.releaseDeviceReservation(request.DeviceID)
+		hangupErr := s.gateway.HangupCall(s.ctx, call.view.DeviceID, call.view.CallID)
+		return CallView{}, errors.Join(bindErr, hangupErr)
+	}
 	s.resumePendingMediaDrop(call.mediaID, pendingMediaDrop)
 	s.persist(call.record)
 	s.publish("call_started", call)
@@ -82,10 +91,11 @@ func (s *Service) newOutboundCall(
 }
 
 func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView, error) {
-	call, media, err := s.claimIncoming(request)
+	call, media, reservation, err := s.claimIncoming(request)
 	if err != nil {
 		return CallView{}, err
 	}
+	defer s.releaseMediaReservation(reservation)
 	s.mu.RLock()
 	incomingSDP, deviceID, callID := call.incomingSDP, call.view.DeviceID, call.view.CallID
 	s.mu.RUnlock()
@@ -106,24 +116,36 @@ func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView,
 			return CallView{}, err
 		}
 	}
-	s.assignControl(call.view.CallID, request.Owner, request.MediaID, request.Lease)
+	if err := s.assignControl(call.view.CallID, reservation); err != nil {
+		hangupErr := s.gateway.HangupCall(ctx, deviceID, callID)
+		return CallView{}, errors.Join(err, hangupErr)
+	}
 	s.startMixedRecording(call, media)
 	return s.callView(callID, request.Lease), nil
 }
 
 func (s *Service) Reject(request ControlRequest) error {
-	call, _, err := s.claimIncoming(request)
+	call, _, reservation, err := s.claimIncoming(request)
 	if err != nil {
 		return err
 	}
+	defer s.releaseMediaReservation(reservation)
 	s.mu.Lock()
+	if current := s.calls[request.CallID]; current != call || call.terminal {
+		s.mu.Unlock()
+		return errActiveCallNotFound
+	}
+	pendingMediaDrop, err := s.bindMediaLocked(request.CallID, reservation)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	call.userRejected = true
-	call.owner, call.lease, call.mediaID = request.Owner, request.Lease, request.MediaID
-	call.view.MediaID = request.MediaID
-	pendingMediaDrop := s.bindMediaLocked(request.CallID, request.MediaID)
+	call.owner, call.lease, call.mediaID = request.Owner, request.Lease, reservation.mediaID
+	call.view.MediaID = reservation.mediaID
 	deviceID := call.view.DeviceID
 	s.mu.Unlock()
-	s.resumePendingMediaDrop(request.MediaID, pendingMediaDrop)
+	s.resumePendingMediaDrop(reservation.mediaID, pendingMediaDrop)
 	if err := s.gateway.RejectIncomingCall(voicehost.RejectRequest{
 		DeviceID: deviceID, CallID: request.CallID, StatusCode: 486,
 	}); err != nil {
@@ -225,10 +247,12 @@ func (s *Service) setCallHold(ctx context.Context, owner, callID, lease string, 
 }
 
 func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error) {
-	media := s.media.Get(request.MediaID)
-	if media == nil || media.Owner != request.Owner {
-		return CallView{}, "", errors.New("phone: media session is unavailable")
+	media, reservation, err := s.reserveOwnedMedia(request.Owner, request.MediaID)
+	if err != nil {
+		return CallView{}, "", err
 	}
+	defer s.releaseMediaReservation(reservation)
+	request.MediaID = reservation.mediaID
 	s.mu.RLock()
 	call := s.calls[request.CallID]
 	if call == nil || call.terminal {
@@ -254,11 +278,15 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 		return CallView{}, "", errors.New("phone: call control changed while refreshing media")
 	}
 	oldMediaID := call.mediaID
+	pendingMediaDrop, err := s.bindMediaLocked(request.CallID, reservation)
+	if err != nil {
+		s.mu.Unlock()
+		return CallView{}, "", err
+	}
 	call.owner, call.lease, call.mediaID = request.Owner, media.Lease, request.MediaID
 	call.view.MediaID = request.MediaID
 	delete(s.mediaCalls, oldMediaID)
 	s.clearPendingMediaDropLocked(oldMediaID)
-	pendingMediaDrop := s.bindMediaLocked(request.CallID, request.MediaID)
 	if call.disconnectTimer != nil {
 		call.disconnectTimer.Stop()
 		call.disconnectTimer = nil
@@ -301,29 +329,25 @@ func (s *Service) attachCurrentMedia(callID string, media *MediaSession) error {
 	return media.Attach(remoteSDP)
 }
 
-func (s *Service) claimIncoming(request ControlRequest) (*activeCall, *MediaSession, error) {
-	media, err := s.controlMedia(request.Owner, request.MediaID, request.Lease)
+func (s *Service) claimIncoming(request ControlRequest) (*activeCall, *MediaSession, *mediaReservation, error) {
+	media, reservation, err := s.reserveControlledMedia(request.Owner, request.MediaID, request.Lease)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	call := s.calls[request.CallID]
 	if call == nil || call.terminal || call.view.Direction != "inbound" {
-		return nil, nil, errors.New("phone: pending incoming call not found")
+		s.mu.RUnlock()
+		s.releaseMediaReservation(reservation)
+		return nil, nil, nil, errors.New("phone: pending incoming call not found")
 	}
 	if call.lease != "" && (!secureEqual(call.lease, request.Lease) || call.owner != request.Owner) {
-		return nil, nil, errors.New("phone: call is controlled by another browser")
+		s.mu.RUnlock()
+		s.releaseMediaReservation(reservation)
+		return nil, nil, nil, errors.New("phone: call is controlled by another browser")
 	}
-	return call, media, nil
-}
-
-func (s *Service) controlMedia(owner, mediaID, lease string) (*MediaSession, error) {
-	media := s.media.Get(strings.TrimSpace(mediaID))
-	if media == nil || !media.Matches(owner, lease) {
-		return nil, errors.New("phone: invalid media control lease")
-	}
-	return media, nil
+	s.mu.RUnlock()
+	return call, media, reservation, nil
 }
 
 func (s *Service) controlledCall(owner, callID, lease string) (*activeCall, error) {
@@ -357,18 +381,23 @@ func (s *Service) releaseDeviceReservation(deviceID string) {
 	s.mu.Unlock()
 }
 
-func (s *Service) assignControl(callID, owner, mediaID, lease string) {
+func (s *Service) assignControl(callID string, reservation *mediaReservation) error {
 	s.mu.Lock()
 	call := s.calls[callID]
-	if call == nil {
+	if call == nil || call.terminal {
 		s.mu.Unlock()
-		return
+		return errActiveCallNotFound
 	}
-	call.owner, call.lease, call.mediaID = owner, lease, mediaID
-	call.view.MediaID = mediaID
-	pendingMediaDrop := s.bindMediaLocked(callID, mediaID)
+	pendingMediaDrop, err := s.bindMediaLocked(callID, reservation)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	call.owner, call.lease, call.mediaID = reservation.media.Owner, reservation.media.Lease, reservation.mediaID
+	call.view.MediaID = reservation.mediaID
 	s.mu.Unlock()
-	s.resumePendingMediaDrop(mediaID, pendingMediaDrop)
+	s.resumePendingMediaDrop(reservation.mediaID, pendingMediaDrop)
+	return nil
 }
 
 func mapHoldError(err error) error {

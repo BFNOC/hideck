@@ -34,6 +34,7 @@ type Service struct {
 	calls               map[string]*activeCall
 	deviceCalls         map[string]string
 	mediaCalls          map[string]string
+	mediaReservations   map[string]*mediaReservation
 	pendingMediaDrops   map[string]*pendingMediaDrop
 	pendingEvents       map[string][]voicehost.CallEvent
 	terminalSeen        map[string]struct{}
@@ -53,6 +54,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		resolveICCID: options.ResolveICCID, recoveryGrace: options.RecoveryGrace,
 		ctx: ctx, cancel: cancel, calls: make(map[string]*activeCall),
 		deviceCalls: make(map[string]string), mediaCalls: make(map[string]string),
+		mediaReservations: make(map[string]*mediaReservation),
 		pendingMediaDrops: make(map[string]*pendingMediaDrop),
 		pendingEvents:     make(map[string][]voicehost.CallEvent), terminalSeen: make(map[string]struct{}),
 		deviceWaiting: make(map[string]string),
@@ -103,21 +105,28 @@ func (s *Service) CreateMedia(ctx context.Context, owner, offer string) (MediaAn
 
 func (s *Service) CancelMedia(owner, mediaID, lease string) error {
 	mediaID = strings.TrimSpace(mediaID)
+	s.mu.Lock()
 	media := s.media.Get(mediaID)
 	if media == nil {
+		s.mu.Unlock()
 		return errors.New("phone: media session not found")
 	}
 	if !media.Matches(owner, strings.TrimSpace(lease)) {
+		s.mu.Unlock()
 		return errors.New("phone: invalid media control lease")
 	}
-	s.mu.Lock()
-	if s.mediaCalls[mediaID] != "" {
+	if s.mediaCalls[mediaID] != "" || s.mediaReservations[mediaID] != nil {
 		s.mu.Unlock()
-		return errors.New("phone: media session already has an active call binding")
+		return errors.New("phone: media session already has an active call operation")
+	}
+	media, err := s.media.detachOwned(mediaID, owner, lease)
+	if err != nil {
+		s.mu.Unlock()
+		return err
 	}
 	s.clearPendingMediaDropLocked(mediaID)
 	s.mu.Unlock()
-	return s.media.RemoveOwned(mediaID, owner, lease)
+	return media.Close()
 }
 
 func (s *Service) Active(lease string) []CallView {

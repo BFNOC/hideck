@@ -2,6 +2,7 @@ package phone
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,13 @@ func TestMediaFailureBeforeBindingHangsUpAfterBinding(t *testing.T) {
 	addStubMedia(t, service, "media-late", "admin", "lease-late")
 
 	service.handleMediaState("media-late", webrtc.PeerConnectionStateFailed)
-	service.assignControl("call-late-media", "admin", "media-late", "lease-late")
+	_, reservation, err := service.reserveControlledMedia("admin", "media-late", "lease-late")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.assignControl("call-late-media", reservation); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case callID := <-gateway.hangupCalls:
@@ -96,6 +103,48 @@ func TestCancelMediaRequiresOwnershipAndRejectsBoundSession(t *testing.T) {
 	}
 	if service.media.Get("media-bound") == nil {
 		t.Fatal("bound media was removed after rejected cancellation")
+	}
+}
+
+func TestCallSetupReservesMediaAgainstCancelAndTimedCleanup(t *testing.T) {
+	gateway := newFakeVoiceGateway()
+	gateway.beginStarted = make(chan struct{}, 1)
+	gateway.beginRelease = make(chan struct{})
+	service := newPhoneTestService(t, gateway, newMemoryCallStore(), 20*time.Millisecond)
+	addStubMedia(t, service, "media-setup", "admin", "lease-setup")
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.StartCall(StartCallRequest{
+			Owner: "admin", DeviceID: "dev-1", Callee: "10010",
+			MediaID: "media-setup", Lease: "lease-setup",
+		})
+		result <- err
+	}()
+	select {
+	case <-gateway.beginStarted:
+	case <-time.After(time.Second):
+		t.Fatal("call setup did not reach the gateway")
+	}
+	if err := service.CancelMedia("admin", "media-setup", "lease-setup"); err == nil || !strings.Contains(err.Error(), "active call operation") {
+		t.Fatalf("cancel in-progress media error = %v", err)
+	}
+	service.handleMediaState("media-setup", webrtc.PeerConnectionStateFailed)
+	time.Sleep(40 * time.Millisecond)
+	if service.media.Get("media-setup") == nil {
+		t.Fatal("reserved media was removed before call binding completed")
+	}
+	close(gateway.beginRelease)
+	if err := <-result; err != nil {
+		t.Fatalf("start call: %v", err)
+	}
+	select {
+	case callID := <-gateway.hangupCalls:
+		if callID != "outbound-1" {
+			t.Fatalf("hung up call = %q", callID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed reserved media did not enter bound-call recovery")
 	}
 }
 

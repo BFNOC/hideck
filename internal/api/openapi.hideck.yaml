@@ -2972,7 +2972,7 @@ paths:
     delete:
       tags: [phone]
       summary: 释放尚未绑定电话的 WebRTC 媒体会话
-      description: 浏览器媒体连接建立失败时使用；已经绑定活动电话的媒体不能通过该接口释放。
+      description: 浏览器媒体连接建立失败时使用；已经绑定或正在用于电话操作的媒体不能通过该接口释放。
       parameters:
         - name: media_id
           in: path

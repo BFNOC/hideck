@@ -81,6 +81,8 @@ function leaseHeaders(lease: string) {
   return lease ? { 'X-Phone-Lease': lease } : undefined
 }
 
+const MEDIA_RELEASE_TIMEOUT_MS = 5_000
+
 export const phoneService = {
   async devices(signal?: AbortSignal) {
     return (await api.get<{ devices: PhoneDevice[] }>('/phone/devices', { signal })).data.devices
@@ -91,7 +93,10 @@ export const phoneService = {
   },
 
   async releaseMedia(mediaId: string, lease: string) {
-    await api.delete(`/phone/media/${encodeURIComponent(mediaId)}`, { headers: leaseHeaders(lease) })
+    await api.delete(`/phone/media/${encodeURIComponent(mediaId)}`, {
+      headers: leaseHeaders(lease),
+      timeout: MEDIA_RELEASE_TIMEOUT_MS
+    })
   },
 
   async active(lease: string) {

@@ -181,35 +181,38 @@ func (m *MediaManager) Get(mediaID string) *MediaSession {
 }
 
 func (m *MediaManager) Remove(mediaID string) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	session := m.sessions[mediaID]
-	delete(m.sessions, mediaID)
-	m.mu.Unlock()
+	session := m.detach(mediaID)
 	if session != nil {
 		_ = session.Close()
 	}
 }
 
-func (m *MediaManager) RemoveOwned(mediaID, owner, lease string) error {
+func (m *MediaManager) detach(mediaID string) *MediaSession {
 	if m == nil {
-		return errors.New("phone: media manager is unavailable")
+		return nil
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.sessions[mediaID]
+	delete(m.sessions, mediaID)
+	return session
+}
+
+func (m *MediaManager) detachOwned(mediaID, owner, lease string) (*MediaSession, error) {
+	if m == nil {
+		return nil, errors.New("phone: media manager is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	session := m.sessions[mediaID]
 	if session == nil {
-		m.mu.Unlock()
-		return errors.New("phone: media session not found")
+		return nil, errors.New("phone: media session not found")
 	}
 	if !session.Matches(owner, strings.TrimSpace(lease)) {
-		m.mu.Unlock()
-		return errors.New("phone: invalid media control lease")
+		return nil, errors.New("phone: invalid media control lease")
 	}
 	delete(m.sessions, mediaID)
-	m.mu.Unlock()
-	return session.Close()
+	return session, nil
 }
 
 func (m *MediaManager) Close() error {

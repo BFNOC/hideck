@@ -7,6 +7,8 @@ import {
   type PhoneMediaDependencies,
   type PhoneMediaState
 } from '../src/services/phone-media'
+import { phoneService } from '../src/services/phone'
+import { api } from '../src/stores/auth'
 
 const PCMU_OFFER = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n'
 const RECVONLY_PCMU_OFFER = `${PCMU_OFFER}a=recvonly\r\n`
@@ -215,4 +217,27 @@ test('media preparation exposes both the connection and server cleanup failures'
   fixture.peers[0].setConnectionState('failed')
   await rejected
   assert.deepEqual(fixture.releasedMedia(), [{ mediaId: 'media-1', lease: 'lease-1' }])
+})
+
+test('server media cleanup uses a bounded request', async () => {
+  const originalDelete = api.delete
+  let observed: { url?: string; timeout?: number; lease?: string } = {}
+  const replacement = async (
+    url: string,
+    config?: { timeout?: number; headers?: Record<string, string> }
+  ) => {
+    observed = { url, timeout: config?.timeout, lease: config?.headers?.['X-Phone-Lease'] }
+    return { data: undefined }
+  }
+  api.delete = replacement as unknown as typeof api.delete
+  try {
+    await phoneService.releaseMedia('media with space', 'lease-1')
+  } finally {
+    api.delete = originalDelete
+  }
+  assert.deepEqual(observed, {
+    url: '/phone/media/media%20with%20space',
+    timeout: 5_000,
+    lease: 'lease-1'
+  })
 })
