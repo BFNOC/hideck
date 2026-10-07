@@ -238,16 +238,34 @@ jobs:
           BUILD_TIME="${{ steps.vars.outputs.buildtime }}" \
           GOARCH="${{ matrix.goarch }}" \
           GOARM="${{ matrix.goarm }}" \
-          OUT="dist/hideck" \
+          LINK_MODE=static \
+          OUT="dist/hideck-static" \
+          sh packaging/openwrt/build.sh
+
+      - name: Build OpenWrt dynamic binary
+        shell: bash
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}" \
+          BUILD_TIME="${{ steps.vars.outputs.buildtime }}" \
+          GOARCH="${{ matrix.goarch }}" \
+          GOARM="${{ matrix.goarm }}" \
+          LINK_MODE=dynamic \
+          OUT="dist/hideck-dynamic" \
           sh packaging/openwrt/build.sh
 
       - name: Package artifact
         shell: bash
         run: |
-          OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_${{ matrix.artifact_arch }}"
+          STATIC_OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_${{ matrix.artifact_arch }}"
+          DYNAMIC_OUT="hideck_${{ steps.vars.outputs.version }}_openwrt_dynamic_${{ matrix.artifact_arch }}"
           mkdir -p out
-          cp dist/hideck "out/${OUT}"
-          (cd out && sha256sum "${OUT}" > "${OUT}.sha256")
+          cp dist/hideck-static "out/${STATIC_OUT}"
+          cp dist/hideck-dynamic "out/${DYNAMIC_OUT}"
+          (
+            cd out
+            sha256sum "${STATIC_OUT}" > "${STATIC_OUT}.sha256"
+            sha256sum "${DYNAMIC_OUT}" > "${DYNAMIC_OUT}.sha256"
+          )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

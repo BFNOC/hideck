@@ -35,7 +35,7 @@ Manage USB modems, cellular proxy, SMS, WiFi calling / IMS voice, eSIM, and sche
 - **eSIM** — download, enable, disable, rename, delete; activation code or QR / PDF
 - **Automation & notify** — scheduled tasks; Telegram, email, Bark, Feishu, WeCom, WeChat, QQ
 
-Protocol notes: [VoWiFi](docs/vowifi-protocol-alignment.md) · [VoLTE](docs/volte-native.md) · [operators](docs/operator-notes.md) · [hardware](docs/modem-hardware.md)
+Protocol notes: [VoWiFi](docs/vowifi-protocol-alignment.md) · [VoLTE](docs/volte-native.md) · [operators](docs/operator-notes.md) · [hardware](docs/modem-hardware.md) · [module voice troubleshooting](docs/modem-voice-troubleshooting.md)
 
 Outgoing call/SMS quotas are per SIM and survive restarts: [limits and configuration](docs/outbound-limits.md).
 
@@ -112,8 +112,11 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
 | `hideck_v2.1.23_openwrt_amd64` | OpenWrt x86_64, musl static, no UPX |
 | `hideck_v2.1.23_openwrt_arm64` | OpenWrt aarch64 |
 | `hideck_v2.1.23_openwrt_armv7` | OpenWrt 32-bit ARM |
+| `hideck_v2.1.23_openwrt_dynamic_amd64` | OpenWrt x86_64, dynamic musl, MP3 encoding capable |
+| `hideck_v2.1.23_openwrt_dynamic_arm64` | OpenWrt aarch64, dynamic musl, MP3 encoding capable |
+| `hideck_v2.1.23_openwrt_dynamic_armv7` | OpenWrt 32-bit ARM, dynamic musl, MP3 encoding capable |
 
-On OpenWrt, use `openwrt_*` only. See [packaging/openwrt/README.md](packaging/openwrt/README.md).
+On OpenWrt, use `openwrt_*` only. The package-manager archives and binary installer use the static assets. The dynamic assets require matching runtime libraries and are intended for MP3 call recording; see [OpenWrt packaging](packaging/openwrt/README.md#openwrt-dynamic-musl).
 
 ## Configuration
 

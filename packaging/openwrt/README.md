@@ -1,6 +1,6 @@
 # OpenWrt 安装与打包
 
-OpenWrt 必须使用 musl 构建、无 UPX 的程序，不能使用依赖 glibc 的 `linux_*`。现有发布和安装包使用 `hideck_*_openwrt_*` 静态构建；需要通话 MP3 编码时，使用下文的动态 musl 二进制构建。程序及语音资源体积较大，小闪存设备需要 extroot；不提供 MIPS 包。
+OpenWrt 必须使用 musl 构建、无 UPX 的程序，不能使用依赖 glibc 的 `linux_*`。Release 同时发布静态 `hideck_*_openwrt_*` 和动态 `hideck_*_openwrt_dynamic_*` 二进制；IPK/APK 安装包和二进制安装脚本继续使用静态版本。需要通话 MP3 编码时，按下文要求使用动态版本。程序及语音资源体积较大，小闪存设备需要 extroot；不提供 MIPS 包。
 
 ## 三个独立安装包
 
@@ -89,12 +89,19 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
 
 配置：`/etc/hideck/config.yaml`；数据：`/var/lib/hideck`；服务：`/etc/init.d/hideck`。OpenWrt 的 `/var` 通常在内存中，需要持久数据时请在配置中指定持久挂载目录。`qmi-proxy` 默认 `/usr/libexec/qmi-proxy`，保持 `system.openwrt_dynamic_interfaces: true`。
 
+<a id="openwrt-dynamic-musl"></a>
+
 ## 原生动态 musl 二进制（通话录音）
 
 HiDeck 使用动态加载的编码库生成 MP3。静态 musl 程序调用 `dlopen` 会报
 `Dynamic loading not supported`；仅安装 `lame-lib` 不能解决这一问题。
-`build.sh` 支持 `LINK_MODE=dynamic`，使用与设备匹配的 OpenWrt SDK 编译器，
-保留动态加载能力。默认值仍为 `static`，现有安装包流程只接受静态产物。
+Release 自动提供 `hideck_<版本>_openwrt_dynamic_<架构>` 及其 SHA256 文件。
+它保留动态加载能力，但不会被 IPK/APK 打包流程或 `deploy-binary.sh` 自动选择，
+避免给不需要录音的设备增加运行库要求。设备需安装 `libgcc` 和 `lame-lib`
+（使用 `opkg install` 或 `apk add`），并核对 Release 中的 SHA256SUMS。
+
+`build.sh` 仍支持 `LINK_MODE=dynamic`，可用与设备固件匹配的 OpenWrt SDK
+自行构建。以下方式用于 Release 没有覆盖的目标或自定义固件：
 
 以下以 Linux 构建机、OpenWrt 25.12.2 x86/64 SDK 为例，不使用 Docker。
 先将对应版本 SDK 解压到本地，然后在仓库根目录执行：
@@ -116,9 +123,8 @@ GOARCH=amd64 LINK_MODE=dynamic VERSION=v2.1.24+dynamic \
 是 `/lib/ld-musl-*`，避免把构建机的 glibc 程序当作 OpenWrt 程序。
 部署前检查 `readelf -d out/hideck-openwrt-dynamic` 中的 `NEEDED`；
 本次 x86/64 产物依赖系统 musl 和 `libgcc_s.so.1`。在设备安装 `libgcc`
-和 `lame-lib`（使用 `opkg install` 或 `apk add`），然后在无活动通话时
-备份现有程序并替换实际 procd 服务使用的二进制。配置、数据库和账号
-不需要迁移；不要在通话中替换或重启服务。
+和 `lame-lib`，然后在无活动通话时备份现有程序并替换实际 procd 服务
+使用的二进制。配置、数据库和账号不需要迁移；不要在通话中替换或重启服务。
 
 PCMU 模组直拨的 MP3 编码已验证；AMR 实时编解码仍需对应库。
 详细音频修复与验证范围见 [模组直拨排障](../../docs/modem-voice-troubleshooting.md)。

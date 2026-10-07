@@ -74,6 +74,15 @@ class OpenWrtTests(unittest.TestCase):
         self.assertIn(r"arm:*ELF\ 32-bit*ARM*", script)
         self.assertIn(r"aarch64:*ELF\ 64-bit*aarch64*", script)
 
+    def test_release_publishes_dynamic_binary_without_changing_package_input(self):
+        release = (ROOT / ".github/workflows/binary-release.yml").read_text()
+        packages = (ROOT / ".github/workflows/openwrt-packages.yml").read_text()
+
+        self.assertIn("LINK_MODE=dynamic", release)
+        self.assertIn("openwrt_dynamic_${{ matrix.artifact_arch }}", release)
+        self.assertIn('asset="hideck_${HIDECK_VERSION}_openwrt_${BINARY_ARCH}"', packages)
+        self.assertNotIn("openwrt_dynamic_${BINARY_ARCH}", packages)
+
 
 if __name__ == "__main__":
     unittest.main()

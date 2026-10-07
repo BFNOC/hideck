@@ -35,7 +35,7 @@
 - **eSIM** — 下载、启用、停用、重命名、删除；激活码或二维码 / PDF
 - **自动任务与通知** — 按计划执行；Telegram、邮件、Bark、飞书、企微、微信、QQ
 
-协议说明：[VoWiFi](../docs/vowifi-protocol-alignment.md) · [VoLTE](../docs/volte-native.md) · [运营商](../docs/operator-notes.md) · [硬件](../docs/modem-hardware.md)
+协议说明：[VoWiFi](../docs/vowifi-protocol-alignment.md) · [VoLTE](../docs/volte-native.md) · [运营商](../docs/operator-notes.md) · [硬件](../docs/modem-hardware.md) · [模组直拨排障](../docs/modem-voice-troubleshooting.md)
 
 外呼/短信按 SIM 独立限流，重启保留计数：[额度与配置说明](../docs/outbound-limits.md)。
 
@@ -109,8 +109,11 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
 | `hideck_v2.1.23_openwrt_amd64` | OpenWrt x86_64，musl 静态，不压 UPX |
 | `hideck_v2.1.23_openwrt_arm64` | OpenWrt aarch64 |
 | `hideck_v2.1.23_openwrt_armv7` | OpenWrt 32 位 ARM |
+| `hideck_v2.1.23_openwrt_dynamic_amd64` | OpenWrt x86_64，动态 musl，可使用 MP3 编码 |
+| `hideck_v2.1.23_openwrt_dynamic_arm64` | OpenWrt aarch64，动态 musl，可使用 MP3 编码 |
+| `hideck_v2.1.23_openwrt_dynamic_armv7` | OpenWrt 32 位 ARM，动态 musl，可使用 MP3 编码 |
 
-OpenWrt 只用 `openwrt_*`。见 [packaging/openwrt/README.md](../packaging/openwrt/README.md)。
+OpenWrt 只用 `openwrt_*`。包管理附件和二进制安装脚本继续使用静态版本；动态版本需要匹配的运行库，供通话 MP3 录音使用，见 [OpenWrt 打包说明](../packaging/openwrt/README.md#openwrt-dynamic-musl)。
 
 ## 配置
 
