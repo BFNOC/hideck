@@ -88,6 +88,28 @@ func TestPhoneRoutesEnforceAuthenticationAndControlLease(t *testing.T) {
 	if hangup.Code != http.StatusNoContent {
 		t.Fatalf("hangup status=%d body=%s", hangup.Code, hangup.Body.String())
 	}
+
+	releaseOffer, closeReleasePeer := browserPhoneOffer(t)
+	defer closeReleasePeer()
+	releaseResponse := performPhoneRequest(router, http.MethodPost, "/api/phone/media", token, "", map[string]string{"sdp": releaseOffer})
+	if releaseResponse.Code != http.StatusCreated {
+		t.Fatalf("release media status=%d body=%s", releaseResponse.Code, releaseResponse.Body.String())
+	}
+	var disposable struct {
+		MediaID string `json:"media_id"`
+		Lease   string `json:"lease"`
+	}
+	if err := json.Unmarshal(releaseResponse.Body.Bytes(), &disposable); err != nil {
+		t.Fatal(err)
+	}
+	foreignRelease := performPhoneRequest(router, http.MethodDelete, "/api/phone/media/"+disposable.MediaID, token, "foreign", nil)
+	if foreignRelease.Code != http.StatusForbidden {
+		t.Fatalf("foreign media release status=%d body=%s", foreignRelease.Code, foreignRelease.Body.String())
+	}
+	ownedRelease := performPhoneRequest(router, http.MethodDelete, "/api/phone/media/"+disposable.MediaID, token, disposable.Lease, nil)
+	if ownedRelease.Code != http.StatusNoContent {
+		t.Fatalf("owned media release status=%d body=%s", ownedRelease.Code, ownedRelease.Body.String())
+	}
 }
 
 func TestPhoneEventStreamDisablesProxyBuffering(t *testing.T) {

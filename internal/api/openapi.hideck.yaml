@@ -2968,6 +2968,30 @@ paths:
         '503':
           $ref: '#/components/responses/PhoneError'
 
+  /phone/media/{media_id}:
+    delete:
+      tags: [phone]
+      summary: 释放尚未绑定电话的 WebRTC 媒体会话
+      description: 浏览器媒体连接建立失败时使用；已经绑定活动电话的媒体不能通过该接口释放。
+      parameters:
+        - name: media_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PhoneLease'
+      responses:
+        '204':
+          description: 媒体会话已释放
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+        '409':
+          $ref: '#/components/responses/PhoneError'
+
   /phone/calls:
     post:
       tags: [phone]

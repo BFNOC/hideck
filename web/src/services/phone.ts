@@ -90,6 +90,10 @@ export const phoneService = {
     return (await api.post<{ media_id: string; lease: string; sdp: string }>('/phone/media', { sdp })).data
   },
 
+  async releaseMedia(mediaId: string, lease: string) {
+    await api.delete(`/phone/media/${encodeURIComponent(mediaId)}`, { headers: leaseHeaders(lease) })
+  },
+
   async active(lease: string) {
     return (await api.get<{ calls: PhoneCall[] }>('/phone/calls/active', { headers: leaseHeaders(lease) })).data.calls
   },

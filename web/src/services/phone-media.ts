@@ -13,6 +13,7 @@ export type PhoneMediaDependencies = {
   createPeer: () => RTCPeerConnection
   createAudio: () => HTMLAudioElement
   createMedia: typeof phoneService.createMedia
+  releaseMedia: typeof phoneService.releaseMedia
   setTimer: (handler: () => void, timeout: number) => number
   clearTimer: (timer: number) => void
 }
@@ -46,19 +47,21 @@ export class PhoneMediaController {
     else this.releaseMicrophone()
     this.callbacks.onState('requesting')
     let peer: RTCPeerConnection | null = null
+    let answer: Awaited<ReturnType<typeof phoneService.createMedia>> | null = null
     try {
       const microphone = useMicrophone ? await this.getMicrophone() : null
       peer = this.createPeer(microphone)
       this.replacePeer(peer)
       const offer = await this.createOffer(peer)
       this.callbacks.onState('connecting')
-      const answer = await this.dependencies.createMedia(offer)
+      answer = await this.dependencies.createMedia(offer)
       await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp })
       await waitForMediaConnection(peer, this.dependencies)
       return { mediaId: answer.media_id, lease: answer.lease }
     } catch (error) {
-      this.releaseFailedMedia(peer)
+      const cleanupError = await this.releaseFailedMedia(peer, answer)
       this.callbacks.onState('failed')
+      if (cleanupError) throw mediaCleanupError(error, cleanupError)
       throw error
     }
   }
@@ -160,11 +163,21 @@ export class PhoneMediaController {
     else if (state === 'failed') this.callbacks.onState('failed')
   }
 
-  private releaseFailedMedia(peer: RTCPeerConnection | null) {
+  private async releaseFailedMedia(
+    peer: RTCPeerConnection | null,
+    answer: Awaited<ReturnType<typeof phoneService.createMedia>> | null
+  ) {
     peer?.close()
     if (this.peer === peer) this.peer = null
     this.releaseMicrophone()
     this.audio.srcObject = null
+    if (!answer) return null
+    try {
+      await this.dependencies.releaseMedia(answer.media_id, answer.lease)
+      return null
+    } catch (error) {
+      return error
+    }
   }
 
   private releaseMicrophone() {
@@ -216,6 +229,7 @@ function browserMediaDependencies(): PhoneMediaDependencies {
     createPeer: () => new RTCPeerConnection(),
     createAudio: () => new Audio(),
     createMedia: (sdp) => phoneService.createMedia(sdp),
+    releaseMedia: (mediaId, lease) => phoneService.releaseMedia(mediaId, lease),
     setTimer: (handler, timeout) => window.setTimeout(handler, timeout),
     clearTimer: (timer) => window.clearTimeout(timer)
   }
@@ -247,4 +261,10 @@ function waitForMediaConnection(peer: RTCPeerConnection, dependencies: PhoneMedi
 
 function toMediaError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? `${fallback}：${error.message}` : fallback
+}
+
+function mediaCleanupError(primary: unknown, cleanup: unknown) {
+  const primaryMessage = primary instanceof Error ? primary.message : String(primary)
+  const cleanupMessage = cleanup instanceof Error ? cleanup.message : String(cleanup)
+  return new Error(`${primaryMessage}；服务端媒体清理失败：${cleanupMessage}`, { cause: primary })
 }

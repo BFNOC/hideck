@@ -41,6 +41,7 @@ type phoneRefreshRequest struct {
 func (s *Server) registerPhoneRoutes(api *gin.RouterGroup) {
 	api.GET("/phone/devices", s.handlePhoneDevices)
 	api.POST("/phone/media", s.handlePhoneMedia)
+	api.DELETE("/phone/media/:media_id", s.handlePhoneMediaCancel)
 	api.POST("/phone/calls", s.handlePhoneStartCall)
 	api.GET("/phone/calls/active", s.handlePhoneActiveCalls)
 	api.POST("/phone/calls/:call_id/answer", s.handlePhoneAnswer)
@@ -134,6 +135,17 @@ func (s *Server) handlePhoneMedia(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, answer)
+}
+
+func (s *Server) handlePhoneMediaCancel(c *gin.Context) {
+	if !s.requirePhone(c) {
+		return
+	}
+	if err := s.phone.CancelMedia(s.auth.Username, c.Param("media_id"), phoneLease(c)); err != nil {
+		s.respondPhoneError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handlePhoneStartCall(c *gin.Context) {

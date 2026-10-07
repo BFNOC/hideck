@@ -13,7 +13,7 @@ const RECVONLY_PCMU_OFFER = `${PCMU_OFFER}a=recvonly\r\n`
 
 type FakeTrack = MediaStreamTrack & { stopped: boolean }
 
-function mediaFixture(secure = true, connectAutomatically = true) {
+function mediaFixture(secure = true, connectAutomatically = true, releaseError: Error | null = null) {
   const states: PhoneMediaState[] = []
   const track = {
     enabled: true,
@@ -30,6 +30,7 @@ function mediaFixture(secure = true, connectAutomatically = true) {
   let nextTimer = 0
   let requestedConstraints: MediaStreamConstraints | null = null
   const requestedOffers: string[] = []
+  const releasedMedia: Array<{ mediaId: string; lease: string }> = []
   const microphoneStoppedAtMediaCreation: boolean[] = []
   const dependencies: PhoneMediaDependencies = {
     secureContext: () => secure,
@@ -50,6 +51,10 @@ function mediaFixture(secure = true, connectAutomatically = true) {
       const suffix = requestedOffers.length
       return { media_id: `media-${suffix}`, lease: `lease-${suffix}`, sdp: PCMU_OFFER }
     },
+    releaseMedia: async (mediaId, lease) => {
+      releasedMedia.push({ mediaId, lease })
+      if (releaseError) throw releaseError
+    },
     setTimer: (handler) => { const id = ++nextTimer; timers.set(id, handler); return id },
     clearTimer: (id) => { timers.delete(id) }
   }
@@ -65,6 +70,7 @@ function mediaFixture(secure = true, connectAutomatically = true) {
     timers,
     constraints: () => requestedConstraints,
     offers: () => requestedOffers,
+    releasedMedia: () => releasedMedia,
     microphoneStoppedAtMediaCreation: () => microphoneStoppedAtMediaCreation
   }
 }
@@ -171,6 +177,7 @@ test('does not return dialable media before the peer actually connects', async (
   await preparing
   assert.equal(ready, true)
   assert.equal(fixture.timers.size, 0)
+  assert.deepEqual(fixture.releasedMedia(), [])
   fixture.controller.close()
 })
 
@@ -184,6 +191,7 @@ test('failed ICE rejects preparation and releases the microphone', async () => {
   assert.equal(fixture.track.stopped, true)
   assert.equal(fixture.peers[0].closed, true)
   assert.equal(fixture.timers.size, 0)
+  assert.deepEqual(fixture.releasedMedia(), [{ mediaId: 'media-1', lease: 'lease-1' }])
 })
 
 test('an unreachable media channel times out without returning dialable media', async () => {
@@ -196,4 +204,15 @@ test('an unreachable media channel times out without returning dialable media', 
   await rejected
   assert.equal(fixture.track.stopped, true)
   assert.equal(fixture.timers.size, 0)
+  assert.deepEqual(fixture.releasedMedia(), [{ mediaId: 'media-1', lease: 'lease-1' }])
+})
+
+test('media preparation exposes both the connection and server cleanup failures', async () => {
+  const fixture = mediaFixture(true, false, new Error('release denied'))
+  const preparing = fixture.controller.prepare()
+  const rejected = assert.rejects(preparing, /媒体连接失败.*服务端媒体清理失败：release denied/)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  fixture.peers[0].setConnectionState('failed')
+  await rejected
+  assert.deepEqual(fixture.releasedMedia(), [{ mediaId: 'media-1', lease: 'lease-1' }])
 })

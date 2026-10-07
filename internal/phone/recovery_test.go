@@ -50,6 +50,55 @@ func TestMediaFailureBeforeBindingHangsUpAfterBinding(t *testing.T) {
 	}
 }
 
+func TestFailedUnboundMediaIsReleasedAfterGrace(t *testing.T) {
+	service := newPhoneTestService(t, newFakeVoiceGateway(), newMemoryCallStore(), 20*time.Millisecond)
+	addStubMedia(t, service, "media-unbound", "admin", "lease-unbound")
+
+	service.handleMediaState("media-unbound", webrtc.PeerConnectionStateFailed)
+	deadline := time.Now().Add(time.Second)
+	for service.media.Get("media-unbound") != nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if service.media.Get("media-unbound") != nil {
+		t.Fatal("failed unbound media was not released after grace")
+	}
+}
+
+func TestRecoveredUnboundMediaIsNotReleased(t *testing.T) {
+	service := newPhoneTestService(t, newFakeVoiceGateway(), newMemoryCallStore(), 20*time.Millisecond)
+	addStubMedia(t, service, "media-recovered", "admin", "lease-recovered")
+
+	service.handleMediaState("media-recovered", webrtc.PeerConnectionStateDisconnected)
+	service.handleMediaState("media-recovered", webrtc.PeerConnectionStateConnected)
+	time.Sleep(40 * time.Millisecond)
+	if service.media.Get("media-recovered") == nil {
+		t.Fatal("recovered unbound media was released")
+	}
+}
+
+func TestCancelMediaRequiresOwnershipAndRejectsBoundSession(t *testing.T) {
+	service := newPhoneTestService(t, newFakeVoiceGateway(), newMemoryCallStore(), time.Second)
+	addStubMedia(t, service, "media-cancel", "admin", "lease-cancel")
+	if err := service.CancelMedia("admin", "media-cancel", "wrong"); err == nil {
+		t.Fatal("foreign lease unexpectedly canceled media")
+	}
+	if err := service.CancelMedia("admin", "media-cancel", "lease-cancel"); err != nil {
+		t.Fatalf("cancel unbound media: %v", err)
+	}
+	if service.media.Get("media-cancel") != nil {
+		t.Fatal("canceled media remains registered")
+	}
+
+	addStubMedia(t, service, "media-bound", "admin", "lease-bound")
+	addActiveCallForRecovery(service, "call-bound", "media-bound")
+	if err := service.CancelMedia("admin", "media-bound", "lease-bound"); err == nil {
+		t.Fatal("bound media was canceled")
+	}
+	if service.media.Get("media-bound") == nil {
+		t.Fatal("bound media was removed after rejected cancellation")
+	}
+}
+
 func TestServiceCloseHangsUpActiveCallAndUnsubscribes(t *testing.T) {
 	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
 	service, err := NewService(ServiceOptions{

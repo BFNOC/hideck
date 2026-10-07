@@ -257,7 +257,7 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 	call.owner, call.lease, call.mediaID = request.Owner, media.Lease, request.MediaID
 	call.view.MediaID = request.MediaID
 	delete(s.mediaCalls, oldMediaID)
-	delete(s.pendingMediaDrops, oldMediaID)
+	s.clearPendingMediaDropLocked(oldMediaID)
 	pendingMediaDrop := s.bindMediaLocked(request.CallID, request.MediaID)
 	if call.disconnectTimer != nil {
 		call.disconnectTimer.Stop()
