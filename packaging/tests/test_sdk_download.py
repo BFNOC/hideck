@@ -46,13 +46,15 @@ class SDKHandler(BaseHTTPRequestHandler):
         if offset:
             self.send_header("Content-Range", f"bytes {offset}-{len(PAYLOAD) - 1}/{len(PAYLOAD)}")
         self.end_headers()
-        if server.mode == "ignore-range":
-            # curl rejects the 200 headers immediately; no body is consumed.
-            self.close_connection = True
-            return
         drop = server.mode == "always-drop" or server.mode == "drop-once" and len(server.ranges) == 1
-        self.wfile.write(body[:len(body) // 2] if drop else body)
-        self.wfile.flush()
+        try:
+            self.wfile.write(body[:len(body) // 2] if drop else body)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # Some curl versions reject ignored Range headers before reading the body.
+            if server.mode != "ignore-range":
+                raise
+            self.close_connection = True
         if drop:
             self.close_connection = True
             self.connection.shutdown(socket.SHUT_RDWR)
