@@ -310,6 +310,7 @@ func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
 	}
 	if reply != nil {
 		s.deviceIdentityRequested = false
+		s.logDeviceIdentityReply("IKE_AUTH", reply)
 	}
 	return nil
 }
@@ -506,6 +507,7 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			s.responderAuthenticated = true
 		}
 	}
+	s.logDeviceIdentityNotifies("IKE_AUTH", payloads)
 	requested, err := hasDeviceIdentityRequest(payloads)
 	if err != nil {
 		return "", err

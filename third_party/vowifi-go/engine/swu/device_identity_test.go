@@ -8,6 +8,9 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func identityRequest() *ikev2.EncryptedPayloadNotify {
@@ -186,5 +189,36 @@ func TestDeviceIdentityUnavailableAndInvalid(t *testing.T) {
 	s.cfg.DeviceIdentityIMEI = "bad-imei"
 	if _, err := s.pendingDeviceIdentityReply(); err == nil {
 		t.Fatal("invalid configured identity accepted")
+	}
+}
+
+func TestDeviceIdentityRequestAndReplyAreLogged(t *testing.T) {
+	s, transport := newIdentityTestSession(t)
+	core, observed := observer.New(zapcore.InfoLevel)
+	s.Logger = zap.New(core)
+	s.responderAuthenticated = true
+	eap, err := (eapaka.Packet{Code: eapaka.CodeRequest, Identifier: 1, Type: eapTypeIdentity}).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.applyEAPHandlingResult([]ikev2.Payload{identityRequest(), &ikev2.EncryptedPayloadEAP{EAPMessage: eap}}); err != nil {
+		t.Fatal(err)
+	}
+	receiveIdentityReply(t, s, transport)
+	request := observed.FilterMessage("ePDG sent DEVICE_IDENTITY notify").All()
+	if len(request) != 1 || request[0].ContextMap()["data"] != "000101" || request[0].ContextMap()["exchange"] != "IKE_AUTH" {
+		t.Fatalf("request log = %+v", request)
+	}
+	if reply := observed.FilterMessage("answered DEVICE_IDENTITY request").All(); len(reply) != 1 {
+		t.Fatalf("reply log = %+v", reply)
+	}
+
+	s.cfg.DeviceIdentityIMEI = ""
+	s.deviceIdentityRequested = true
+	if reply, err := s.pendingDeviceIdentityReply(); err != nil || reply != nil {
+		t.Fatalf("missing identity reply=%v err=%v", reply, err)
+	}
+	if missing := observed.FilterMessage("ePDG requested DEVICE_IDENTITY but no IMEI is available; not answering").All(); len(missing) != 1 {
+		t.Fatalf("missing IMEI log = %+v", missing)
 	}
 }

@@ -170,6 +170,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 		return err
 	}
 	var activeChildDelete, ikeDelete bool
+	s.logDeviceIdentityNotifies("INFORMATIONAL", payloads)
 	identityReply, err := s.informationalDeviceIdentityReply(payloads)
 	if err != nil {
 		return err
