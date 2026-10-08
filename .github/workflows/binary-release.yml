@@ -151,8 +151,8 @@ jobs:
   build-openwrt:
     name: Build OpenWrt ${{ matrix.artifact_arch }}
     runs-on: ubuntu-latest
-    # Up to 30 minutes of resumable download, plus extraction and compilation.
-    timeout-minutes: 50
+    # Up to 60 minutes of resumable download, plus extraction and compilation.
+    timeout-minutes: 80
     needs: frontend
     strategy:
       fail-fast: false

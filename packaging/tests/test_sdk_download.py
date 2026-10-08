@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import os
 from pathlib import Path
+import re
 import socket
 import ssl
 import subprocess
@@ -64,6 +65,17 @@ class SDKHandler(BaseHTTPRequestHandler):
 
 
 class SDKDownloadTests(unittest.TestCase):
+    def test_workflow_deadlines_cover_download_and_build(self):
+        workflows = SCRIPT.parents[2] / ".github/workflows"
+        download_minutes = sdk.DEFAULT_TOTAL_SECONDS / 60
+        build_headroom_minutes = {"binary-release.yml": 20, "openwrt-packages.yml": 90}
+        for name, headroom in build_headroom_minutes.items():
+            source = (workflows / name).read_text()
+            if name == "binary-release.yml":
+                source = source.split("  build-openwrt:", 1)[1]
+            timeout = int(re.search(r"timeout-minutes: (\d+)", source).group(1))
+            self.assertGreaterEqual(timeout, download_minutes + headroom, name)
+
     @classmethod
     def setUpClass(cls):
         cls.cert_directory = tempfile.TemporaryDirectory(prefix="hideck-sdk-tls-")

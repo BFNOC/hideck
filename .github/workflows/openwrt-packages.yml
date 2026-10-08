@@ -23,8 +23,8 @@ jobs:
   packages:
     needs: matrix
     runs-on: ubuntu-latest
-    # Download (30m), SDK image (15m), package compilation (60m) and uploads.
-    timeout-minutes: 120
+    # Download (60m), SDK image (15m), package compilation (60m) and uploads.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.targets) }}

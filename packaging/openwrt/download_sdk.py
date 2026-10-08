@@ -14,8 +14,9 @@ from urllib.parse import urlsplit
 
 CONNECT_TIMEOUT_SECONDS = 20
 DEFAULT_ATTEMPT_SECONDS = 600
-DEFAULT_TOTAL_SECONDS = 1800
-DEFAULT_ATTEMPTS = 4
+# Release runners have sustained only 80 KB/s for SDK archives over 200 MB.
+DEFAULT_TOTAL_SECONDS = 3600
+DEFAULT_ATTEMPTS = 6
 RETRY_DELAY_SECONDS = 5
 HASH_BLOCK_BYTES = 1024 * 1024
 # Transport failures only. HTTP, certificate and unsupported Range errors surface.
