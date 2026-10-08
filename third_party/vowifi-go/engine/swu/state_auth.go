@@ -10,6 +10,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 // requiredConfiguredIMSI returns the configured IMSI or an error.
@@ -370,6 +371,9 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket)
 	payloads = append(payloads, s.initialContactNotify()...)
+	if s.cfg.WithholdDeviceIdentity {
+		return payloads, nil
+	}
 	devicePayloads, err := s.deviceIdentityPayloads()
 	if err != nil {
 		return nil, err
@@ -486,6 +490,7 @@ func (s *Session) executeIKEAuthDecision(resp *ikev2.IKEPacket) (string, error) 
 // applyEAPHandlingResult processes the decrypted IKE_AUTH response payloads and
 // returns the next decision.
 func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
+	s.logDeviceIdentityRequest(payloads)
 	if !s.responderAuthenticated {
 		deferred, err := s.authenticateInitialResponder(payloads)
 		if err != nil {
@@ -812,4 +817,17 @@ func (s *Session) verifyResponderAuth(payloads []ikev2.Payload) error {
 		return errors.New("swu: no IKE SA keys for AUTH verification")
 	}
 	return s.verifyResponderCertificateAuth(payloads)
+}
+
+// logDeviceIdentityRequest records an ePDG asking for DEVICE_IDENTITY in an
+// IKE_AUTH response (TS 24.302 7.2.2). The engine does not answer it.
+func (s *Session) logDeviceIdentityRequest(payloads []ikev2.Payload) {
+	for _, payload := range payloads {
+		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
+		if ok && (notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP || notify.NotifyType == ikev2.DEVICE_IDENTITY) {
+			s.Logger.Info("ePDG requested DEVICE_IDENTITY",
+				zap.Uint16("notify", notify.NotifyType), zap.Bool("withheld", s.cfg.WithholdDeviceIdentity))
+			return
+		}
+	}
 }

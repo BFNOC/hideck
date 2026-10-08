@@ -102,6 +102,8 @@ type Config struct {
 	VerifyFinalResponderAUTH  bool
 	EnableDeviceIdentitySpoof bool
 	DeviceIdentityIMEI        string
+	WithholdDeviceIdentity    bool // keep DEVICE_IDENTITY out of the first IKE_AUTH
+	KeepChildSAOnRekeyDecline bool // keep the CHILD_SA when its rekey gets NO_ADDITIONAL_SAS
 	IKEIdentityMode           string
 	AKAChallengeMode          string
 	AKAIdentityMode           string
@@ -617,6 +619,10 @@ func (s *Session) failSession(err error) {
 	s.mu.RLock()
 	wasEstablished := s.state == stateEstablished
 	s.mu.RUnlock()
+	if wasEstablished && s.Logger != nil {
+		// OnSessionDown only reports "swu_session_down"; keep the cause.
+		s.Logger.Warn("SWu established session failed", zap.Error(err))
+	}
 	s.sendEstablishedDeletes()
 	s.setTerminalError(err)
 	if wasEstablished {

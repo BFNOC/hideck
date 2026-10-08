@@ -148,6 +148,23 @@ func TestInitialIKEAuthRestoresNotifyOrderAndDeviceIdentity(t *testing.T) {
 	}
 }
 
+func TestWithheldDeviceIdentityLeavesInitialIKEAuth(t *testing.T) {
+	session := NewSession(&Config{
+		IMSI: "234102356143376", APN: "ims", DeviceIdentityIMEI: "358983361433761",
+		EnableDeviceIdentitySpoof: true, WithholdDeviceIdentity: true,
+	})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok &&
+			(notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP || notify.NotifyType == ikev2.DEVICE_IDENTITY) {
+			t.Fatalf("withheld IKE_AUTH carried DEVICE_IDENTITY %d", notify.NotifyType)
+		}
+	}
+}
+
 func TestOverlappingReauthOmitsInitialContact(t *testing.T) {
 	session := NewSession(&Config{
 		IMSI: "234102356143376", APN: "ims", OmitInitialContact: true,
