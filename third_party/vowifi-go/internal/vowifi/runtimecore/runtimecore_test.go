@@ -991,10 +991,10 @@ func TestCarrierPresetKeysReachSWUConfig(t *testing.T) {
 		plan := carrierPlanFromCompatibility(carrier.ResolveEffectiveCarrierConfig(mcc, mnc))
 		return BuildSWUConfig(SessionConfig{Prepared: profile.PreparedSession{CarrierPlan: plan}})
 	}
-	if spark := build("530", "05"); !spark.WithholdDeviceIdentity {
+	if spark := build("530", "05"); !spark.WithholdDeviceIdentity || !spark.KeepChildSAOnRekeyDecline {
 		t.Fatalf("Spark NZ SWu config = %+v", spark)
 	}
-	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity {
+	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity || lebara.KeepChildSAOnRekeyDecline {
 		t.Fatalf("Lebara UK SWu config = %+v", lebara)
 	}
 }

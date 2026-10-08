@@ -146,6 +146,7 @@ type EffectiveCarrierConfig struct {
 	ReauthIntervalSeconds         int
 	IKERekeyIntervalSeconds       int
 	WithholdDeviceIdentity        bool
+	KeepChildSAOnRekeyDecline     bool
 	IMSRegisterTemplate           IMSRegisterTemplate
 	IMSRegisterPolicySource       string
 	SMSRoutingMethod              string

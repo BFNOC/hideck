@@ -117,6 +117,9 @@ func mergePresetIKE(config *EffectiveCarrierConfig, preset CarrierPreset) {
 	if preset.IKERekeyIntervalSeconds > 0 {
 		config.IKERekeyIntervalSeconds = preset.IKERekeyIntervalSeconds
 	}
+	if preset.KeepChildSAOnRekeyDecline {
+		config.KeepChildSAOnRekeyDecline = true
+	}
 }
 
 func mergePresetIMS(config *EffectiveCarrierConfig, preset CarrierPreset) {

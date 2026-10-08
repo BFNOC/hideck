@@ -105,6 +105,7 @@ func toInternalIKE(result *policy.EffectiveCarrierConfig, cfg carrier.EffectiveC
 	result.ReauthIntervalSeconds = cfg.ReauthIntervalSeconds
 	result.IKERekeyIntervalSeconds = cfg.IKERekeyIntervalSeconds
 	result.WithholdDeviceIdentity = cfg.WithholdDeviceIdentity
+	result.KeepChildSAOnRekeyDecline = cfg.KeepChildSAOnRekeyDecline
 }
 
 func toInternalIMS(result *policy.EffectiveCarrierConfig, cfg carrier.EffectiveCarrierConfig) {
@@ -158,6 +159,7 @@ func fromInternalIKE(result *carrier.EffectiveCarrierConfig, cfg policy.Effectiv
 	result.ReauthIntervalSeconds = cfg.ReauthIntervalSeconds
 	result.IKERekeyIntervalSeconds = cfg.IKERekeyIntervalSeconds
 	result.WithholdDeviceIdentity = cfg.WithholdDeviceIdentity
+	result.KeepChildSAOnRekeyDecline = cfg.KeepChildSAOnRekeyDecline
 }
 
 func fromInternalIMS(result *carrier.EffectiveCarrierConfig, cfg policy.EffectiveCarrierConfig) {

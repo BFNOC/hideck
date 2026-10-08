@@ -74,6 +74,7 @@ func copyCarrierIKEFromInternal(result *EffectiveCarrierConfig, value policy.Eff
 	result.ReauthIntervalSeconds = value.ReauthIntervalSeconds
 	result.IKERekeyIntervalSeconds = value.IKERekeyIntervalSeconds
 	result.WithholdDeviceIdentity = value.WithholdDeviceIdentity
+	result.KeepChildSAOnRekeyDecline = value.KeepChildSAOnRekeyDecline
 }
 
 func copyCarrierIMSFromInternal(result *EffectiveCarrierConfig, value policy.EffectiveCarrierConfig) {

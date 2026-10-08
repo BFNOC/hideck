@@ -103,6 +103,7 @@ type Config struct {
 	EnableDeviceIdentitySpoof bool
 	DeviceIdentityIMEI        string
 	WithholdDeviceIdentity    bool // keep DEVICE_IDENTITY out of the first IKE_AUTH
+	KeepChildSAOnRekeyDecline bool // keep the CHILD_SA when its rekey gets NO_ADDITIONAL_SAS
 	IKEIdentityMode           string
 	AKAChallengeMode          string
 	AKAIdentityMode           string

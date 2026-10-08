@@ -79,6 +79,9 @@ func applyCarrierOverride(preset CarrierPreset, override CarrierOverride) Carrie
 	if override.IKERekeyIntervalSeconds > 0 {
 		preset.IKERekeyIntervalSeconds = override.IKERekeyIntervalSeconds
 	}
+	if override.KeepChildSAOnRekeyDecline {
+		preset.KeepChildSAOnRekeyDecline = true
+	}
 	if override.WithholdDeviceIdentity {
 		preset.WithholdDeviceIdentity = true
 	}

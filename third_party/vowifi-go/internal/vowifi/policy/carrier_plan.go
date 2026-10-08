@@ -42,6 +42,7 @@ func CarrierPlanFromEffectiveConfig(config EffectiveCarrierConfig) CarrierPlan {
 			DPDKeepaliveIntervalSeconds: config.DPDKeepaliveIntervalSeconds,
 			ReauthIntervalSeconds:       config.ReauthIntervalSeconds,
 			IKERekeyIntervalSeconds:     config.IKERekeyIntervalSeconds,
+			KeepChildSAOnRekeyDecline:   config.KeepChildSAOnRekeyDecline,
 			AKAPrimePreferred:           config.AKAPrimePreferred,
 		},
 		IMS: IMSPlan{
@@ -87,6 +88,7 @@ func EffectiveCarrierConfigFromCarrierPlan(plan CarrierPlan) EffectiveCarrierCon
 		DPDKeepaliveIntervalSeconds: plan.IKE.DPDKeepaliveIntervalSeconds,
 		ReauthIntervalSeconds:       plan.IKE.ReauthIntervalSeconds,
 		IKERekeyIntervalSeconds:     plan.IKE.IKERekeyIntervalSeconds,
+		KeepChildSAOnRekeyDecline:   plan.IKE.KeepChildSAOnRekeyDecline,
 		AKAPrimePreferred:           plan.IKE.AKAPrimePreferred,
 		IMSDomain:                   plan.IMS.Domain, IMSRealm: plan.IMS.Realm, IMSRegistrar: plan.IMS.Registrar,
 		IMSPCSCF: plan.IMS.PCSCF, IMSUserAgent: plan.IMS.UserAgent, IMSTransport: plan.IMS.Transport,
