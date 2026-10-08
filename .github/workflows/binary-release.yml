@@ -151,7 +151,8 @@ jobs:
   build-openwrt:
     name: Build OpenWrt ${{ matrix.artifact_arch }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Up to 30 minutes of resumable download, plus extraction and compilation.
+    timeout-minutes: 50
     needs: frontend
     strategy:
       fail-fast: false
@@ -193,25 +194,21 @@ jobs:
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "buildtime=${BUILDTIME}" >> "${GITHUB_OUTPUT}"
 
+      - name: Download verified OpenWrt SDK
+        id: sdk
+        uses: ./.github/actions/download-openwrt-sdk
+        with:
+          sdk-id: ${{ matrix.sdk_id }}
+
       - name: Install pinned OpenWrt musl toolchain
         env:
-          SDK_ID: ${{ matrix.sdk_id }}
+          SDK_ARCHIVE: ${{ steps.sdk.outputs.archive }}
         shell: bash
         run: |
           set -euo pipefail
-          entry=$(jq -cer --arg id "$SDK_ID" '.include[] | select(.id == $id)' packaging/openwrt/sdk-matrix.json)
-          release=$(jq -r '.release' <<<"$entry")
-          target=$(jq -r '.target' <<<"$entry")
-          sdk=$(jq -r '.sdk' <<<"$entry")
-          digest=$(jq -r '.sha256' <<<"$entry")
-          url="https://downloads.openwrt.org/releases/${release}/targets/${target}/${sdk}"
-          archive="$RUNNER_TEMP/$sdk"
           sdk_dir="$RUNNER_TEMP/openwrt-sdk"
-          # Avoid HTTP/2 stream resets observed during large SDK downloads.
-          curl --http1.1 -fL --retry 3 --connect-timeout 20 --max-time 600 "$url" -o "$archive"
-          printf '%s  %s\n' "$digest" "$archive" | sha256sum -c -
           mkdir -p "$sdk_dir"
-          tar --zstd -xf "$archive" -C "$sdk_dir" --strip-components=1
+          tar --zstd -xf "$SDK_ARCHIVE" -C "$sdk_dir" --strip-components=1
           mapfile -t compilers < <(find "$sdk_dir/staging_dir" -path '*/bin/*-openwrt-linux-musl*-gcc' -print)
           if [ "${#compilers[@]}" -ne 1 ]; then
             printf 'expected one OpenWrt musl compiler, found %s\n' "${#compilers[@]}" >&2

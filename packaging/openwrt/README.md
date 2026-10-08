@@ -103,8 +103,26 @@ Release 自动提供 `hideck_<版本>_openwrt_dynamic_<架构>` 及其 SHA256 �
 不使用只能生成 static PIE 的通用 ARM 交叉工具链冒充动态产物。
 
 发布流水线和 SDK 打包镜像使用 HTTPS 上的 HTTP/1.1 下载官方 SDK，避免大型下载中
-观察到的 HTTP/2 流重置。连接超时为 20 秒，单次传输上限为 600 秒，并保留 curl 的
-3 次重试配置；下载失败或 SHA-256 校验不符都会中止构建，不会跳过校验或使用半成品。
+观察到的 HTTP/2 流重置。统一使用 `download_sdk.py`：连接超时 20 秒，单次传输
+上限 600 秒，最多 4 次尝试，共用 1800 秒传输预算。可恢复的传输错误间隔 5 秒重试，
+通过 HTTP Range 从 `.part` 断点续传，不从头重复下载。HTTP 错误、证书错误、
+服务器不支持续传或 SHA-256 不符会明确失败；未校验的文件不会解压或发布。
+
+GitHub Actions 只缓存完整且通过固定 SHA-256 校验的 SDK，每次命中仍重新校验；
+缓存受 GitHub 的分支/tag 访问范围约束。后续制包任务通过 Docker named context
+复用同一 SDK，不在容器内重复下载。单独构建 SDK 镜像时，BuildKit cache mount
+保留已验证文件和中断下载，重新执行相同构建可继续下载。校验失败需要人工检查并
+清理对应坏缓存，不会悄悄跳过。缓存不包含 HiDeck 配置或凭证。
+
+本地也可直接调用：
+
+```sh
+python3 packaging/openwrt/download_sdk.py --url "$SDK_URL" \
+  --sha256 "$SDK_SHA256" --cache-dir /path/to/sdk-cache
+```
+
+使用同一目录可续传，指定新目录可禁用旧缓存；`--attempts 1` 关闭自动重试，
+`--attempt-seconds` 和 `--total-seconds` 可调整超时。同一缓存目录不要并发运行脚本。
 
 `build.sh` 仍支持 `LINK_MODE=dynamic`，可用与设备固件匹配的 OpenWrt SDK
 自行构建。以下方式用于 Release 没有覆盖的目标或自定义固件：

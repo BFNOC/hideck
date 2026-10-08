@@ -31,21 +31,28 @@ class OpenWrtTests(unittest.TestCase):
         self.assertIn("Build/Compile/Default,-j$(HIDECK_ADB_JOBS) adb", recipe)
         self.assertIn("CMAKE_BINARY_SUBDIR:=build", recipe)
 
-    def test_sdk_downloads_use_http1_and_verify_before_extraction(self):
-        sources = [ROOT / ".github/workflows/binary-release.yml",
-                   PACKAGING / "Dockerfile.sdk"]
-        for path in sources:
-            with self.subTest(source=path.name):
-                source = path.read_text()
-                start = source.index("curl --http1.1")
-                download = source[start:].splitlines()[0]
-                for option in ("-fL", "--retry 3", "--connect-timeout 20", "--max-time 600"):
-                    self.assertIn(option, download)
-                self.assertNotIn("--insecure", download)
-                self.assertNotIn(" -k", download)
-                verify = source.index("sha256sum -c -", start)
-                extract = source.index("tar --zstd -xf", start)
-                self.assertLess(verify, extract)
+    def test_sdk_workflows_share_verified_downloads(self):
+        for name in ("binary-release.yml", "openwrt-packages.yml"):
+            source = (ROOT / ".github/workflows" / name).read_text()
+            self.assertIn("uses: ./.github/actions/download-openwrt-sdk", source)
+            self.assertNotIn("curl --http1.1", source)
+        packages = (ROOT / ".github/workflows/openwrt-packages.yml").read_text()
+        self.assertIn('--build-context "sdk-cache=$SDK_CACHE_DIR"', packages)
+        dockerfile = (PACKAGING / "Dockerfile.sdk").read_text()
+        self.assertIn("from=sdk-cache,target=/sdk-seed", dockerfile)
+        self.assertIn("target=/var/cache/hideck-sdk,sharing=locked", dockerfile)
+        self.assertLess(dockerfile.index("archive=$(python3"), dockerfile.index("tar --zstd -xf"))
+
+    def test_sdk_cache_saves_only_verified_archive(self):
+        action = (ROOT / ".github/actions/download-openwrt-sdk/action.yml").read_text()
+        self.assertEqual(action.count("path: ${{ steps.metadata.outputs.archive }}"), 2)
+        self.assertNotIn("restore-keys:", action)
+        self.assertNotIn(".part", action)
+        verify = action.index("run: python3 packaging/openwrt/download_sdk.py")
+        self.assertLess(action.index("actions/cache/restore@v4"), verify)
+        self.assertLess(verify, action.index("actions/cache/save@v4"))
+        # Cache hits must still pass verification, not skip the download helper.
+        self.assertNotIn("if:", action[:verify])
 
     def test_shell_scripts_parse(self):
         for script in PACKAGING.glob("*.sh"):
