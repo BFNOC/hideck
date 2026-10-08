@@ -102,6 +102,10 @@ Release 自动提供 `hideck_<版本>_openwrt_dynamic_<架构>` 及其 SHA256 �
 使用 [sdk-matrix.json](sdk-matrix.json) 固定的 OpenWrt 24.10 SDK 构建三个架构，
 不使用只能生成 static PIE 的通用 ARM 交叉工具链冒充动态产物。
 
+发布流水线和 SDK 打包镜像使用 HTTPS 上的 HTTP/1.1 下载官方 SDK，避免大型下载中
+观察到的 HTTP/2 流重置。连接超时为 20 秒，单次传输上限为 600 秒，并保留 curl 的
+3 次重试配置；下载失败或 SHA-256 校验不符都会中止构建，不会跳过校验或使用半成品。
+
 `build.sh` 仍支持 `LINK_MODE=dynamic`，可用与设备固件匹配的 OpenWrt SDK
 自行构建。以下方式用于 Release 没有覆盖的目标或自定义固件：
 

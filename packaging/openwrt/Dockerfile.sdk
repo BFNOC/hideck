@@ -9,10 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The caller supplies a pinned official SDK URL and its SHA-256, not "latest".
 ARG SDK_URL
 ARG SDK_SHA256
+# Use HTTP/1.1 for large SDK downloads; keep TLS and pinned digest verification.
 RUN case "$SDK_URL" in https://downloads.openwrt.org/releases/*/openwrt-sdk-*.tar.zst) ;; *) exit 1 ;; esac \
     && test "${#SDK_SHA256}" = 64 \
     && case "$SDK_SHA256" in *[!a-f0-9]*) exit 1 ;; esac \
-    && curl -fL --retry 3 --connect-timeout 20 --max-time 600 "$SDK_URL" -o /tmp/sdk.tar.zst \
+    && curl --http1.1 -fL --retry 3 --connect-timeout 20 --max-time 600 "$SDK_URL" -o /tmp/sdk.tar.zst \
     && printf '%s  /tmp/sdk.tar.zst\n' "$SDK_SHA256" | sha256sum -c - \
     && mkdir /sdk && tar --zstd -xf /tmp/sdk.tar.zst -C /sdk --strip-components=1 \
     && rm /tmp/sdk.tar.zst

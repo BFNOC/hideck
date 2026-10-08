@@ -31,6 +31,22 @@ class OpenWrtTests(unittest.TestCase):
         self.assertIn("Build/Compile/Default,-j$(HIDECK_ADB_JOBS) adb", recipe)
         self.assertIn("CMAKE_BINARY_SUBDIR:=build", recipe)
 
+    def test_sdk_downloads_use_http1_and_verify_before_extraction(self):
+        sources = [ROOT / ".github/workflows/binary-release.yml",
+                   PACKAGING / "Dockerfile.sdk"]
+        for path in sources:
+            with self.subTest(source=path.name):
+                source = path.read_text()
+                start = source.index("curl --http1.1")
+                download = source[start:].splitlines()[0]
+                for option in ("-fL", "--retry 3", "--connect-timeout 20", "--max-time 600"):
+                    self.assertIn(option, download)
+                self.assertNotIn("--insecure", download)
+                self.assertNotIn(" -k", download)
+                verify = source.index("sha256sum -c -", start)
+                extract = source.index("tar --zstd -xf", start)
+                self.assertLess(verify, extract)
+
     def test_shell_scripts_parse(self):
         for script in PACKAGING.glob("*.sh"):
             with self.subTest(script=script.name):

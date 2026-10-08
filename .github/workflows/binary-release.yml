@@ -207,7 +207,8 @@ jobs:
           url="https://downloads.openwrt.org/releases/${release}/targets/${target}/${sdk}"
           archive="$RUNNER_TEMP/$sdk"
           sdk_dir="$RUNNER_TEMP/openwrt-sdk"
-          curl -fL --retry 3 --connect-timeout 20 --max-time 600 "$url" -o "$archive"
+          # Avoid HTTP/2 stream resets observed during large SDK downloads.
+          curl --http1.1 -fL --retry 3 --connect-timeout 20 --max-time 600 "$url" -o "$archive"
           printf '%s  %s\n' "$digest" "$archive" | sha256sum -c -
           mkdir -p "$sdk_dir"
           tar --zstd -xf "$archive" -C "$sdk_dir" --strip-components=1
