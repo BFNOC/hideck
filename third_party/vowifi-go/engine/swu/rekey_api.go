@@ -7,6 +7,7 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 const rekeyCooldown = 30 * time.Second
@@ -161,7 +162,10 @@ func (s *Session) handleIncomingCreateChildSAPacket(packet *ikev2.IKEPacket) err
 }
 
 func (s *Session) handleIncomingCreateChildSAParsed(msgID uint32, payloads []ikev2.Payload) error {
+	s.Logger.Info("peer CREATE_CHILD_SA request", zap.Uint32("msg_id", msgID),
+		zap.String("offer", createChildSAOffer(payloads)))
 	if !s.rekeyMu.TryLock() {
+		s.Logger.Warn("answered peer CREATE_CHILD_SA with TEMPORARY_FAILURE", zap.String("reason", "local rekey in progress"))
 		return s.sendRekeyCollisionResponse(msgID)
 	}
 	defer s.rekeyMu.Unlock()
@@ -174,6 +178,7 @@ func (s *Session) handleIncomingCreateChildSAParsed(msgID uint32, payloads []ike
 	)}
 	if protocolID == ikev2.ProtoIKE {
 		if s.hasRetiredIKESA() {
+			s.Logger.Warn("answered peer CREATE_CHILD_SA with TEMPORARY_FAILURE", zap.String("reason", "previous IKE SA still retiring"))
 			return s.sendRekeyCollisionResponse(msgID)
 		}
 		return s.HandleRekeyIKESARequest(msgID, payloads)
@@ -189,8 +194,10 @@ func (s *Session) sendRekeyCollisionResponse(msgID uint32) error {
 
 func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
 	for _, payload := range payloads {
+		// RFC 7296 2.7: a request may offer several proposals; the protocol of
+		// the first one identifies the SA being rekeyed.
 		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
-		if !ok || len(sa.Proposals) != 1 || sa.Proposals[0] == nil {
+		if !ok || len(sa.Proposals) == 0 || sa.Proposals[0] == nil {
 			continue
 		}
 		protocolID := sa.Proposals[0].ProtocolID
@@ -199,7 +206,7 @@ func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
 		}
 		return protocolID, nil
 	}
-	return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
+	return 0, fmt.Errorf("swu: CREATE_CHILD_SA request has no SA proposal (payloads: %s)", createChildSAOffer(payloads))
 }
 
 func (s *Session) handleIncomingInformationalPacket(packet *ikev2.IKEPacket) error {

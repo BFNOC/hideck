@@ -140,6 +140,18 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 
 func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2.Payload) error {
 	requestHeader := packetIKEHeader(packet)
+	want := map[ikev2.TransformType]ikev2.AlgorithmType{
+		ikev2.TransformTypeEncr: ikev2.AlgorithmType(s.encrAlg),
+		ikev2.TransformTypePRF:  ikev2.AlgorithmType(s.prfAlg),
+		ikev2.TransformTypeDH:   ikev2.AlgorithmType(s.dhGroup),
+	}
+	if !s.aead {
+		want[ikev2.TransformTypeInteg] = ikev2.AlgorithmType(s.integAlg)
+	}
+	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, want, s.encKeyBits)
+	if !ok {
+		return s.rejectPeerRekeyOffer(packet, payloads)
+	}
 	selection, err := s.validateIKESARekeyResponse(payloads)
 	if err != nil {
 		return err
@@ -181,6 +193,9 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 		return errors.New("swu: no IKE proposal available for peer rekey")
 	}
 	proposals[0].SPI = append([]byte(nil), responderSPI[:]...)
+	if proposalNum != 0 {
+		proposals[0].ProposalNum = proposalNum
+	}
 	responsePayloads := []ikev2.Payload{
 		&ikev2.EncryptedPayloadSA{Proposals: proposals},
 		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), responderNonce...)},
