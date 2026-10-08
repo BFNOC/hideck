@@ -261,11 +261,13 @@ func (s *Service) logIMSRegistrationAttempt(session *registerSession, request st
 		return
 	}
 	portS := s.capturePortSSession()
-	regID, _ := contactParameterValue(rawSIPHeaderValue(request, "Contact"), "reg-id")
+	contact := rawSIPHeaderValue(request, "Contact")
+	regID, _ := contactParameterValue(contact, "reg-id")
 	logging.Info("IMS REGISTER attempt",
 		"device", s.DeviceID(), "cseq", session.cseq,
 		"pcscf", s.currentPortSRecoveryRegistrar(), "inner_ip", s.cfg.LocalAddr,
-		"reg_id", strings.TrimSpace(regID), "port_s_generation", portS.generation,
+		"reg_id", strings.TrimSpace(regID), "sip_instance", sipInstanceKind(contact),
+		"port_s_generation", portS.generation,
 		"port_s_connected", portS.connected, "port_s_last_inbound_at", portS.lastInboundAt)
 }
 
@@ -283,4 +285,23 @@ func registeredFlowRegIDLocked(s *Service) int {
 		return 1
 	}
 	return 0
+}
+
+// sipInstanceKind names the +sip.instance form in a Contact without logging
+// the IMEI itself.
+func sipInstanceKind(contact string) string {
+	value, ok := contactParameterValue(contact, "+sip.instance")
+	value = strings.Trim(strings.TrimSpace(value), `"<>`)
+	switch {
+	case !ok:
+		return "none"
+	case value == "":
+		return "empty"
+	case strings.HasPrefix(value, "urn:gsma:imei:"):
+		return "imei"
+	case strings.HasPrefix(value, "urn:uuid:"):
+		return "uuid"
+	default:
+		return "other"
+	}
 }

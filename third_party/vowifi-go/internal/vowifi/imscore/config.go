@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
@@ -114,6 +115,9 @@ func (cfg *IMSConfig) syncCompatibilityFields() {
 	if cfg.SIPInstance == "" {
 		cfg.SIPInstance = strings.TrimSpace(cfg.IMEI)
 	}
+	if cfg.SIPInstance == "" {
+		cfg.SIPInstance = uuidSIPInstance(cfg.IMSI)
+	}
 	if cfg.IMEI == "" {
 		cfg.IMEI = strings.TrimSpace(cfg.SIPInstance)
 	}
@@ -158,4 +162,15 @@ func mergeOriginalRegisterTemplate(cfg *IMSConfig) {
 	}
 	current.IncludePANIAuthenticated = current.IncludePANIAuthenticated || template.IncludePANIAuthenticated
 	current.StrictSecurityServerOffer = current.StrictSecurityServerOffer || template.StrictSecurityServerOffer
+}
+
+// uuidSIPInstance gives a UE without an IMEI, such as a PC/SC reader, a
+// UUID URN instance ID (TS 24.229 5.1.1.2, RFC 4122) that stays the same for
+// one SIM, instead of an empty +sip.instance.
+func uuidSIPInstance(imsi string) string {
+	imsi = strings.TrimSpace(imsi)
+	if imsi == "" {
+		return ""
+	}
+	return "<urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte("vowifi-go:sip-instance:"+imsi)).String() + ">"
 }
