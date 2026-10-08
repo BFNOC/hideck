@@ -277,28 +277,30 @@ type Session struct {
 	epdgCandidate *epdgCandidateAttempt
 
 	// --- IKE_AUTH state ---
-	stage                  ikeAuthStage
-	eapID                  byte // current EAP identifier
-	eapType                byte // negotiated EAP method (AKA / AKA')
-	eapKeys                eapaka.Keys
-	fastReauthCtx          *engineeap.FastReauthContext
-	ikeIdentity            string
-	eapIdentity            string
-	eapIdentitySet         bool
-	eapTranscript          [][]byte
-	eapIdentityTranscript  [][]byte
-	eapResultIndicated     bool
-	eapResultConfirmed     bool
-	eapSuccessReceived     bool
-	authPayload            []byte // responder AUTH payload (for verification)
-	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
-	responderAuthenticated bool
-	eapOnlyAuthentication  bool
-	eapOnlyRequested       bool
-	responderIDType        byte
-	responderID            []byte
-	ikeSAInitRequest       []byte
-	ikeSAInitResponse      []byte
+	stage                     ikeAuthStage
+	eapID                     byte // current EAP identifier
+	eapType                   byte // negotiated EAP method (AKA / AKA')
+	eapKeys                   eapaka.Keys
+	fastReauthCtx             *engineeap.FastReauthContext
+	ikeIdentity               string
+	eapIdentity               string
+	eapIdentitySet            bool
+	eapTranscript             [][]byte
+	eapIdentityTranscript     [][]byte
+	eapResultIndicated        bool
+	eapResultConfirmed        bool
+	eapSuccessReceived        bool
+	deviceIdentityRequested   bool // owned by the serial IKE_AUTH loop
+	deviceIdentityEAPVerified bool
+	authPayload               []byte // responder AUTH payload (for verification)
+	skf                       []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	responderAuthenticated    bool
+	eapOnlyAuthentication     bool
+	eapOnlyRequested          bool
+	responderIDType           byte
+	responderID               []byte
+	ikeSAInitRequest          []byte
+	ikeSAInitResponse         []byte
 
 	// --- data plane ---
 	innerEndpointMu   sync.RWMutex

@@ -170,6 +170,11 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 		return err
 	}
 	var activeChildDelete, ikeDelete bool
+	identityReply, err := s.informationalDeviceIdentityReply(payloads)
+	if err != nil {
+		return err
+	}
+	responsePayloads = append(responsePayloads, identityReply...)
 	var responseSPIs []uint32
 	for _, payload := range payloads {
 		deletion, ok := payload.(*ikev2.EncryptedPayloadDelete)

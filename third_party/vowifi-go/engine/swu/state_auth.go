@@ -10,7 +10,6 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
-	"go.uber.org/zap"
 )
 
 // requiredConfiguredIMSI returns the configured IMSI or an error.
@@ -216,6 +215,8 @@ func (s *Session) runIKEAuthLoop(ctx context.Context) error {
 	s.setState(stateAuthenticating)
 	s.stage = stageInit
 	s.eapSuccessReceived = false
+	s.deviceIdentityRequested = false
+	s.deviceIdentityEAPVerified = false
 
 	for {
 		switch s.stage {
@@ -297,6 +298,23 @@ func (s *Session) advanceIKEAuthStage() error {
 
 // sendIKEAuthRequest encrypts and sends an IKE_AUTH request.
 func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
+	reply, err := s.pendingDeviceIdentityReply()
+	if err != nil {
+		return err
+	}
+	if reply != nil {
+		payloads = append(append([]ikev2.Payload(nil), payloads...), reply)
+	}
+	if err := s.sendIKEAuthPayloads(payloads); err != nil {
+		return err
+	}
+	if reply != nil {
+		s.deviceIdentityRequested = false
+	}
+	return nil
+}
+
+func (s *Session) sendIKEAuthPayloads(payloads []ikev2.Payload) error {
 	if s.shouldFragment(payloads) {
 		packets, err := s.fragmentMessage(payloads, ikev2.IKE_AUTH)
 		if err != nil {
@@ -424,19 +442,8 @@ func (s *Session) initialIKEIdentity() (string, error) {
 }
 
 func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
-	imei := strings.TrimSpace(s.cfg.DeviceIdentityIMEI)
-	if imei == "" && s.cfg.EnableDeviceIdentitySpoof {
-		imsi, err := requiredConfiguredIMSI(s.cfg)
-		if err != nil {
-			return nil, err
-		}
-		imei = spoofAppleIMEI(imsi)
-	}
-	if imei == "" {
-		return nil, nil
-	}
-	encoded, err := encodeIMEITBCD(imei)
-	if err != nil {
+	encoded, err := s.deviceIdentityValue()
+	if err != nil || len(encoded) == 0 {
 		return nil, err
 	}
 	data := append([]byte{1, byte(len(encoded))}, encoded...)
@@ -490,7 +497,6 @@ func (s *Session) executeIKEAuthDecision(resp *ikev2.IKEPacket) (string, error) 
 // applyEAPHandlingResult processes the decrypted IKE_AUTH response payloads and
 // returns the next decision.
 func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
-	s.logDeviceIdentityRequest(payloads)
 	if !s.responderAuthenticated {
 		deferred, err := s.authenticateInitialResponder(payloads)
 		if err != nil {
@@ -500,6 +506,11 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			s.responderAuthenticated = true
 		}
 	}
+	requested, err := hasDeviceIdentityRequest(payloads)
+	if err != nil {
+		return "", err
+	}
+	s.deviceIdentityRequested = s.deviceIdentityRequested || requested
 	for _, pl := range payloads {
 		switch pl.Type() {
 		case ikev2.PayloadEAP:
@@ -817,17 +828,4 @@ func (s *Session) verifyResponderAuth(payloads []ikev2.Payload) error {
 		return errors.New("swu: no IKE SA keys for AUTH verification")
 	}
 	return s.verifyResponderCertificateAuth(payloads)
-}
-
-// logDeviceIdentityRequest records an ePDG asking for DEVICE_IDENTITY in an
-// IKE_AUTH response (TS 24.302 7.2.2). The engine does not answer it.
-func (s *Session) logDeviceIdentityRequest(payloads []ikev2.Payload) {
-	for _, payload := range payloads {
-		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
-		if ok && (notify.NotifyType == ikev2.DEVICE_IDENTITY_3GPP || notify.NotifyType == ikev2.DEVICE_IDENTITY) {
-			s.Logger.Info("ePDG requested DEVICE_IDENTITY",
-				zap.Uint16("notify", notify.NotifyType), zap.Bool("withheld", s.cfg.WithholdDeviceIdentity))
-			return
-		}
-	}
 }

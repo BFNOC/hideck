@@ -158,16 +158,18 @@ type EffectiveCarrierConfig struct {
 
 // CarrierOverride overrides a carrier's configuration at runtime.
 type CarrierOverride struct {
-	MCC                     string
-	MNC                     string
-	PresetID                string
-	DeviceModel             string
-	IKEProposals            []string
-	ESPProposals            []string
-	ReauthIntervalSeconds   int
-	IKERekeyIntervalSeconds int
-	E911                    E911Config
-	IMS                     IMSRegisterTemplate
+	WithholdDeviceIdentity    *bool
+	KeepChildSAOnRekeyDecline *bool
+	MCC                       string
+	MNC                       string
+	PresetID                  string
+	DeviceModel               string
+	IKEProposals              []string
+	ESPProposals              []string
+	ReauthIntervalSeconds     int
+	IKERekeyIntervalSeconds   int
+	E911                      E911Config
+	IMS                       IMSRegisterTemplate
 }
 
 // ErrVoWiFiBlockedMCC is returned when the carrier's MCC is blocked for

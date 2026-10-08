@@ -126,7 +126,7 @@ type CarrierOverride struct {
 	AKAIdentityMode               string                      `yaml:"aka_identity_mode"`
 	DeviceIdentityEnabled         *bool                       `yaml:"device_identity_enabled"`
 	DeviceIdentityIMEI            string                      `yaml:"device_identity_imei"`
-	WithholdDeviceIdentity        bool                        `yaml:"withhold_device_identity"`
+	WithholdDeviceIdentity        *bool                       `yaml:"withhold_device_identity"`
 	NATKeepaliveSeconds           *int                        `yaml:"nat_keepalive_seconds"`
 	DPDIntervalSeconds            *int                        `yaml:"dpd_interval_seconds"`
 	EnableLegacyCiphers           *bool                       `yaml:"enable_legacy_ciphers"`
@@ -146,7 +146,7 @@ type CarrierOverride struct {
 	DPDKeepaliveIntervalSeconds   int                         `yaml:"dpd_keepalive_interval_seconds"`
 	ReauthIntervalSeconds         int                         `yaml:"reauth_interval_seconds"`
 	IKERekeyIntervalSeconds       int                         `yaml:"ike_rekey_interval_seconds"`
-	KeepChildSAOnRekeyDecline     bool                        `yaml:"keep_child_sa_on_rekey_decline"`
+	KeepChildSAOnRekeyDecline     *bool                       `yaml:"keep_child_sa_on_rekey_decline"`
 	IMSRegisterTemplate           IMSRegisterTemplateOverride `yaml:"ims_register_template"`
 	SMSRoutingMethod              string                      `yaml:"sms_routing_method"`
 	SMSRoutingGW                  string                      `yaml:"sms_routing_gw"`
