@@ -721,3 +721,54 @@ func TestPeerChildSARekeyWithNoAcceptableProposalKeepsSA(t *testing.T) {
 		t.Fatalf("response = %#v, want NO_PROPOSAL_CHOSEN", payloads)
 	}
 }
+
+func TestPeerRekeyOfUnknownChildSAAnswersChildSANotFound(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	oldRemoteSPI := session.espRemoteSPI
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, 0xb1c2d3e4)})
+	payloads, err := session.decryptAndParse(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok && notify.NotifyType == ikev2.NotifyTypeRekeySA {
+			notify.SPI = spiBytes(oldRemoteSPI + 1)
+		}
+	}
+	if err := session.handlePeerChildSARekeyPayloads(request, payloads); err != nil {
+		t.Fatalf("rekey of unknown CHILD_SA ended the session: %v", err)
+	}
+	if session.espRemoteSPI != oldRemoteSPI {
+		t.Fatal("rekey of unknown CHILD_SA replaced the CHILD_SA")
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	notify, ok := response[0].(*ikev2.EncryptedPayloadNotify)
+	if len(response) != 1 || !ok || notify.NotifyType != ikev2.CHILD_SA_NOT_FOUND {
+		t.Fatalf("response = %#v, want CHILD_SA_NOT_FOUND", response)
+	}
+}
+
+func TestPeerRekeyKEGroupMismatchAnswersInvalidKEPayload(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, 0xb1c2d3e4)})
+	payloads := []ikev2.Payload{&ikev2.EncryptedPayloadKE{DHGroup: 19, KEData: make([]byte, 64)}}
+	if _, ok, err := session.checkPeerRekeyKE(request, payloads, 14); ok || err != nil {
+		t.Fatalf("checkPeerRekeyKE ok=%v err=%v, want an INVALID_KE_PAYLOAD answer", ok, err)
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	notify, ok := response[0].(*ikev2.EncryptedPayloadNotify)
+	if len(response) != 1 || !ok || notify.NotifyType != ikev2.INVALID_KE_PAYLOAD || !bytes.Equal(notify.NotifyData, []byte{0, 14}) {
+		t.Fatalf("response = %#v, want INVALID_KE_PAYLOAD naming group 14", response)
+	}
+	if kept, ok, err := session.checkPeerRekeyKE(request, payloads, 0); !ok || err != nil || len(kept) != 0 {
+		t.Fatalf("no-PFS KE handling kept=%v ok=%v err=%v", kept, ok, err)
+	}
+}

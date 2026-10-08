@@ -148,13 +148,17 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	if !s.aead {
 		want[ikev2.TransformTypeInteg] = ikev2.AlgorithmType(s.integAlg)
 	}
-	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, want, s.encKeyBits)
+	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, ikev2.ProtoIKE, want, s.encKeyBits)
 	if !ok {
-		return s.rejectPeerRekeyOffer(packet, payloads)
+		return s.rejectPeerRekeyOffer(packet, payloads, errors.New("no proposal matches the current IKE SA suite"))
+	}
+	payloads, ok, err := s.checkPeerRekeyKE(packet, payloads, uint16(s.dhGroup))
+	if !ok || err != nil {
+		return err
 	}
 	selection, err := s.validateIKESARekeyResponse(payloads)
 	if err != nil {
-		return err
+		return s.rejectPeerRekeyOffer(packet, payloads, err)
 	}
 	dh, responderSPI, responderNonce, err := s.newIKESARekeyMaterial()
 	if err != nil {

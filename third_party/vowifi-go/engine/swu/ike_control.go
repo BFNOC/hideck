@@ -300,7 +300,11 @@ func (s *Session) dispatchCreateChildSA(raw []byte) {
 		err = s.handleIncomingCreateChildSAPacket(packet)
 	}
 	if err != nil {
-		s.failEstablishedControl(fmt.Errorf("swu: handle peer CREATE_CHILD_SA: %w", err))
+		detail := fmt.Sprintf("%d bytes", len(raw))
+		if header := packetIKEHeader(packet); header != nil {
+			detail = fmt.Sprintf("msg_id %d, %d bytes, flags %#x", header.MessageID, len(raw), header.Flags)
+		}
+		s.failEstablishedControl(fmt.Errorf("swu: handle peer CREATE_CHILD_SA (%s): %w", detail, err))
 	}
 }
 

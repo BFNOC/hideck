@@ -75,6 +75,8 @@ func (s *Session) pendingDeviceIdentityReply() (*ikev2.EncryptedPayloadNotify, e
 	if err == nil && reply == nil {
 		s.Logger.Warn("ePDG requested DEVICE_IDENTITY but no IMEI is available; not answering",
 			zap.String("exchange", "IKE_AUTH"))
+		// Nothing can be sent later either; warn once per request.
+		s.deviceIdentityRequested = false
 	}
 	return reply, err
 }

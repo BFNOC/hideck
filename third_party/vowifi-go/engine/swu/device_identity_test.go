@@ -186,7 +186,11 @@ func TestDeviceIdentityUnavailableAndInvalid(t *testing.T) {
 	if reply, err := s.pendingDeviceIdentityReply(); err != nil || reply != nil {
 		t.Fatalf("missing identity reply=%v err=%v", reply, err)
 	}
+	if s.deviceIdentityRequested {
+		t.Fatal("unanswerable request stayed pending")
+	}
 	s.cfg.DeviceIdentityIMEI = "bad-imei"
+	s.deviceIdentityRequested = true
 	if _, err := s.pendingDeviceIdentityReply(); err == nil {
 		t.Fatal("invalid configured identity accepted")
 	}

@@ -3,6 +3,7 @@ package swu
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
@@ -20,8 +21,13 @@ func (s *Session) handlePeerChildSARekey(packet *ikev2.IKEPacket) error {
 }
 
 func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloads []ikev2.Payload) error {
-	if err := s.validatePeerRekeyNotify(payloads); err != nil {
-		return err
+	if notifyType, err := s.validatePeerRekeyNotify(payloads); err != nil {
+		// RFC 7296 2.25.1 and 1.3: refuse with a notify and keep the session.
+		s.Logger.Warn("peer CHILD_SA request not accepted; answered with notify",
+			zap.Uint16("notify", notifyType), zap.Error(err), zap.String("offer", createChildSAOffer(payloads)))
+		return s.sendEstablishedIKEResponse(packet, []ikev2.Payload{
+			&ikev2.EncryptedPayloadNotify{NotifyType: notifyType},
+		})
 	}
 	esn := ikev2.AlgorithmType(0)
 	if s.espESN {
@@ -35,9 +41,13 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	if s.espInteg != 0 {
 		want[ikev2.TransformTypeInteg] = ikev2.AlgorithmType(s.espInteg)
 	}
-	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, want, s.espEncKeyBits)
+	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, ikev2.ProtoESP, want, s.espEncKeyBits)
 	if !ok {
-		return s.rejectPeerRekeyOffer(packet, payloads)
+		return s.rejectPeerRekeyOffer(packet, payloads, errors.New("no proposal matches the current CHILD_SA suite"))
+	}
+	payloads, ok, err := s.checkPeerRekeyKE(packet, payloads, s.currentChildDHGroup())
+	if !ok || err != nil {
+		return err
 	}
 	currentTSi, currentTSr := s.currentChildSelectors()
 	peerTSi := retypeTrafficSelectorPayload(currentTSr, ikev2.PayloadTSi)
@@ -48,22 +58,25 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 		requireSA: true, requireNonce: true,
 	})
 	if err != nil {
-		return err
+		return s.rejectPeerRekeyOffer(packet, payloads, err)
 	}
 	if !selectorsContainAnyIP(selection.tsr, configuredInnerIPs(s)) {
-		return errors.New("swu: peer CHILD_SA TSr does not contain an assigned inner address")
+		return s.rejectPeerRekeyOffer(packet, payloads,
+			errors.New("peer CHILD_SA TSr does not contain an assigned inner address"))
 	}
 	return s.answerPeerChildSARekey(packet, payloads, selection, proposalNum)
 }
 
 // narrowPeerRekeyOffer implements the responder side of RFC 7296 2.7: from a
 // peer CREATE_CHILD_SA request that may carry several proposals and several
-// transforms per type, pick the first proposal containing the suite this SA
-// already runs and reduce it to one transform per type. The returned payloads
-// carry that single proposal renumbered to 1 for validation; proposalNum is the
-// peer's original number, which the response MUST echo (RFC 7296 3.3.1).
+// transforms per type, pick the first proposal for protocol that contains the
+// suite this SA already runs and reduce it to one transform per type. The
+// returned payloads carry that single proposal renumbered to 1 for validation;
+// proposalNum is the peer's original number, which the response MUST echo
+// (RFC 7296 3.3.1).
 func narrowPeerRekeyOffer(
 	payloads []ikev2.Payload,
+	protocol ikev2.ProtocolID,
 	want map[ikev2.TransformType]ikev2.AlgorithmType,
 	keyBits uint16,
 ) ([]ikev2.Payload, uint8, bool) {
@@ -73,6 +86,9 @@ func narrowPeerRekeyOffer(
 			continue
 		}
 		for _, proposal := range sa.Proposals {
+			if proposal == nil || proposal.ProtocolID != protocol {
+				continue
+			}
 			narrowed, ok := narrowPeerProposal(proposal, want, keyBits)
 			if !ok {
 				continue
@@ -88,6 +104,10 @@ func narrowPeerRekeyOffer(
 	return payloads, 0, true
 }
 
+// narrowPeerProposal accepts a proposal only when every transform type it
+// carries has an acceptable entry and every type of the current suite is
+// present. D-H NONE stands for no PFS and INTEG NONE for an AEAD cipher; both
+// are equivalent to leaving the type out and are dropped (RFC 7296 3.3.3).
 func narrowPeerProposal(
 	proposal *ikev2.Proposal,
 	want map[ikev2.TransformType]ikev2.AlgorithmType,
@@ -99,15 +119,24 @@ func narrowPeerProposal(
 	narrowed := *proposal
 	narrowed.Transforms = nil
 	picked := make(map[ikev2.TransformType]bool)
+	none := make(map[ikev2.TransformType]bool)
 	for _, transform := range proposal.Transforms {
 		if transform == nil {
 			return nil, false
 		}
 		id, known := want[transform.Type]
+		if transform.ID == 0 && (transform.Type == ikev2.TransformTypeDH && known && id == 0 ||
+			transform.Type == ikev2.TransformTypeInteg && !known) {
+			none[transform.Type] = true
+			continue
+		}
 		if !known {
+			if transform.Type == ikev2.TransformTypeInteg {
+				continue
+			}
 			return nil, false
 		}
-		if picked[transform.Type] || transform.ID != id {
+		if picked[transform.Type] || transform.ID != id || len(transform.Attributes) > 0 && transform.Type != ikev2.TransformTypeEncr {
 			continue
 		}
 		if transform.Type == ikev2.TransformTypeEncr && validateEncryptionKeyLength(transform, keyBits) != nil {
@@ -117,7 +146,12 @@ func narrowPeerProposal(
 		picked[transform.Type] = true
 	}
 	for _, transform := range proposal.Transforms {
-		if !picked[transform.Type] {
+		if !picked[transform.Type] && !none[transform.Type] {
+			return nil, false
+		}
+	}
+	for transformType, id := range want {
+		if !picked[transformType] && !(transformType == ikev2.TransformTypeDH && id == 0) {
 			return nil, false
 		}
 	}
@@ -126,12 +160,49 @@ func narrowPeerProposal(
 }
 
 // rejectPeerRekeyOffer answers an unacceptable peer rekey with
-// NO_PROPOSAL_CHOSEN and keeps the current SA (RFC 7296 2.7).
-func (s *Session) rejectPeerRekeyOffer(packet *ikev2.IKEPacket, payloads []ikev2.Payload) error {
-	s.Logger.Warn("peer rekey offered no acceptable proposal; answered NO_PROPOSAL_CHOSEN",
-		zap.String("offer", createChildSAOffer(payloads)))
+// NO_PROPOSAL_CHOSEN and keeps the current SA (RFC 7296 2.7, 2.8).
+func (s *Session) rejectPeerRekeyOffer(packet *ikev2.IKEPacket, payloads []ikev2.Payload, reason error) error {
+	s.Logger.Warn("peer rekey not accepted; answered NO_PROPOSAL_CHOSEN and kept the current SA",
+		zap.String("offer", createChildSAOffer(payloads)), zap.Error(reason))
 	return s.sendEstablishedIKEResponse(packet, []ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NO_PROPOSAL_CHOSEN},
+	})
+}
+
+// checkPeerRekeyKE matches the KE payload against the selected D-H group.
+// With no group the KE is ignored. A missing or different KE is answered
+// with INVALID_KE_PAYLOAD naming the group, keeping the current SA (RFC 7296
+// 1.3, 2.7). ok is false when such an answer was sent.
+func (s *Session) checkPeerRekeyKE(
+	packet *ikev2.IKEPacket,
+	payloads []ikev2.Payload,
+	group uint16,
+) ([]ikev2.Payload, bool, error) {
+	if group == 0 {
+		kept := make([]ikev2.Payload, 0, len(payloads))
+		for _, payload := range payloads {
+			if payload == nil || payload.Type() != ikev2.PayloadKE {
+				kept = append(kept, payload)
+			}
+		}
+		return kept, true, nil
+	}
+	got := uint16(0)
+	for _, payload := range payloads {
+		if payload == nil || payload.Type() != ikev2.PayloadKE {
+			continue
+		}
+		var err error
+		got, _, err = parseKEPayload(payload)
+		if err == nil && got == group {
+			return payloads, true, nil
+		}
+		break
+	}
+	s.Logger.Warn("peer rekey KE does not use the selected D-H group; answered INVALID_KE_PAYLOAD",
+		zap.Uint16("selected", group), zap.Uint16("ke", got))
+	return payloads, false, s.sendEstablishedIKEResponse(packet, []ikev2.Payload{
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.INVALID_KE_PAYLOAD, NotifyData: []byte{byte(group >> 8), byte(group)}},
 	})
 }
 
@@ -227,7 +298,9 @@ func retypeTrafficSelectorPayload(payload *ikev2.EncryptedPayloadTS, payloadType
 	return cloned
 }
 
-func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) error {
+// validatePeerRekeyNotify checks the REKEY_SA notify of a peer CHILD_SA
+// request; on error it also returns the notify type to answer with.
+func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) (uint16, error) {
 	s.childSAMu.RLock()
 	expectedSPI := s.espRemoteSPI
 	s.childSAMu.RUnlock()
@@ -237,12 +310,12 @@ func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) error {
 			notify.NotifyType != ikev2.NotifyTypeRekeySA {
 			continue
 		}
-		if binary.BigEndian.Uint32(notify.SPI) != expectedSPI {
-			return errors.New("swu: peer REKEY_SA identifies an unknown ESP SPI")
+		if got := binary.BigEndian.Uint32(notify.SPI); got != expectedSPI {
+			return ikev2.CHILD_SA_NOT_FOUND, fmt.Errorf("swu: peer REKEY_SA spi %08x is not the current %08x", got, expectedSPI)
 		}
-		return nil
+		return 0, nil
 	}
-	return errors.New("swu: peer CHILD_SA rekey missing REKEY_SA notification")
+	return ikev2.NO_ADDITIONAL_SAS, errors.New("swu: peer CREATE_CHILD_SA without REKEY_SA asks for an additional CHILD_SA")
 }
 
 func (s *Session) sendEstablishedIKEResponse(request *ikev2.IKEPacket, payloads []ikev2.Payload) error {

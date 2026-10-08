@@ -7,8 +7,6 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-const transformAttrKeyLength = 14
-
 // createChildSAOffer describes a peer CREATE_CHILD_SA request for the log:
 // every proposal with its protocol, SPI size and transforms (type=id, /key
 // bits), plus notify types and the other payload types. No key material.
@@ -49,7 +47,7 @@ func describeProposal(proposal *ikev2.Proposal) string {
 		}
 		item := fmt.Sprintf("%d=%d", transform.Type, transform.ID)
 		for _, attribute := range transform.Attributes {
-			if attribute != nil && attribute.Type&0x7fff == transformAttrKeyLength {
+			if attribute != nil && attribute.Type == transformAttributeKeyLength {
 				item += fmt.Sprintf("/%d", attribute.Val)
 			}
 		}
