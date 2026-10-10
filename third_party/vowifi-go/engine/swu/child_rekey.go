@@ -245,7 +245,9 @@ func (s *Session) exchangeEstablishedIKE(ctx context.Context, packet *ikev2.IKEP
 	}
 	payloads, err := s.decryptAndParse(response)
 	if err != nil {
-		return nil, err
+		header := packetIKEHeader(response)
+		return nil, fmt.Errorf("%w: exchange %d flags 0x%02x msg_id %d payloads %s",
+			err, header.ExchangeType, header.Flags, header.MessageID, ikePayloadTypes(response.Payloads))
 	}
 	if err := ikeAuthenticationError(payloads); err != nil {
 		return nil, err
