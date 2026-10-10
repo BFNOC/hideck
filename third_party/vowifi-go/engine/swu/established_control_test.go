@@ -433,6 +433,26 @@ func TestInitiatedIKESARekeyRetainsOldKeysWhenDeleteTimesOut(t *testing.T) {
 	}
 }
 
+func TestIKESARekeyDropsStaleRetiredSA(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	staleKeys := cloneIKEKeysForTest(session.ikeKeys)
+	session.retiredIKESA = &ikeSAContext{keys: staleKeys, localInitiator: true}
+	peerDone := make(chan struct{})
+	go func() {
+		defer close(peerDone)
+		respondToIKESARekey(t, session, transport)
+	}()
+	err := session.RekeyIKESA()
+	<-peerDone
+	if err != nil {
+		t.Fatalf("RekeyIKESA with a stale retired SA: %v", err)
+	}
+	if !retiredIKEKeysCleared(session, staleKeys) {
+		t.Fatal("stale retired IKE SA was not dropped and wiped")
+	}
+}
+
 func allZero(value []byte) bool {
 	for _, item := range value {
 		if item != 0 {

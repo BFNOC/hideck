@@ -3,9 +3,11 @@ package swu
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 type ikeSAContext struct {
@@ -22,6 +24,24 @@ func (s *Session) hasRetiredIKESA() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.retiredIKESA != nil
+}
+
+// dropStaleRetiredIKESA discards an old IKE SA that is still waiting for its
+// Delete when the next local IKE rekey is due. Nothing else retires it after
+// our own Delete failed, so keeping it would fail every later rekey.
+func (s *Session) dropStaleRetiredIKESA() {
+	s.mu.Lock()
+	retired := s.retiredIKESA
+	s.retiredIKESA = nil
+	s.mu.Unlock()
+	if retired == nil {
+		return
+	}
+	wipeIKEKeys(retired.keys)
+	s.Logger.Warn("dropped the old IKE SA still awaiting Delete before rekeying",
+		zap.String("old_spi_i", hex.EncodeToString(retired.spiI[:])),
+		zap.String("old_spi_r", hex.EncodeToString(retired.spiR[:])),
+		zap.Bool("local_initiator", retired.localInitiator))
 }
 
 func (s *Session) ikeContextForHeader(header *ikev2.IKEHeader) (ikeSAContext, bool, error) {
