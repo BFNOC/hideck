@@ -28,7 +28,7 @@ func (s *SocketManager) readLoop() {
 			continue
 		}
 		packet := append([]byte(nil), buffer[:length]...)
-		s.dispatchDatagram(packet)
+		s.dispatchDatagram(packet, source.Port)
 	}
 }
 
@@ -70,11 +70,11 @@ func (s *SocketManager) reportPortChange(newPort int) {
 	}
 }
 
-func (s *SocketManager) dispatchDatagram(packet []byte) {
+func (s *SocketManager) dispatchDatagram(packet []byte, fromPort int) {
 	if len(packet) == 1 && packet[0] == 0xff {
 		return
 	}
-	if ike, ok := parseIKEPayload(packet, cap(packet)); ok {
+	if ike, ok := parseIKEPayload(packet, cap(packet), fromPort); ok {
 		s.deliverPacket(ike, packetDelivery{
 			channel: s.IKEChan, received: &s.receivedIKE, dropped: &s.droppedIKE, label: "IKE",
 		})
