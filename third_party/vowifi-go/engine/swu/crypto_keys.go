@@ -74,7 +74,28 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	return s.decryptAndParseWithKeys(pkt, s.ikeKeys)
 }
 
+// errUnauthenticatedIKE marks an inbound IKE message that failed decryption or
+// its integrity check. RFC 7296 2.21 drops such messages without acting on them.
+var errUnauthenticatedIKE = errors.New("swu: unauthenticated IKE message")
+
+// decryptAndParseWithKeys adds the received header and payload types to any
+// failure, so a message we cannot open can be told apart in the log.
 func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) ([]ikev2.Payload, error) {
+	payloads, err := s.openIKE(pkt, keys)
+	if err != nil {
+		if header := packetIKEHeader(pkt); header != nil {
+			return nil, fmt.Errorf("%w: %w: exchange %d flags 0x%02x msg_id %d spi %016x/%016x payloads %s",
+				errUnauthenticatedIKE, err, header.ExchangeType, header.Flags, header.MessageID,
+				header.SPIi, header.SPIr, ikePayloadTypes(pkt.Payloads))
+		}
+		return nil, fmt.Errorf("%w: %w", errUnauthenticatedIKE, err)
+	}
+	// Only an authenticated message proves the peer is alive (DPD).
+	s.markInboundActivity()
+	return payloads, nil
+}
+
+func (s *Session) openIKE(pkt *ikev2.IKEPacket, keys *IKEKeys) ([]ikev2.Payload, error) {
 	if keys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}

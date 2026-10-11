@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
@@ -59,10 +62,17 @@ func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
 	}
 }
 
-// RFC 7296 2.21.4: a message outside our IKE SA is audited, not acted on.
-func TestControlLoopDropsUnexpectedEstablishedSPIs(t *testing.T) {
-	session, transport := newEstablishedControlSession(t)
+// RFC 7296 2.21 and 2.21.4: messages that are malformed, outside our IKE SA
+// or fail their integrity check are audited, never acted on, and do not count
+// as peer liveness.
+func TestControlLoopDropsInvalidIKEPackets(t *testing.T) {
+	core, observed := observer.New(zapcore.WarnLevel)
+	session, transport := newEstablishedControlSession(t, zap.New(core))
 	defer stopControlTestSession(session)
+	session.activityMu.Lock()
+	before := session.lastInboundTime
+	session.activityMu.Unlock()
+
 	invalid, err := (&ikev2.IKEPacket{
 		Header: &ikev2.IKEHeader{
 			SPIi: 99, SPIr: 100, Version: 0x20,
@@ -78,10 +88,33 @@ func TestControlLoopDropsUnexpectedEstablishedSPIs(t *testing.T) {
 	garbled := append([]byte(nil), invalid...)
 	garbled[24], garbled[25] = 0x08, 0xe3
 	transport.ike <- garbled
+	// A peer request on our SPIs whose integrity check fails.
+	forged, err := session.encryptAndWrap(&ikev2.IKEPacket{
+		Header: newIKEHeader(session.spiI, session.spiR, ikev2.INFORMATIONAL, 0, 40),
+	})
+	if err != nil {
+		t.Fatalf("encrypt peer request: %v", err)
+	}
+	forged[len(forged)-1] ^= 0xff
+	transport.ike <- forged
+
+	deadline := time.Now().Add(time.Second)
+	for observed.FilterMessage("dropped invalid IKE packet").Len() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	select {
 	case <-session.done:
 		t.Fatalf("invalid IKE packets ended the session: %v", session.TerminalError())
-	case <-time.After(300 * time.Millisecond):
+	default:
+	}
+	if got := observed.FilterMessage("dropped invalid IKE packet").Len(); got != 3 {
+		t.Fatalf("dropped-packet warnings = %d, want 3", got)
+	}
+	session.activityMu.Lock()
+	after := session.lastInboundTime
+	session.activityMu.Unlock()
+	if !after.Equal(before) {
+		t.Fatal("invalid IKE packets refreshed peer liveness")
 	}
 }
 

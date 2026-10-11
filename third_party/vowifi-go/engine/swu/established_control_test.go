@@ -8,6 +8,7 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"go.uber.org/zap"
 )
 
 func TestEstablishedChildSARekeyValidatesResponseAndSwitchesSAs(t *testing.T) {
@@ -182,16 +183,16 @@ func assertRetiredChildSA(t *testing.T, session *Session, remoteSPI, localSPI ui
 	}
 }
 
-func newEstablishedControlSession(t *testing.T) (*Session, *testIKETransport) {
+func newEstablishedControlSession(t *testing.T, loggers ...*zap.Logger) (*Session, *testIKETransport) {
 	t.Helper()
 	return newEstablishedControlSessionWithConfig(t, &Config{Retransmit: &RetransmitConfig{
 		MaxRetries: 0, InitialDelay: 200 * time.Millisecond, Backoff: 1,
-	}})
+	}}, loggers...)
 }
 
-func newEstablishedControlSessionWithConfig(t *testing.T, config *Config) (*Session, *testIKETransport) {
+func newEstablishedControlSessionWithConfig(t *testing.T, config *Config, loggers ...*zap.Logger) (*Session, *testIKETransport) {
 	t.Helper()
-	session := NewSession(config)
+	session := NewSession(config, loggers...)
 	transport := newTestIKETransport()
 	session.socket = transport
 	copy(session.spiI[:], []byte("init-spi"))
