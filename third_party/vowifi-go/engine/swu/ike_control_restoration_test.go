@@ -59,7 +59,8 @@ func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
 	}
 }
 
-func TestControlLoopRejectsUnexpectedEstablishedSPIs(t *testing.T) {
+// RFC 7296 2.21.4: a message outside our IKE SA is audited, not acted on.
+func TestControlLoopDropsUnexpectedEstablishedSPIs(t *testing.T) {
 	session, transport := newEstablishedControlSession(t)
 	defer stopControlTestSession(session)
 	invalid, err := (&ikev2.IKEPacket{
@@ -72,13 +73,15 @@ func TestControlLoopRejectsUnexpectedEstablishedSPIs(t *testing.T) {
 		t.Fatalf("encode invalid response: %v", err)
 	}
 	transport.ike <- invalid
+	// A datagram whose IKE length field disagrees with its size, like ESP
+	// bytes taken for IKE.
+	garbled := append([]byte(nil), invalid...)
+	garbled[24], garbled[25] = 0x08, 0xe3
+	transport.ike <- garbled
 	select {
 	case <-session.done:
-	case <-time.After(time.Second):
-		t.Fatal("invalid established response did not terminate control loop")
-	}
-	if terminal := session.TerminalError(); terminal == nil || !strings.Contains(terminal.Error(), "unexpected SPIs") {
-		t.Fatalf("terminal error = %v", terminal)
+		t.Fatalf("invalid IKE packets ended the session: %v", session.TerminalError())
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 

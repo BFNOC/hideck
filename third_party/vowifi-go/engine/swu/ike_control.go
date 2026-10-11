@@ -2,11 +2,13 @@ package swu
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"go.uber.org/zap"
 )
 
 const (
@@ -157,11 +159,15 @@ func (s *Session) dispatchIKEPacket(
 	requests chan<- []byte,
 ) error {
 	header, err := ikev2.DecodeHeader(raw)
-	if err != nil {
-		return fmt.Errorf("swu: decode established IKE header: %w", err)
+	if err == nil {
+		err = s.validateEstablishedIKEEnvelope(header, raw)
 	}
-	if err := s.validateEstablishedIKEEnvelope(header, raw); err != nil {
-		return err
+	if err != nil {
+		// RFC 7296 2.21: a message that cannot be authenticated is dropped,
+		// it must not take the established SA down.
+		s.Logger.Warn("dropped invalid IKE packet", zap.Int("bytes", len(raw)),
+			zap.String("head", hex.EncodeToString(raw[:min(len(raw), 32)])), zap.Error(err))
+		return nil
 	}
 	if handled, err := s.resendRetiredIKEDelete(raw); handled || err != nil {
 		return err
