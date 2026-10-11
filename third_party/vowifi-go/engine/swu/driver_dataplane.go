@@ -292,7 +292,6 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun TUN) {
 				s.tunStats.recordDecapsulationError(err)
 				continue
 			}
-			s.markInboundActivity()
 			s.tunStats.lastPlainLen.Store(uint64(len(inner)))
 			written, err := tun.Write(inner)
 			if err != nil {

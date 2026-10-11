@@ -170,7 +170,13 @@ func (s *Session) dispatchIKEPacket(
 	}
 	normalized, complete, err := s.normalizeInboundIKE(raw)
 	if err != nil {
-		s.dropInvalidIKE(raw, fmt.Errorf("swu: process inbound IKE fragment: %w", err))
+		err = fmt.Errorf("swu: process inbound IKE fragment: %w", err)
+		var syntax *authenticatedSyntaxError
+		var local *localIKEError
+		if errors.As(err, &syntax) || errors.As(err, &local) {
+			return err
+		}
+		s.dropInvalidIKE(raw, err)
 		return nil
 	}
 	if !complete {
