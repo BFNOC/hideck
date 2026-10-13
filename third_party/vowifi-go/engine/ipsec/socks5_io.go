@@ -120,7 +120,11 @@ func (t *Socks5Transport) processSocks5Datagram(raw []byte) {
 		atomic.AddUint64(&t.natKeepaliveDrop, 1)
 		return
 	}
-	if ike, ok := parseIKEPayload(payload, cap(payload)); ok {
+	fromPort := 0
+	if datagram.DstAddr != nil {
+		fromPort = datagram.DstAddr.Port
+	}
+	if ike, ok := parseIKEPayload(payload, cap(payload), fromPort); ok {
 		t.deliverSocks5Packet(ike, packetDelivery{
 			channel: t.ikeChan, received: &t.receivedIKE, dropped: &t.droppedIKE, label: "IKE",
 		})
