@@ -197,7 +197,9 @@ export type DeviceMgmtListItem = {
   network_enabled: boolean
   phone_mode?: string
   vowifi_enabled?: boolean
+  vowifi_active?: boolean
   vowifi_runtime?: VoWiFiRuntimeState
+  vowifi_health?: WiFiCallingHealthSnapshot
   native_volte?: NativeVoLTEStatus
   modem_voice?: ModemVoiceStatus
   modem?: Pick<ModemStatus, 'operator' | 'native_spn' | 'native_mcc' | 'native_mnc' | 'network_mode' | 'network_duplex' | 'radio_band' | 'radio_channel' | 'signal_dbm' | 'signal_sinr' | 'imei' | 'iccid' | 'reg_status'>

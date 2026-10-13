@@ -64,6 +64,9 @@ func SaveReceivedMultipartSMS(input ReceivedMultipartSMS) (ReceivedMultipartSMSR
 		result = reconciled
 		return reconcileErr
 	})
+	if err == nil && (result.Created || result.Reconciled) {
+		publishIncomingSMSByID(result.SMSID)
+	}
 	return result, err
 }
 

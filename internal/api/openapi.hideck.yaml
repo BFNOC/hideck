@@ -316,6 +316,41 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /sms/events:
+    get:
+      tags: [sms]
+      summary: 订阅短信来信 SSE 事件流
+      description: |
+        使用 Last-Event-ID 或 after_id 按入库 ID 补发仍未读的来信；省略游标时不重放旧短信，只推送连接之后的新来信。
+        每条事件 `event` 为 `sms_received`，`id` 为短信 ID，`data` 字段与 `/sms/notifications` 的 `latest` 一致。
+        发送短信不进入此流。不会修改已读状态。
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+        - in: query
+          name: after_id
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+      responses:
+        '200':
+          description: text/event-stream，事件 data 为 SMSMessage JSON
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
   /sms/contacts:
     get:
       tags: [sms]
@@ -5198,8 +5233,12 @@ components:
           type: boolean
         vowifi_enabled:
           type: boolean
+        vowifi_active:
+          type: boolean
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
+        vowifi_health:
+          $ref: '#/components/schemas/WiFiCallingHealth'
         modem:
           $ref: '#/components/schemas/DeviceMgmtListModem'
         network_connected:
