@@ -479,6 +479,7 @@ type voWiFiRuntimeDTO struct {
 	IMSReady           bool      `json:"ims_ready"`
 	SMSReady           bool      `json:"sms_ready"`
 	SMSMOReady         bool      `json:"sms_mo_ready"`
+	SMSRXPending       bool      `json:"sms_rx_pending"`
 	SMSReadyReason     string    `json:"sms_ready_reason,omitempty"`
 	RegStatus          int       `json:"reg_status"`
 	RegStatusText      string    `json:"reg_status_text"`
@@ -508,6 +509,7 @@ func runtimeStateToDTO(st runtimehost.State, status modem.DeviceStatus) *voWiFiR
 		IMSReady:       st.IMSReady,
 		SMSReady:       st.SMSReady,
 		SMSMOReady:     st.SMSMOReady,
+		SMSRXPending:   st.SMSRXPending,
 		SMSReadyReason: st.SMSReadyReason,
 		RegStatus:      st.RegStatus,
 		RegStatusText:  st.RegStatusText,

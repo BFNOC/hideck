@@ -19,6 +19,10 @@ type incomingSMSHub struct {
 
 var incomingSMS = newIncomingSMSHub()
 
+// Keep ID allocation, commit and event publication in the same order across
+// single-part and multipart writers. SSE reconnects use the persisted SMS ID.
+var smsPublicationMu sync.Mutex
+
 func newIncomingSMSHub() *incomingSMSHub {
 	return &incomingSMSHub{subscribers: make(map[uint64]chan SMS)}
 }
@@ -28,15 +32,41 @@ func SubscribeIncomingSMS() (<-chan SMS, func()) {
 }
 
 func ListIncomingUnreadSMSAfter(ctx context.Context, afterID uint, limit int) ([]SMS, error) {
+	return ListIncomingUnreadSMS(ctx, IncomingSMSBacklogQuery{AfterID: afterID, Limit: limit})
+}
+
+type IncomingSMSBacklogQuery struct {
+	AfterID   uint
+	ThroughID *uint
+	Limit     int
+}
+
+// IncomingSMSCursor fixes the replay boundary before live events are delivered.
+func IncomingSMSCursor(ctx context.Context) (uint, error) {
+	if DB == nil {
+		return 0, errors.New("database is not initialized")
+	}
+	var cursor uint
+	err := DB.WithContext(ctx).Model(&SMS{}).Where("type = ?", smsTypeIncoming).
+		Select("COALESCE(MAX(id), 0)").Scan(&cursor).Error
+	return cursor, err
+}
+
+func ListIncomingUnreadSMS(ctx context.Context, query IncomingSMSBacklogQuery) ([]SMS, error) {
 	if DB == nil {
 		return nil, errors.New("database is not initialized")
 	}
+	limit := query.Limit
 	if limit <= 0 || limit > incomingSMSBacklogLimit {
 		limit = incomingSMSBacklogLimit
 	}
 	var rows []SMS
-	err := DB.WithContext(ctx).
-		Where("type = ? AND status = ? AND id > ?", smsTypeIncoming, smsStatusUnread, afterID).
+	statement := DB.WithContext(ctx).
+		Where("type = ? AND status = ? AND id > ?", smsTypeIncoming, smsStatusUnread, query.AfterID)
+	if query.ThroughID != nil {
+		statement = statement.Where("id <= ?", *query.ThroughID)
+	}
+	err := statement.
 		Order("id ASC").
 		Limit(limit).
 		Find(&rows).Error

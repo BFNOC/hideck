@@ -66,6 +66,7 @@ export type VoWiFiRuntimeState = {
   ims_ready?: boolean
   sms_ready?: boolean
   sms_mo_ready?: boolean
+  sms_rx_pending?: boolean
   sms_ready_reason?: string
   reg_status?: number
   reg_status_text?: string
@@ -82,7 +83,7 @@ export type VoWiFiRuntimeState = {
   mwi_updated_at?: string
 }
 
-export type WiFiCallingHealthState = 'checking' | 'healthy' | 'recovering' | 'unavailable' | 'stopped'
+export type WiFiCallingHealthState = 'checking' | 'pending' | 'healthy' | 'recovering' | 'unavailable' | 'stopped'
 
 export type WiFiCallingHealthSegment = {
   state: WiFiCallingHealthState

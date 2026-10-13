@@ -142,6 +142,8 @@ func SaveSMSForIdentity(input SMSRecord) error {
 		Sender:     sender, Recipient: recipient, Content: input.Content,
 		Type: input.Type, Status: input.Status, Timestamp: input.Timestamp.Truncate(time.Second),
 	}
+	smsPublicationMu.Lock()
+	defer smsPublicationMu.Unlock()
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := validateSMSIdentityMapping(tx, input.Identity); err != nil {
 			return err

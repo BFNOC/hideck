@@ -67,6 +67,32 @@ func TestListIncomingUnreadSMSAfterSkipsReadAndOlder(t *testing.T) {
 	}
 }
 
+func TestIncomingSMSReplayBoundaryAndFilters(t *testing.T) {
+	openTestDB(t)
+	ctx := context.Background()
+	if cursor, err := IncomingSMSCursor(ctx); err != nil || cursor != 0 {
+		t.Fatalf("empty cursor=%d err=%v", cursor, err)
+	}
+	old := createNotificationTestSMS(t, SMS{Type: 1, Content: "old"})
+	_ = createNotificationTestSMS(t, SMS{Type: 1, Status: 1, Content: "read"})
+	want := createNotificationTestSMS(t, SMS{Type: 1, Content: "unread"})
+	_ = createNotificationTestSMS(t, SMS{Type: 2, Content: "outbound"})
+	throughID, err := IncomingSMSCursor(ctx)
+	if err != nil || throughID != want.ID {
+		t.Fatalf("cursor=%d want=%d err=%v", throughID, want.ID, err)
+	}
+	_ = createNotificationTestSMS(t, SMS{Type: 1, Content: "later"})
+	rows, err := ListIncomingUnreadSMS(ctx, IncomingSMSBacklogQuery{AfterID: old.ID, ThroughID: &throughID})
+	if err != nil || len(rows) != 1 || rows[0].ID != want.ID {
+		t.Fatalf("backlog=%+v err=%v", rows, err)
+	}
+	zero := uint(0)
+	rows, err = ListIncomingUnreadSMS(ctx, IncomingSMSBacklogQuery{ThroughID: &zero})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("empty boundary backlog=%+v err=%v", rows, err)
+	}
+}
+
 func TestSaveReceivedMultipartSMSPublishesOnCreateAndReconcile(t *testing.T) {
 	openTestDB(t)
 	if err := DB.Create(&SIMCard{ICCID: "ICC-MULTI", IMSI: "IMSI-MULTI"}).Error; err != nil {

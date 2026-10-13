@@ -322,7 +322,10 @@ paths:
       summary: 订阅短信来信 SSE 事件流
       description: |
         使用 Last-Event-ID 或 after_id 按入库 ID 补发仍未读的来信；省略游标时不重放旧短信，只推送连接之后的新来信。
+        补发会逐页发送到连接建立时确定的截止 ID，再发送期间排队的实时事件，不限制补发总条数。
         每条事件 `event` 为 `sms_received`，`id` 为短信 ID，`data` 字段与 `/sms/notifications` 的 `latest` 一致。
+        分段短信补齐时会使用相同 ID 再次推送，客户端应按 ID 更新内容，不应仅按 ID 丢弃事件。
+        游标是短信入库 ID，不是内容版本；断线期间旧 ID 的内容更新不在补发范围内，应重新查询会话同步。
         发送短信不进入此流。不会修改已读状态。
       parameters:
         - in: header
@@ -4237,6 +4240,9 @@ components:
           description: IMS 短信发送前置条件是否就绪；不依赖用于下行短信的 port-s 接收连接。
         sms_ready_reason:
           type: string
+        sms_rx_pending:
+          type: boolean
+          description: IMS 已注册但尚无接收路径证据；不等同于故障或已验证可用。
         reg_status:
           type: integer
         reg_status_text:
@@ -4271,7 +4277,7 @@ components:
       properties:
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         started_at:
           type: string
           format: date-time
@@ -4291,7 +4297,7 @@ components:
           enum: [started, interrupted, recovered, failed, stopped]
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         at:
           type: string
           format: date-time
@@ -4303,7 +4309,7 @@ components:
       properties:
         state:
           type: string
-          enum: [checking, healthy, recovering, unavailable, stopped]
+          enum: [checking, pending, healthy, recovering, unavailable, stopped]
         active:
           type: boolean
         measured:
@@ -4494,6 +4500,7 @@ components:
           type: string
         vowifi_active:
           type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
         vowifi_health:
@@ -5235,6 +5242,7 @@ components:
           type: boolean
         vowifi_active:
           type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
         vowifi_health:
@@ -5282,6 +5290,7 @@ components:
           type: boolean
         vowifi_active:
           type: boolean
+          description: VoWiFi 运行实例是否存在，不代表 IMS 已注册或短信通道已就绪；具体状态请查看 vowifi_runtime 和 vowifi_health。
         vowifi_runtime:
           $ref: '#/components/schemas/VoWiFiRuntime'
         vowifi_health:
