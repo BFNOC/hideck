@@ -13,14 +13,15 @@ import (
 )
 
 type Service struct {
-	store     Store
-	files     Files
-	gateway   Gateway
-	ctx       context.Context
-	mu        sync.Mutex
-	active    map[string]string
-	overrides map[string]Policy
-	wg        sync.WaitGroup
+	store           Store
+	files           Files
+	gateway         Gateway
+	ctx             context.Context
+	mu              sync.Mutex
+	active          map[string]string
+	overrides       map[string]Policy
+	policySessionID string // Generations are process-local; do not reuse a previous process's requests.
+	wg              sync.WaitGroup
 }
 
 type Options struct {
@@ -31,7 +32,7 @@ type Options struct {
 }
 
 func New(opts Options) *Service {
-	return &Service{store: opts.Store, files: opts.Files, gateway: opts.Gateway, ctx: opts.Context, active: map[string]string{}, overrides: map[string]Policy{}}
+	return &Service{store: opts.Store, files: opts.Files, gateway: opts.Gateway, ctx: opts.Context, active: map[string]string{}, overrides: map[string]Policy{}, policySessionID: newID()}
 }
 
 // Recover never replays a mutation whose terminal response was lost.

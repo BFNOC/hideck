@@ -129,7 +129,12 @@ func (s *Service) Reconcile(ctx context.Context, owner Owner) (bool, error) {
 	} else if current.AutoSel {
 		return false, nil
 	}
-	request := Request{ExpectedOwner: &current.Owner, RequestID: fmt.Sprintf("policy-%s-%s-%d", owner.IMEI, owner.ICCID, policy.UpdatedAt.UnixNano()), Kind: "apply", Profile: policy.Profile, Version: policy.Version, AutoSel: policy.Mode == "autosel"}
+	request := Request{
+		ExpectedOwner: &current.Owner,
+		RequestID: fmt.Sprintf("policy-%s-%s-%s-%d-%d-%d", s.policySessionID, owner.IMEI, owner.ICCID,
+			owner.Generation, owner.IdentityGeneration, policy.UpdatedAt.UnixNano()),
+		Kind: "apply", Profile: policy.Profile, Version: policy.Version, AutoSel: policy.Mode == "autosel",
+	}
 	if policy.Mode == "fixed" && !hasProfile(current, policy.Profile) {
 		if !policy.AllowImport {
 			return false, errors.New("策略指定的 MBN 不在模组中，且未授权自动导入")

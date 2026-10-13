@@ -66,6 +66,11 @@ func (s *Service) observe(session Session, op *Operation, result *TrialResult) e
 		}
 		registration, err := session.Registration(ctx)
 		if err != nil {
+			// Only this candidate's observation deadline permits trying another
+			// profile. Cancellation, lost ownership and transport errors stay fatal.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded) && s.ctx.Err() == nil {
+				return errors.Join(errRegistrationGoal, err)
+			}
 			return err
 		}
 		match := registration.Registered && (op.Request.TargetPLMN == "" || registration.PLMN == op.Request.TargetPLMN)

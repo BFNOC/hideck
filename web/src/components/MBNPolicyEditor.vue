@@ -27,12 +27,12 @@ async function save() {
   const policy = { key: key.value, mode: mode.value, model: owner.model, firmware: owner.firmware, profile: profile.value, version: selected?.version || '', asset_id: asset.value, allow_import: allowImport.value }
   saving.value = true
   try {
-    await ElMessageBox.confirm('保存后会在身份就绪时应用；固定配置不匹配型号/固件会明确报错，不会自动猜其他配置。', '保存 MBN 策略', { type: 'warning' })
+    await ElMessageBox.confirm('下次识别到这张卡或模组时会应用此设置，可能重启模组。固定配置不适用于当前型号或固件时会报错，不会切换到其他配置。', '保存绑定设置', { type: 'warning' })
     if (current !== epoch) return
     await mbnService.savePolicy(id, policy)
     if (current !== epoch) return
     policies.value = [...policies.value.filter(item => item.key !== policy.key), policy]
-    ElMessage.success('策略已保存')
+    ElMessage.success('绑定设置已保存')
   } catch (err) { if (err !== 'cancel' && err !== 'close' && current === epoch) emit('error', err) }
   finally { if (current === epoch) saving.value = false }
 }
@@ -40,11 +40,11 @@ onUnmounted(() => { epoch++ })
 </script>
 <template>
   <el-form label-position="top" :disabled="blocked || saving">
-    <p>当前 SIM 尾号 {{ simTail }}。策略按这张卡保存，不按运营商品牌共享。</p>
-    <el-form-item label="策略范围"><el-radio-group v-model="scope"><el-radio-button value="sim">本 SIM</el-radio-button><el-radio-button value="device">模组默认</el-radio-button></el-radio-group></el-form-item>
-    <el-form-item label="配置方式"><el-select v-model="mode"><el-option :label="scope === 'sim' ? '继承模组默认' : '不托管，保持现有行为'" value="inherit" /><el-option label="模组 AutoSel" value="autosel" /><el-option label="固定 MBN" value="fixed" /></el-select></el-form-item>
-    <template v-if="mode === 'fixed'"><el-form-item label="固定配置"><el-select v-model="profile" filterable><el-option v-for="item in snapshot.profiles" :key="item.name" :label="item.name" :value="item.name" /></el-select></el-form-item><el-form-item label="可恢复的原始文件（可选）"><el-select v-model="asset" clearable><el-option v-for="item in assets" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-checkbox v-model="allowImport" :disabled="!asset">配置缺失时允许导入此文件；我确认来源和适配固件</el-checkbox></template>
-    <el-button type="primary" :loading="saving" :disabled="mode === 'fixed' && !profile" @click="save">保存 MBN 策略</el-button>
+    <p>{{ scope === 'sim' ? `仅对当前 SIM 生效（尾号 ${simTail}），其他卡不受影响。` : '没有单独绑定的 SIM 使用此设置。' }}</p>
+    <el-form-item label="应用范围"><el-radio-group v-model="scope"><el-radio-button value="sim">当前 SIM</el-radio-button><el-radio-button value="device">模组默认</el-radio-button></el-radio-group></el-form-item>
+    <el-form-item label="配置方式"><el-select v-model="mode"><el-option :label="scope === 'sim' ? '使用模组默认设置' : '保持模组现有设置'" value="inherit" /><el-option label="由模组自动选择（AutoSel）" value="autosel" /><el-option label="固定使用一个 MBN" value="fixed" /></el-select></el-form-item>
+    <template v-if="mode === 'fixed'"><el-form-item label="固定配置"><el-select v-model="profile" filterable placeholder="选择 MBN 配置"><el-option v-for="item in snapshot.profiles" :key="item.name" :label="item.name" :value="item.name" /></el-select></el-form-item><el-form-item label="备用 MBN 文件（可选）"><el-select v-model="asset" clearable placeholder="从文件库选择"><el-option v-for="item in assets" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-checkbox v-model="allowImport" :disabled="!asset">模组缺少此配置时允许导入备用文件；我已确认文件兼容。</el-checkbox></template>
+    <el-button type="primary" :loading="saving" :disabled="mode === 'fixed' && !profile" @click="save">保存绑定设置</el-button>
   </el-form>
 </template>
 <style scoped>

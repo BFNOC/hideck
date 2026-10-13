@@ -37,11 +37,11 @@ export const mbnService = {
 
 export const mbnRunning = (op: MBNOperation) => ['queued', 'running', 'cancelling'].includes(op.status)
 export const mbnStatusLabel: Record<string, string> = {
-  queued: '排队中', running: '执行中', cancelling: '等待安全取消', succeeded: '已完成', failed: '失败', cancelled: '已取消', needs_attention: '需要处理'
+  queued: '排队中', running: '执行中', cancelling: '正在取消', succeeded: '已完成', failed: '失败', cancelled: '已取消', needs_attention: '需要处理'
 }
 export const mbnKindLabel: Record<string, string> = { apply: '应用配置', import: '导入模组', delete: '删除配置', trial: '自动试配', restore: '恢复配置' }
 export const mbnStageLabel: Record<string, string> = {
-  queued: '排队', reading_original: '读取原配置', original_saved: '原配置已保存', preparing: '准备并暂停现有业务', applying: '写入配置', waiting_reboot: '等待模组重启',
-  verifying: '读回校验', uploading_to_modem: '传输文件', importing: '导入配置', deleting: '删除配置', restoring: '恢复原配置',
-  observing_registration: '观察驻网稳定性', candidate_complete: '候选验证结束', restored: '原配置已恢复', resuming: '恢复业务状态'
+  queued: '等待执行', reading_original: '读取原配置', original_saved: '已记录原配置', preparing: '暂停通话和数据服务', applying: '写入配置', waiting_reboot: '等待模组重启',
+  verifying: '确认配置已生效', uploading_to_modem: '传输文件', importing: '导入配置', deleting: '删除配置', restoring: '恢复原配置',
+  observing_registration: '等待稳定驻网', candidate_complete: '当前配置测试结束', restored: '原配置已恢复', resuming: '恢复通话和数据服务'
 }

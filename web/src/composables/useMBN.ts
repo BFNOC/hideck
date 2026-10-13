@@ -77,13 +77,13 @@ export function useMBN(deviceID: Ref<string>) {
     if (!current) return
     const epoch = generation, id = deviceID.value
     const profile = current.profiles.find(item => item.selected && item.activated)
-    if (!current.autosel && !profile) { error.value = '没有经过读回确认的当前配置'; return }
+    if (!current.autosel && !profile) { error.value = '尚未确认生效配置，请刷新配置后再绑定。'; return }
     try {
-      await ElMessageBox.confirm('将当前 MBN 绑定到本 SIM，换到此卡时会按型号和固件匹配后应用。不会绑定其他同运营商的卡。', '绑定当前 SIM', { type: 'warning' })
+      await ElMessageBox.confirm('记住当前配置，下次使用这张卡时自动应用。仅绑定此卡；型号或固件不匹配时不会应用。', '绑定当前配置', { type: 'warning' })
       if (epoch !== generation) return
       await mbnService.savePolicy(id, { key: `sim:${current.owner.iccid}`, mode: current.autosel ? 'autosel' : 'fixed', model: current.owner.model, firmware: current.owner.firmware, profile: profile?.name || '', version: profile?.version || '', asset_id: '', allow_import: false })
       if (epoch !== generation) return
-      ElMessage.success('SIM 策略已保存')
+      ElMessage.success('当前配置已绑定到此卡')
     } catch (err) { if (err !== 'cancel' && err !== 'close' && epoch === generation) report(err) }
   }
   watch(deviceID, () => {
