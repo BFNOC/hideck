@@ -312,6 +312,24 @@ func (p *Pool) VOICEBurstDTMF(ctx context.Context, deviceID string, callID uint8
 	return err
 }
 
+func (p *Pool) VOICEStartContinuousDTMF(ctx context.Context, deviceID string, callID, digit uint8) error {
+	w := p.GetWorker(deviceID)
+	if w == nil || w.QMICore == nil {
+		return fmt.Errorf("设备 %s 没有 QMI VOICE", deviceID)
+	}
+	_, err := w.QMICore.VOICEStartContinuousDTMF(ctx, callID, digit)
+	return err
+}
+
+func (p *Pool) VOICEStopContinuousDTMF(ctx context.Context, deviceID string, callID uint8) error {
+	w := p.GetWorker(deviceID)
+	if w == nil || w.QMICore == nil {
+		return fmt.Errorf("设备 %s 没有 QMI VOICE", deviceID)
+	}
+	_, err := w.QMICore.VOICEStopContinuousDTMF(ctx, callID)
+	return err
+}
+
 func (p *Pool) OnVoiceStatus(deviceID string, handler func(*qmi.VoiceAllCallInfo)) error {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.QMICore == nil {

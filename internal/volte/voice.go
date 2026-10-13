@@ -29,6 +29,8 @@ const (
 	qmiDirMT             qmi.VoiceCallDirection = 0x02
 )
 
+const nativeDTMFToneDuration = 150 * time.Millisecond
+
 type qmiTombstone struct {
 	Peer      string
 	Direction string
@@ -37,6 +39,7 @@ type qmiTombstone struct {
 
 type voiceSession struct {
 	mu            sync.Mutex
+	dtmfMu        sync.Mutex
 	active        map[string]nativeCall
 	byQMI         map[uint8]string
 	emitted       map[string]map[string]bool
@@ -50,6 +53,7 @@ type voiceSession struct {
 type nativeCall struct {
 	ID        string
 	QMI       uint8
+	Mode      qmi.VoiceCallMode
 	Direction string
 	Peer      string
 	State     string
@@ -217,9 +221,11 @@ func (c *Controller) beginCall(ctx context.Context, request voicehost.BeginCallR
 	}
 	now := time.Now()
 	id := ""
+	mode := qmi.VoiceCallModeNoService
 	if vs := c.sessionVoice(deviceID); vs != nil {
 		if prev, ok := vs.getByQMI(qmiID); ok && stateRank(prev.State) != rankTerminal {
 			id = prev.ID
+			mode = prev.Mode
 			if !prev.Start.IsZero() {
 				now = prev.Start
 			}
@@ -236,7 +242,7 @@ func (c *Controller) beginCall(ctx context.Context, request voicehost.BeginCallR
 		sdp = media.sdp
 		c.media.put(id, media)
 	}
-	nc := nativeCall{ID: id, QMI: qmiID, Direction: "outbound", Peer: request.Callee, State: "calling", Start: now, ClientSDP: sdp}
+	nc := nativeCall{ID: id, QMI: qmiID, Mode: mode, Direction: "outbound", Peer: request.Callee, State: "calling", Start: now, ClientSDP: sdp}
 	c.storeCall(deviceID, nc)
 	c.mu.Lock()
 	vs := (*voiceSession)(nil)
@@ -415,11 +421,76 @@ func (c *Controller) SwitchCall(string, string) error {
 }
 
 func (c *Controller) SendCallDTMF(deviceID, id, digit string) error {
+	if !validNativeDTMF(digit) {
+		return errors.New("volte: DTMF must be one of 0-9, * or #")
+	}
+	voice := c.sessionVoice(deviceID)
+	if voice == nil {
+		return fmt.Errorf("volte: call %s not found", id)
+	}
+	voice.dtmfMu.Lock()
+	defer voice.dtmfMu.Unlock()
+
 	call, ok := c.lookup(deviceID, id)
 	if !ok {
 		return fmt.Errorf("volte: call %s not found", id)
 	}
-	return c.host.VOICEBurstDTMF(context.Background(), deviceID, call.QMI, digit)
+	if call.Mode == qmi.VoiceCallModeCDMA {
+		return c.sendBurstDTMF(deviceID, call.QMI, digit)
+	}
+	started, err := c.sendContinuousDTMF(deviceID, call.QMI, digit[0])
+	if err == nil {
+		return nil
+	}
+	if started || !unknownDTMFMode(call.Mode) || !continuousDTMFUnsupported(err) {
+		return err
+	}
+	if burstErr := c.sendBurstDTMF(deviceID, call.QMI, digit); burstErr != nil {
+		return fmt.Errorf("volte: continuous DTMF unsupported and burst fallback failed: %w",
+			errors.Join(err, burstErr))
+	}
+	return nil
+}
+
+func (c *Controller) sendContinuousDTMF(deviceID string, callID, digit uint8) (bool, error) {
+	ctx := context.Background()
+	if err := c.host.VOICEStartContinuousDTMF(ctx, deviceID, callID, digit); err != nil {
+		return false, fmt.Errorf("volte: start continuous DTMF: %w", err)
+	}
+	time.Sleep(nativeDTMFToneDuration)
+	if err := c.host.VOICEStopContinuousDTMF(ctx, deviceID, callID); err != nil {
+		return true, fmt.Errorf("volte: stop continuous DTMF: %w", err)
+	}
+	return true, nil
+}
+
+func (c *Controller) sendBurstDTMF(deviceID string, callID uint8, digit string) error {
+	if err := c.host.VOICEBurstDTMF(context.Background(), deviceID, callID, digit); err != nil {
+		return fmt.Errorf("volte: burst DTMF: %w", err)
+	}
+	return nil
+}
+
+func validNativeDTMF(digit string) bool {
+	return len(digit) == 1 && strings.Contains("0123456789*#", digit)
+}
+
+func unknownDTMFMode(mode qmi.VoiceCallMode) bool {
+	return mode == qmi.VoiceCallModeNoService || mode == qmi.VoiceCallModeUnknown || mode > qmi.VoiceCallModeWLAN
+}
+
+func continuousDTMFUnsupported(err error) bool {
+	qmiErr := qmi.GetQMIError(err)
+	if qmiErr == nil {
+		return false
+	}
+	switch qmiErr.ErrorCode {
+	case qmi.QMIErrOpNetworkUnsupported, qmi.QMIErrOpDeviceUnsupported,
+		qmi.QMIErrInvalidQmiCmd, qmi.QMIErrNotSupported:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Controller) StartCallCapture(deviceID, id, basePath string) error {
@@ -525,7 +596,7 @@ func (c *Controller) handleVoiceInfo(deviceID string, vs *voiceSession, info *qm
 			}
 		}
 		next := nativeCall{
-			ID: id, QMI: item.ID, Direction: dir, Peer: peer, State: state,
+			ID: id, QMI: item.ID, Mode: item.Mode, Direction: dir, Peer: peer, State: state,
 			Start: startedAt(prev, now), ClientSDP: prev.ClientSDP, Reason: reason, Codec: codec,
 			Held: prev.Held,
 		}
