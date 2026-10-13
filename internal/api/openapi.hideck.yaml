@@ -39,6 +39,174 @@ tags:
   - name: phone
     description: VoWiFi 浏览器实时电话、媒体、事件与录音
 paths:
+  /mbn/files:
+    get:
+      tags: [devices]
+      summary: 列出 MBN 文件库
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    post:
+      tags: [devices]
+      summary: 保存原始 MBN 文件（不导入模组）
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                model: { type: string }
+                firmware: { type: string }
+                source: { type: string }
+      responses:
+        '201': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /mbn/files/{file_id}:
+    parameters:
+      - in: path
+        name: file_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 下载原始 MBN 文件
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    delete:
+      tags: [devices]
+      summary: 删除未被策略或操作引用的文件
+      responses:
+        '204': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 只读查询 MBN 实际能力、AutoSel 和配置列表
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/operations:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 查询持久化 MBN 操作记录
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    post:
+      tags: [devices]
+      summary: 创建幂等 MBN 操作（异步）
+      description: |
+        kind 为 apply/import/delete/trial/restore。request_id 重复且内容相同返回原任务；内容不同返回 409。
+        expected_owner 必须来自最近一次 MBN 查询，包含 device_id/imei/iccid/generation/identity_generation。
+        apply 使用 profile/autosel；import 使用 asset_id 和 accept_unknown_compatibility。
+        delete 需要 confirm_name 等于 profile、accept_no_backup=true，使用中的配置还需 replacement。
+        trial 指定有序 candidates、goal（registration/data/ims）、target_plmn 及三个秒数配置。
+        data 需要 allow_data 和 probe_url；ims 需要 allow_native_ims。restore 指定 restore_operation。
+        默认恢复/驻网/稳定窗口分别 180/120/30 秒。202 不是成功，需读取记录终态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_id, kind, expected_owner]
+              properties:
+                request_id: { type: string }
+                kind: { type: string, enum: [apply, import, delete, trial, restore] }
+                expected_owner: { type: object }
+                profile: { type: string }
+                autosel: { type: boolean }
+                asset_id: { type: string }
+                candidates: { type: array, items: { type: string } }
+                goal: { type: string, enum: [registration, data, ims] }
+                restore_operation: { type: string }
+      responses:
+        '202': { description: '已受理，请查询操作记录，不能视为执行成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/operations/{operation_id}/cancel:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: operation_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [devices]
+      summary: 请求在安全边界取消任务
+      responses:
+        '202': { description: '已受理，请查询操作记录，不能视为执行成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+  /devices/{device_id}/mbn/policies:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [devices]
+      summary: 查询当前模组和 SIM 的 MBN 策略
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
+    put:
+      tags: [devices]
+      summary: 保存当前模组或 SIM 的 MBN 策略
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, mode]
+              properties:
+                key: { type: string, description: 'sim:ICCID 或 device:IMEI，仅当前设备身份' }
+                mode: { type: string, enum: [inherit, autosel, fixed] }
+                model: { type: string }
+                firmware: { type: string }
+                profile: { type: string }
+                version: { type: string }
+                asset_id: { type: string }
+                allow_import: { type: boolean }
+      responses:
+        '200': { description: '请求成功' }
+        '400': { description: '请求无效或模组明确拒绝，响应包含 error' }
+        '401': { description: '未认证' }
+        '409': { description: '设备忙、身份变化、幂等冲突或仍有引用' }
   /docs:
     get:
       tags: [settings]

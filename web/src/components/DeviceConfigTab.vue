@@ -8,6 +8,7 @@ import {
 } from '@vicons/fluent'
 import type { DeviceConfigDTO, DeviceOverviewItem } from '../types/api'
 import { normalizeManagedDeviceBackend } from '../utils/deviceBackend'
+import MBNPanel from './MBNPanel.vue'
 
 const props = defineProps<{
   editConfig: DeviceConfigDTO | null
@@ -115,6 +116,11 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
       </div>
 
       <p class="config-notice">协议或绑定配置变更可能导致设备短暂离线；保存仍使用现有设备配置接口。</p>
+      <el-collapse v-if="!isPCSCBackend" class="mbn-settings">
+        <el-collapse-item title="运营商配置（MBN）" name="mbn">
+          <MBNPanel :device-id="editConfig.id" />
+        </el-collapse-item>
+      </el-collapse>
       <footer class="config-actions">
         <el-button type="danger" :loading="deleting" @click="emit('delete')" class="!border-0">
           <el-icon><Delete24Regular /></el-icon>

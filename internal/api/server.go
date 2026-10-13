@@ -328,6 +328,7 @@ func (s *Server) newRouter() *gin.Engine {
 
 	// 以下接口需要鉴权
 	api.Use(s.authMiddleware())
+	api.Use(s.mbnMutationMiddleware())
 	{
 		api.POST("/system/uninstall", s.handleUninstall) // 必须登录后才能调用，见 handleUninstall 内的鉴权检查
 		api.GET("/openapi.yaml", s.handleOpenAPIYAML)
@@ -340,6 +341,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.GET("/traffic/analysis", s.handleTrafficAnalysis)       // 流量分析统计
 		s.registerPhoneRoutes(api)
 		s.registerUtRoutes(api)
+		s.registerMBNRoutes(api)
 
 		// ===== 短信 =====
 		api.POST("/sms/send", s.handleSendSMS)                    // 发送短信（自动选择 AT 或 VoWiFi）

@@ -20,6 +20,10 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	}
 	transition := p.policyTransitionFor(worker.ID)
 	transition.Lock()
+	if transition.mbnSession.Load() != nil {
+		transition.Unlock()
+		return policyApplyResult{Reason: "mbn_operation_active"}
+	}
 	owner := capturePolicyOwner(worker, transition)
 	ownerErr := p.validatePolicyOwner(owner, transition)
 	transition.Unlock()
@@ -31,6 +35,16 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	if ownerErr != nil {
 		return policyApplyResult{ICCID: iccid, Reason: "owner_changed", Err: ownerErr}
 	}
+	if reason != "mbn_operation_finished" {
+		if pending, err := p.reconcileMBN(worker); err != nil || pending {
+			return policyApplyResult{ICCID: iccid, Reason: "mbn_policy", Err: err}
+		}
+	}
+	releaseOperation, err := p.AcquireDeviceOperation(worker.ID)
+	if err != nil {
+		return policyApplyResult{ICCID: iccid, Reason: "mbn_operation_active", Err: err}
+	}
+	defer releaseOperation()
 	pol, err := p.policyResolver.Resolve(iccid)
 	if err != nil {
 		logger.Warn("解析卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
