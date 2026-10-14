@@ -994,6 +994,9 @@ func TestCarrierPresetKeysReachSWUConfig(t *testing.T) {
 	if spark := build("530", "05"); !spark.WithholdDeviceIdentity || !spark.KeepChildSAOnRekeyDecline {
 		t.Fatalf("Spark NZ SWu config = %+v", spark)
 	}
+	if one := build("530", "01"); !one.WithholdDeviceIdentity {
+		t.Fatalf("One NZ SWu config = %+v", one)
+	}
 	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity || lebara.KeepChildSAOnRekeyDecline {
 		t.Fatalf("Lebara UK SWu config = %+v", lebara)
 	}

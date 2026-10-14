@@ -146,6 +146,10 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		!spark.KeepChildSAOnRekeyDecline || !CarrierPlanFromEffectiveConfig(spark).IKE.KeepChildSAOnRekeyDecline {
 		t.Fatalf("spark nz = %+v", spark)
 	}
+	if one := ResolveEffectiveCarrierConfig("530", "01"); one.PresetID != "one_nz_53001" ||
+		!one.WithholdDeviceIdentity || !CarrierPlanFromEffectiveConfig(one).Device.Withhold {
+		t.Fatalf("one nz = %+v", one)
+	}
 	lebaraUK := ResolveEffectiveCarrierConfig("234", "87")
 	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
 		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
