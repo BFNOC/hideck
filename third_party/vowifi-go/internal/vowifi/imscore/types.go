@@ -467,6 +467,8 @@ type DeliveryPartMatch = smsdelivery.DeliveryPartMatch
 
 // DeliveryStatus is the SMS delivery status.
 type DeliveryStatus = smsdelivery.DeliveryStatus
+type DeliveryRecord = smsdelivery.DeliveryRecord
+type SMSDeliveryIdentityStore = smsdelivery.IdentityStore
 
 // DeliveryPartStatus is one delivery part.
 type DeliveryPartStatus = smsdelivery.DeliveryPartStatus

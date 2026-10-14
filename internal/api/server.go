@@ -1153,8 +1153,6 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	deviceID := worker.ID
 	sendOpts := smscodec.SubmitOptions{Encoding: encoding}
 
-	// 获取 IMSI 用于入库
-	imsi := worker.GetIMSI()
 	messageID := ""
 	partsTotal := 1
 	deliveryState := "acked"
@@ -1173,7 +1171,13 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	if err != nil {
 		if routed.Via == device.RoutedSMSViaVoWiFi || routed.FellBackToCS {
 			deliveryState = "failed"
-			_ = device.RecordVoWiFiSMSSendFailure(s.pool, deviceID, req.Phone, req.Message, time.Now())
+			recordErr := device.RecordVoWiFiSMSSendFailure(s.pool, device.VoWiFiSMSSendFailure{
+				DeviceID: deviceID, Target: req.Phone, Content: req.Message,
+				Identity: routed.Identity, IdentityRead: routed.IdentityRead, At: time.Now(),
+			})
+			if recordErr != nil {
+				logger.Warn("VoWiFi 短信发送失败记录入库失败", "device", deviceID, "err", recordErr)
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":         "error",
 				"message":        "VoWiFi 短信发送失败: " + err.Error(),
@@ -1186,10 +1190,11 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 			})
 			return
 		}
-		if imsi != "" {
-			if persistErr := db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 3, time.Now()); persistErr != nil {
-				logger.Warn("短信发送失败记录入库失败", "device", deviceID, "err", persistErr)
-			}
+		if persistErr := saveRoutedSMSRecord(routedSMSRecord{
+			Identity: routed.Identity, Sender: worker.ID, Recipient: req.Phone,
+			Content: req.Message, Status: 3,
+		}); persistErr != nil {
+			logger.Warn("短信发送失败记录入库失败", "device", deviceID, "err", persistErr)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":      "error",
@@ -1204,10 +1209,11 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		if routed.FellBackToCS {
 			deliveryState = "acked"
 		}
-		if imsi != "" {
-			if persistErr := db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 2, time.Now()); persistErr != nil {
-				logger.Warn("短信发送成功但入库失败", "device", deviceID, "err", persistErr)
-			}
+		if persistErr := saveRoutedSMSRecord(routedSMSRecord{
+			Identity: routed.Identity, Sender: worker.ID, Recipient: req.Phone,
+			Content: req.Message, Status: 2,
+		}); persistErr != nil {
+			logger.Warn("短信发送成功但入库失败", "device", deviceID, "err", persistErr)
 		}
 	}
 
@@ -1220,6 +1226,25 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		"message_id":     messageID,
 		"parts_total":    partsTotal,
 		"delivery_state": deliveryState,
+	})
+}
+
+type routedSMSRecord struct {
+	Identity  device.SMSIdentity
+	Sender    string
+	Recipient string
+	Content   string
+	Status    int
+}
+
+func saveRoutedSMSRecord(record routedSMSRecord) error {
+	if strings.TrimSpace(record.Identity.ICCID) == "" || strings.TrimSpace(record.Identity.IMSI) == "" {
+		return db.ErrSMSIdentityUnknown
+	}
+	return db.SaveSMSForIdentity(db.SMSRecord{
+		Identity: db.SMSIdentity{ICCID: record.Identity.ICCID, IMSI: record.Identity.IMSI},
+		Sender:   record.Sender, Recipient: record.Recipient, Content: record.Content,
+		Type: 2, Status: record.Status, Timestamp: time.Now(),
 	})
 }
 

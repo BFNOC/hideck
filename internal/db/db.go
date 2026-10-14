@@ -203,6 +203,9 @@ func Init(dbPath string) error {
 	if err := MigrateSIMICCIDIdentities(DB); err != nil {
 		return err
 	}
+	if err := MigrateSMSInboundFragmentIdentity(DB); err != nil {
+		return err
+	}
 	// The fragment key now includes ICCID. Build its index only after every
 	// historical SMS row has had its canonical ICCID repaired.
 	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {

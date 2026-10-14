@@ -28,8 +28,17 @@ type receivedMultipartContext struct {
 	Timestamp  time.Time
 }
 
-func RecordVoWiFiSMSSendFailure(p *Pool, deviceID, target, content string, at time.Time) error {
-	return vowifiSMSHistoryRecorder{pool: p}.RecordSendFailure(deviceID, target, content, at)
+type VoWiFiSMSSendFailure struct {
+	DeviceID     string
+	Target       string
+	Content      string
+	Identity     SMSIdentity
+	IdentityRead bool
+	At           time.Time
+}
+
+func RecordVoWiFiSMSSendFailure(p *Pool, failure VoWiFiSMSSendFailure) error {
+	return vowifiSMSHistoryRecorder{pool: p}.RecordSendFailure(failure)
 }
 
 func (r vowifiSMSHistoryRecorder) resolveIMSI(devID, fallbackIMSI string) string {
@@ -92,17 +101,30 @@ func (r vowifiSMSHistoryRecorder) resolveReceivingIdentity(devID string) SMSIden
 	return normalizeSMSIdentity(SMSIdentity{ICCID: iccid, IMSI: imsi})
 }
 
-func (r vowifiSMSHistoryRecorder) localPhone(imsi string) string {
-	phone, _ := db.GetSIMCardPhoneNumberByIMSI(strings.TrimSpace(imsi))
-	return strings.TrimSpace(phone)
-}
-
 func (r vowifiSMSHistoryRecorder) localPhoneForIdentity(identity SMSIdentity) string {
 	phone, _ := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{
 		ICCID: identity.ICCID,
 		IMSI:  identity.IMSI,
 	})
 	return strings.TrimSpace(phone)
+}
+
+func (r vowifiSMSHistoryRecorder) resolveOutboundIdentity(devID string, captured SMSIdentity) (SMSIdentity, error) {
+	identity := normalizeSMSIdentity(captured)
+	if (identity.IMSI == "") != (identity.ICCID == "") {
+		return SMSIdentity{}, db.ErrSMSIdentityUnknown
+	}
+	if identity.IMSI == "" {
+		identity = r.resolveReceivingIdentity(devID)
+	}
+	if identity.ICCID == "" && identity.IMSI != "" {
+		iccid, err := db.ResolveICCIDForIMSI(identity.IMSI)
+		if err != nil {
+			return SMSIdentity{}, err
+		}
+		identity.ICCID = iccid
+	}
+	return normalizeSMSIdentity(identity), nil
 }
 
 func (r vowifiSMSHistoryRecorder) eventTime(at time.Time) time.Time {
@@ -182,21 +204,38 @@ func (r vowifiSMSHistoryRecorder) recordReceivedMultipart(
 }
 
 func (r vowifiSMSHistoryRecorder) RecordSent(e eventhost.SMSSent) error {
-	imsi := r.resolveIMSI(e.DevID, "")
-	if imsi == "" {
-		return nil
+	identity, err := r.resolveOutboundIdentity(e.DevID, SMSIdentity{ICCID: e.ICCID, IMSI: e.IMSI})
+	if err != nil {
+		return err
 	}
-	localPhone := r.localPhone(imsi)
-	return db.SaveSMSWithLocalPhone(imsi, localPhone, localPhone, strings.TrimSpace(e.TargetURI), e.Content, 2, 2, r.eventTime(e.Time))
+	if identity.ICCID == "" || identity.IMSI == "" {
+		return db.ErrSMSIdentityUnknown
+	}
+	localPhone := r.localPhoneForIdentity(identity)
+	return db.SaveSMSForIdentity(db.SMSRecord{
+		Identity:   db.SMSIdentity{ICCID: identity.ICCID, IMSI: identity.IMSI},
+		LocalPhone: localPhone, Sender: localPhone, Recipient: strings.TrimSpace(e.TargetURI),
+		Content: e.Content, Type: 2, Status: 2, Timestamp: r.eventTime(e.Time),
+	})
 }
 
-func (r vowifiSMSHistoryRecorder) RecordSendFailure(devID, target, content string, at time.Time) error {
-	imsi := r.resolveIMSI(devID, "")
-	if imsi == "" {
-		return nil
+func (r vowifiSMSHistoryRecorder) RecordSendFailure(failure VoWiFiSMSSendFailure) error {
+	if failure.IdentityRead && normalizeSMSIdentity(failure.Identity) == (SMSIdentity{}) {
+		return db.ErrSMSIdentityUnknown
 	}
-	localPhone := r.localPhone(imsi)
-	return db.SaveSMSWithLocalPhone(imsi, localPhone, localPhone, strings.TrimSpace(target), content, 2, 3, r.eventTime(at))
+	identity, err := r.resolveOutboundIdentity(failure.DeviceID, failure.Identity)
+	if err != nil {
+		return err
+	}
+	if identity.ICCID == "" || identity.IMSI == "" {
+		return db.ErrSMSIdentityUnknown
+	}
+	localPhone := r.localPhoneForIdentity(identity)
+	return db.SaveSMSForIdentity(db.SMSRecord{
+		Identity:   db.SMSIdentity{ICCID: identity.ICCID, IMSI: identity.IMSI},
+		LocalPhone: localPhone, Sender: localPhone, Recipient: strings.TrimSpace(failure.Target),
+		Content: failure.Content, Type: 2, Status: 3, Timestamp: r.eventTime(failure.At),
+	})
 }
 
 func (r vowifiSMSHistoryRecorder) RecordLocalNumberLearned(e eventhost.LocalNumberLearned) error {

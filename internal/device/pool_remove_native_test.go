@@ -71,3 +71,42 @@ func TestAbandonDeviceReturnsCleanupFailureAndCanRetry(t *testing.T) {
 		t.Fatal("retry retained worker")
 	}
 }
+
+func TestAbandonDeviceInvalidatesActiveESIMOperation(t *testing.T) {
+	p, port := testModemVoicePort(t)
+	id := port.worker.ID
+	p.beginESIMSwitch(id, "8944100000000000042")
+	transition := p.policyTransitionFor(id)
+	before := policySwitchEpoch(transition)
+
+	if err := p.AbandonDevice(id); err != nil {
+		t.Fatal(err)
+	}
+	if after := policySwitchEpoch(transition); after <= before {
+		t.Fatalf("switch epoch=%d want greater than %d", after, before)
+	}
+	if p.IsESIMSwitching(id) {
+		t.Fatal("abandoned device retained eSIM switch state")
+	}
+}
+
+func TestAutomationDeviceOwnerRejectsReplacementHardware(t *testing.T) {
+	original := &Worker{ID: "wwan0"}
+	original.Config.ModemIMEI = "860000000000001"
+	original.Config.USBPath = "1-2.3"
+	owner := captureAutomationDeviceOwner(original)
+
+	sameHardware := &Worker{ID: "wwan0"}
+	sameHardware.Config.ModemIMEI = original.Config.ModemIMEI
+	sameHardware.Config.USBPath = "1-4.1"
+	if !owner.matches(sameHardware) {
+		t.Fatal("same modem identity was rejected after re-enumeration")
+	}
+
+	replacement := &Worker{ID: "wwan0"}
+	replacement.Config.ModemIMEI = "860000000000002"
+	replacement.Config.USBPath = original.Config.USBPath
+	if owner.matches(replacement) {
+		t.Fatal("replacement modem inherited the active automatic task")
+	}
+}

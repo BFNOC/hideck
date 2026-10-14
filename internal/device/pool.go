@@ -1173,6 +1173,11 @@ func (p *Pool) AbandonDevice(deviceID string) error {
 		return nil
 	}
 	p.abandonModemRebootRecovery(deviceID)
+	p.clearESIMSwitch(deviceID)
+	transition := p.policyTransitionFor(deviceID)
+	transition.Lock()
+	transition.switchEpoch++
+	transition.Unlock()
 	p.mu.Lock()
 	p.beginRebuildAttemptLocked(deviceID)
 	delete(p.rebuilding, deviceID)
@@ -1192,6 +1197,9 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	transition := p.policyTransitionFor(deviceID)
 	for {
 		transition.Lock()
+		if !p.IsESIMSwitching(deviceID) {
+			transition.switchEpoch++
+		}
 		err := p.removeWorkerForPolicyTransition(deviceID)
 		transition.Unlock()
 		if !errors.Is(err, errWorkerInitializing) {

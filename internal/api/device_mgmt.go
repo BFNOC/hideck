@@ -795,7 +795,7 @@ func overviewLocalPhone(imsi, iccid string) string {
 	if imsi == "" && iccid == "" {
 		return ""
 	}
-	phone, err := db.GetPhoneNumberByIMSIOrICCID(imsi, iccid)
+	phone, err := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{ICCID: iccid, IMSI: imsi})
 	if err != nil {
 		logger.Error("读取设备本机号码失败", "err", err)
 		return ""
