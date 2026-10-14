@@ -10,6 +10,8 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 // requiredConfiguredIMSI returns the configured IMSI or an error.
@@ -509,6 +511,12 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 	requested, err := hasDeviceIdentityRequest(payloads)
 	if err != nil {
 		return "", err
+	}
+	if requested && !s.deviceIdentityRequested {
+		value, _ := s.deviceIdentityValue()
+		logger.Info("ePDG requested DEVICE_IDENTITY in IKE_AUTH",
+			zap.Bool("withhold", s.cfg != nil && s.cfg.WithholdDeviceIdentity),
+			zap.Bool("imei_available", len(value) > 0))
 	}
 	s.deviceIdentityRequested = s.deviceIdentityRequested || requested
 	for _, pl := range payloads {
