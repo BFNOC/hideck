@@ -40,7 +40,7 @@ func phoneIdentityFieldsWithRegion(numberKey, raw, region string) []string {
 // localSIMLabel names the SIM that received a message: its stored number,
 // else the last four ICCID digits. The full ICCID is not sent to channels.
 func localSIMLabel(imsi, iccid, region string) string {
-	phone, err := db.GetPhoneNumberByIMSIOrICCID(imsi, iccid)
+	phone, err := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{IMSI: imsi, ICCID: iccid})
 	if err != nil {
 		logger.Warn("通知查询本机号码失败", "err", err)
 	}

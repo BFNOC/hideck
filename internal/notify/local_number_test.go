@@ -66,3 +66,27 @@ func TestWebhookTemplateRendersLocalNumber(t *testing.T) {
 		t.Fatalf("renderText=%q err=%v", got, err)
 	}
 }
+
+func TestLocalSIMLabelPrefersCapturedICCIDOverReusedIMSI(t *testing.T) {
+	if err := db.Init(filepath.Join(t.TempDir(), "notify_reused_imsi.db")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.DB = nil })
+	const (
+		imsi     = "234150000000044"
+		oldICCID = "8944100000000000044"
+		newICCID = "8944100000000000045"
+	)
+	if err := db.RecordVoWiFiPhoneNumber("", oldICCID, "+447700900044"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertSIMCard(newICCID, imsi, "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, "+447700900045"); err != nil {
+		t.Fatal(err)
+	}
+	if got := localSIMLabel(imsi, oldICCID, "GB"); got != "+447700900044" {
+		t.Fatalf("localSIMLabel()=%q, want captured SIM number", got)
+	}
+}

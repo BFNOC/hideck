@@ -44,8 +44,8 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 	case eventhost.SMSReceived:
 		// One snapshot of the receiving SIM serves observers and notifiers,
 		// so a profile switch while the message is stored cannot split them.
-		receivedOn = SMSIdentity{ICCID: recorder.resolveICCID(v.DevID), IMSI: recorder.resolveIMSI(v.DevID, "")}
-		res, err := recorder.RecordReceived(v)
+		receivedOn = recorder.resolveReceivingIdentity(v.DevID)
+		res, err := recorder.recordReceived(v, receivedOn)
 		applyVoWiFiSMSMemoryPressure(func(full bool) {
 			d.pool.SetVoWiFiSMSMemoryFull(v.DevID, full)
 		}, err, res)

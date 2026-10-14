@@ -569,36 +569,6 @@ func SaveSMS(imsi, sender, recipient, content string, smsType, status int, times
 	return SaveSMSWithLocalPhone(imsi, "", sender, recipient, content, smsType, status, timestamp)
 }
 
-// HasDuplicateReceivedSMS 检查在指定时间窗口内是否已存在内容相同的下行接收短信。
-func HasDuplicateReceivedSMS(imsi, localPhone, sender, recipient, content string, timestamp time.Time, window time.Duration) (bool, error) {
-	if DB == nil {
-		return false, nil
-	}
-	imsi = strings.TrimSpace(imsi)
-	sender = strings.TrimSpace(sender)
-	recipient = strings.TrimSpace(recipient)
-	content = strings.TrimSpace(content)
-	if imsi == "" || sender == "" || content == "" {
-		return false, nil
-	}
-	if window <= 0 {
-		window = 5 * time.Minute
-	}
-	ts := timestamp.Truncate(time.Second)
-	start := ts.Add(-window)
-	end := ts.Add(window)
-
-	var count int64
-	err := DB.Model(&SMS{}).
-		Where("imsi = ? AND type = ? AND sender = ? AND recipient = ? AND content = ? AND timestamp BETWEEN ? AND ?",
-			imsi, 1, sender, strings.TrimSpace(recipient), content, start, end).
-		Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 // SaveSMSWithLocalPhone 保存短信记录并显式写入本机号码。
 // localPhone 为空时会按方向自动推导，并在必要时回退到订阅手机号。
 func SaveSMSWithLocalPhone(imsi, localPhone, sender, recipient, content string, smsType, status int, timestamp time.Time) error {

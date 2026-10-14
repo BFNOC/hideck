@@ -258,6 +258,7 @@ func (m *Manager) RevokeChannel(name string) bool {
 	revokedActivity := make([]*channelActivity, 0, 1)
 	for index, channel := range m.channels {
 		if channel.Name() == name {
+			delete(m.deviceFilters, channel)
 			revoked = append(revoked, channel)
 			revokedActivity = append(revokedActivity, m.channelActivity[index])
 			continue
