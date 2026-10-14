@@ -177,6 +177,7 @@ type Service struct {
 	securityServerIO          net.Listener
 	protectedUDP              *protectedUDPTransport
 	udpDownlinkProven         atomic.Bool
+	rpReportRegisteredFlow    atomic.Bool // RP reports reach the SMSC only over the registered flow
 	clientPortReserve         net.Listener
 	registrationRemote        *net.UDPAddr
 	protectedClientPort       int
