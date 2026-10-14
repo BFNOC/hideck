@@ -145,6 +145,70 @@ func TestVoWiFiSMSHistoryRecorderKeepsCapturedSIMAfterProfileSwitch(t *testing.T
 	}
 }
 
+func TestResolveReceivingIdentityDoesNotMixPartialCacheWithBackend(t *testing.T) {
+	p := NewPool(nil)
+	w := &Worker{
+		ID: "dev-switching",
+		Backend: &workerPhoneBackendStub{
+			imsi: "234150000000099",
+		},
+	}
+	w.state.Identity.Ready = true
+	w.state.Identity.ICCID = "8944100000000000098"
+	p.workers[w.ID] = w
+
+	got := (vowifiSMSHistoryRecorder{pool: p}).resolveReceivingIdentity(w.ID)
+	if got.ICCID != "8944100000000000098" || got.IMSI != "" {
+		t.Fatalf("identity=%+v, want one coherent partial cache snapshot", got)
+	}
+}
+
+func TestVoWiFiSMSHistoryRecorderUsesCapturedSIMPhoneNumber(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	const (
+		imsi     = "234150000000097"
+		oldICCID = "8944100000000000097"
+		newICCID = "8944200000000000096"
+	)
+	if err := db.DB.Create(&db.SIMCard{ICCID: oldICCID, IMSI: imsi}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Create(&db.SIMCard{ICCID: newICCID, IMSI: imsi}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Create(&db.SIMSubscription{IMSI: imsi, CurrentICCID: newICCID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, "+447700900096"); err != nil {
+		t.Fatal(err)
+	}
+	var subscription db.SIMSubscription
+	if err := db.DB.First(&subscription, "imsi = ?", imsi).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subscription.CurrentICCID != newICCID {
+		t.Fatalf("subscription ICCID=%q, want %q", subscription.CurrentICCID, newICCID)
+	}
+	phone, err := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{ICCID: oldICCID, IMSI: imsi})
+	if err != nil || phone != "" {
+		t.Fatalf("captured identity phone=%q err=%v, want no cross-profile fallback", phone, err)
+	}
+
+	result, err := (vowifiSMSHistoryRecorder{}).recordReceived(eventhost.SMSReceived{
+		Sender: "+10086", Content: "old profile", Time: time.Now(),
+	}, SMSIdentity{ICCID: oldICCID, IMSI: imsi})
+	if err != nil || !result.Stored {
+		t.Fatalf("recordReceived() result=%+v err=%v", result, err)
+	}
+	var stored db.SMS
+	if err := db.DB.Where("content = ?", "old profile").Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.LocalPhone != "" {
+		t.Fatalf("local phone=%q, must not use the different profile number", stored.LocalPhone)
+	}
+}
+
 func TestVoWiFiSMSHistoryRecorderReconcilesDegradedMultipartSMS(t *testing.T) {
 	initDevicePhoneNumberTestDB(t)
 	const imsi = "imsi-vowifi-fragment"

@@ -69,14 +69,39 @@ func (r vowifiSMSHistoryRecorder) resolveICCID(devID string) string {
 }
 
 func (r vowifiSMSHistoryRecorder) resolveReceivingIdentity(devID string) SMSIdentity {
-	return normalizeSMSIdentity(SMSIdentity{
-		ICCID: r.resolveICCID(devID),
-		IMSI:  r.resolveIMSI(devID, ""),
-	})
+	if r.pool == nil {
+		return SMSIdentity{}
+	}
+	w := r.pool.GetWorker(strings.TrimSpace(devID))
+	if w == nil {
+		return SMSIdentity{}
+	}
+	status := w.GetCachedDeviceStatus()
+	identity := normalizeSMSIdentity(SMSIdentity{ICCID: status.ICCID, IMSI: status.IMSI})
+	if identity.ICCID != "" || identity.IMSI != "" {
+		return identity
+	}
+	// Workers without an initialized identity cache still need the historical
+	// backend/DB fallback. Read the live IMSI once and derive its ICCID from
+	// persisted identity data so a profile switch cannot produce a mixed pair.
+	imsi := r.resolveIMSI(devID, "")
+	iccid, err := db.ResolveICCIDForIMSI(imsi)
+	if err != nil || strings.HasPrefix(iccid, "imsi:") {
+		iccid = ""
+	}
+	return normalizeSMSIdentity(SMSIdentity{ICCID: iccid, IMSI: imsi})
 }
 
 func (r vowifiSMSHistoryRecorder) localPhone(imsi string) string {
 	phone, _ := db.GetSIMCardPhoneNumberByIMSI(strings.TrimSpace(imsi))
+	return strings.TrimSpace(phone)
+}
+
+func (r vowifiSMSHistoryRecorder) localPhoneForIdentity(identity SMSIdentity) string {
+	phone, _ := db.GetPhoneNumberForSMSIdentity(db.SMSIdentity{
+		ICCID: identity.ICCID,
+		IMSI:  identity.IMSI,
+	})
 	return strings.TrimSpace(phone)
 }
 
@@ -105,7 +130,7 @@ func (r vowifiSMSHistoryRecorder) recordReceived(
 	if identity.ICCID == "" {
 		identity.ICCID = db.GetICCIDForIMSI(identity.IMSI)
 	}
-	localPhone := r.localPhone(identity.IMSI)
+	localPhone := r.localPhoneForIdentity(identity)
 	ts := r.eventTime(e.Time)
 	if strings.TrimSpace(e.FragmentSessionKey) != "" {
 		return r.recordReceivedMultipart(e, receivedMultipartContext{

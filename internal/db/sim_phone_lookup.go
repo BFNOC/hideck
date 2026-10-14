@@ -17,7 +17,28 @@ func GetPhoneNumberForSMSIdentity(identity SMSIdentity) (string, error) {
 	if phone, err := getPendingPhoneNumberByICCID(iccid); err != nil || phone != "" {
 		return phone, err
 	}
-	return GetSIMCardPhoneNumberByIMSI(strings.TrimSpace(identity.IMSI))
+	return getMatchingIMSIPhoneNumber(strings.TrimSpace(identity.IMSI), iccid)
+}
+
+func getMatchingIMSIPhoneNumber(imsi, capturedICCID string) (string, error) {
+	if DB == nil || imsi == "" {
+		return "", nil
+	}
+	var subscription SIMSubscription
+	err := DB.Select("phone_number", "current_iccid").Where(
+		"imsi = ? AND COALESCE(phone_number, '') <> ''", imsi,
+	).Limit(1).Take(&subscription).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	boundICCID := CanonicalICCID(subscription.CurrentICCID)
+	if capturedICCID != "" && boundICCID != "" && boundICCID != capturedICCID {
+		return "", nil
+	}
+	return strings.TrimSpace(subscription.PhoneNumber), nil
 }
 
 func getPendingPhoneNumberByICCID(iccid string) (string, error) {

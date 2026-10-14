@@ -194,9 +194,6 @@ func Init(dbPath string) error {
 	if err := ensureSMSDeliveryPartUniqueIndex(DB); err != nil {
 		return err
 	}
-	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {
-		return err
-	}
 	if err := RunICCIDReKeyMigration(DB); err != nil {
 		return err
 	}
@@ -204,6 +201,11 @@ func Init(dbPath string) error {
 		return err
 	}
 	if err := MigrateSIMICCIDIdentities(DB); err != nil {
+		return err
+	}
+	// The fragment key now includes ICCID. Build its index only after every
+	// historical SMS row has had its canonical ICCID repaired.
+	if err := ensureSMSFragmentSessionUniqueIndex(DB); err != nil {
 		return err
 	}
 	if err := MigrateCardPolicyCanonicalICCID(DB); err != nil {
@@ -590,24 +592,39 @@ func normalizeSMSPeer(smsType int, sender, recipient string) string {
 }
 
 func normalizeSMSLocalPhone(imsi string, smsType int, localPhone, sender, recipient string) string {
-	trimPhone := canonicalLocalPhone(localPhone)
+	return normalizeSMSLocalPhoneForIdentity(smsLocalPhoneInput{
+		Identity: SMSIdentity{IMSI: strings.TrimSpace(imsi)}, Type: smsType,
+		LocalPhone: localPhone, Sender: sender, Recipient: recipient,
+	})
+}
+
+type smsLocalPhoneInput struct {
+	Identity   SMSIdentity
+	Type       int
+	LocalPhone string
+	Sender     string
+	Recipient  string
+}
+
+func normalizeSMSLocalPhoneForIdentity(input smsLocalPhoneInput) string {
+	trimPhone := canonicalLocalPhone(input.LocalPhone)
 	if looksLikePhoneNumber(trimPhone) {
 		return trimPhone
 	}
 
 	var candidate string
-	switch smsType {
+	switch input.Type {
 	case 1:
-		candidate = canonicalLocalPhone(recipient)
+		candidate = canonicalLocalPhone(input.Recipient)
 	case 2:
-		candidate = canonicalLocalPhone(sender)
+		candidate = canonicalLocalPhone(input.Sender)
 	}
 	if looksLikePhoneNumber(candidate) {
 		return candidate
 	}
 
-	if imsi != "" {
-		if learned, err := GetSIMCardPhoneNumberByIMSI(imsi); err == nil {
+	if strings.TrimSpace(input.Identity.IMSI) != "" {
+		if learned, err := GetPhoneNumberForSMSIdentity(input.Identity); err == nil {
 			learned = canonicalLocalPhone(learned)
 			if looksLikePhoneNumber(learned) {
 				return learned

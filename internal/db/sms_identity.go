@@ -137,9 +137,12 @@ func SaveSMSForIdentity(input SMSRecord) error {
 	recipient := strings.TrimSpace(input.Recipient)
 	sms := SMS{
 		IMSI: input.Identity.IMSI, ICCID: input.Identity.ICCID,
-		Peer:       normalizeSMSPeer(input.Type, sender, recipient),
-		LocalPhone: normalizeSMSLocalPhone(input.Identity.IMSI, input.Type, input.LocalPhone, sender, recipient),
-		Sender:     sender, Recipient: recipient, Content: input.Content,
+		Peer: normalizeSMSPeer(input.Type, sender, recipient),
+		LocalPhone: normalizeSMSLocalPhoneForIdentity(smsLocalPhoneInput{
+			Identity: input.Identity, Type: input.Type,
+			LocalPhone: input.LocalPhone, Sender: sender, Recipient: recipient,
+		}),
+		Sender: sender, Recipient: recipient, Content: input.Content,
 		Type: input.Type, Status: input.Status, Timestamp: input.Timestamp.Truncate(time.Second),
 	}
 	smsPublicationMu.Lock()
