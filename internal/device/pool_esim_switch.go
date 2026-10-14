@@ -128,6 +128,15 @@ func (p *Pool) beginESIMSwitchForWorker(
 	transition := p.policyTransitionFor(deviceID)
 	transition.Lock()
 	defer transition.Unlock()
+	return p.beginESIMSwitchForWorkerLocked(deviceID, targetICCID, expectedWorker)
+}
+
+func (p *Pool) beginESIMSwitchForWorkerLocked(
+	deviceID string,
+	targetICCID string,
+	expectedWorker *Worker,
+) esimSwitchContext {
+	transition := p.policyTransitionFor(deviceID)
 	if expectedWorker != nil && p.GetWorker(deviceID) != expectedWorker {
 		logger.Warn("忽略已移除设备的 eSIM 切卡请求", "device", deviceID)
 		return esimSwitchContext{}
@@ -374,6 +383,19 @@ func (p *Pool) handleESIMSwitchBeforeWorker(
 	expectedWorker *Worker,
 ) uint64 {
 	snapshot := p.beginESIMSwitchForWorker(deviceID, targetICCID, expectedWorker)
+	return p.handleESIMSwitchBeforeSnapshot(deviceID, snapshot)
+}
+
+func (p *Pool) handleESIMSwitchBeforeWorkerLocked(
+	deviceID string,
+	targetICCID string,
+	expectedWorker *Worker,
+) uint64 {
+	snapshot := p.beginESIMSwitchForWorkerLocked(deviceID, targetICCID, expectedWorker)
+	return p.handleESIMSwitchBeforeSnapshot(deviceID, snapshot)
+}
+
+func (p *Pool) handleESIMSwitchBeforeSnapshot(deviceID string, snapshot esimSwitchContext) uint64 {
 	if snapshot.SwitchToken == 0 {
 		return 0
 	}
@@ -639,6 +661,14 @@ func (p *Pool) newESIMSwitchCallbacks(deviceID string) (func(esim.SwitchOperatio
 }
 
 func (p *Pool) newESIMSwitchCallbacksForWorker(deviceID string, worker *Worker) (func(esim.SwitchOperation, string) uint64, func(uint64), func(uint64, error), func(uint64, esim.SwitchPhase, error), func(uint64, esim.SwitchPhase)) {
+	return p.buildESIMSwitchCallbacks(deviceID, worker, false)
+}
+
+func (p *Pool) newLeasedESIMSwitchCallbacksForWorker(deviceID string, worker *Worker) (func(esim.SwitchOperation, string) uint64, func(uint64), func(uint64, error), func(uint64, esim.SwitchPhase, error), func(uint64, esim.SwitchPhase)) {
+	return p.buildESIMSwitchCallbacks(deviceID, worker, true)
+}
+
+func (p *Pool) buildESIMSwitchCallbacks(deviceID string, worker *Worker, ownershipLeaseHeld bool) (func(esim.SwitchOperation, string) uint64, func(uint64), func(uint64, error), func(uint64, esim.SwitchPhase, error), func(uint64, esim.SwitchPhase)) {
 	isCurrentWorker := func() bool {
 		return worker == nil || p.GetWorker(deviceID) == worker
 	}
@@ -648,6 +678,9 @@ func (p *Pool) newESIMSwitchCallbacksForWorker(deviceID string, worker *Worker) 
 		}
 		if operation != esim.SwitchOperationEnableProfile {
 			targetICCID = ""
+		}
+		if ownershipLeaseHeld {
+			return p.handleESIMSwitchBeforeWorkerLocked(deviceID, targetICCID, worker)
 		}
 		return p.handleESIMSwitchBeforeWorker(deviceID, targetICCID, worker)
 	}
@@ -676,6 +709,18 @@ func (p *Pool) newESIMSwitchCallbacksForWorker(deviceID string, worker *Worker) 
 		p.markESIMSwitchPhaseIfToken(deviceID, token, phase)
 	}
 	return onBefore, onAfter, onFailed, onDegraded, onPhase
+}
+
+func (p *Pool) newESIMSwitchLeaseAcquirer(deviceID string, worker *Worker) func(esim.SwitchOperation, string) (func(), error) {
+	return func(esim.SwitchOperation, string) (func(), error) {
+		transition := p.policyTransitionFor(deviceID)
+		transition.Lock()
+		if worker == nil || p.GetWorker(deviceID) != worker {
+			transition.Unlock()
+			return nil, fmt.Errorf("设备 %s 已被移除或替换", deviceID)
+		}
+		return transition.Unlock, nil
+	}
 }
 
 func normalizeSIMIdentity(v string) string {

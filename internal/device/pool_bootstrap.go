@@ -457,7 +457,7 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		return nil, err
 	}
 	w.Backend = be
-	onBeforeSwitch, onAfterSwitch, onSwitchFailed, onSwitchDegraded, onSwitchPhase := p.newESIMSwitchCallbacksForWorker(devCfg.ID, w)
+	onBeforeSwitch, onAfterSwitch, onSwitchFailed, onSwitchDegraded, onSwitchPhase := p.newLeasedESIMSwitchCallbacksForWorker(devCfg.ID, w)
 	w.EsimMgr, err = newESIMManagerForWorker(w, qmiTransport, onBeforeSwitch, onAfterSwitch, onSwitchFailed, onSwitchDegraded, onSwitchPhase)
 	if err != nil {
 		if qmiTransportLifecycle != nil {
@@ -472,6 +472,7 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		m.Stop()
 		return nil, fmt.Errorf("初始化 eSIM 管理器失败: %w", err)
 	}
+	w.EsimMgr.SetSwitchLeaseAcquirer(p.newESIMSwitchLeaseAcquirer(devCfg.ID, w))
 	p.bindESIMUIMIndications(w)
 	p.bindQMIStateIndications(w)
 	p.bindQMIHealthIndications(w)

@@ -366,12 +366,26 @@ func UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, phone string) error {
 }
 
 func updateSIMCardPhoneNumberByIMSI(imsi, phone, source string) error {
-	imsi = strings.TrimSpace(imsi)
-	if imsi == "" || DB == nil {
+	return updateSIMCardPhoneNumberByIMSITx(DB, simPhoneNumberUpdate{
+		IMSI: imsi, Phone: phone, Source: source,
+	})
+}
+
+type simPhoneNumberUpdate struct {
+	IMSI         string
+	Phone        string
+	Source       string
+	CurrentICCID string
+}
+
+func updateSIMCardPhoneNumberByIMSITx(tx *gorm.DB, update simPhoneNumberUpdate) error {
+	imsi := strings.TrimSpace(update.IMSI)
+	if imsi == "" || tx == nil {
 		return nil
 	}
+	currentICCID := CanonicalICCID(update.CurrentICCID)
 
-	normalized := normalizeSIMPhoneNumber(phone)
+	normalized := normalizeSIMPhoneNumber(update.Phone)
 	if normalized == "" {
 		return nil
 	}
@@ -381,13 +395,13 @@ func updateSIMCardPhoneNumberByIMSI(imsi, phone, source string) error {
 
 	now := time.Now()
 	column := "modem_phone_number"
-	if source == "vowifi" {
+	if update.Source == "vowifi" {
 		column = "vowifi_phone_number"
 	}
 	finalPhone := normalized
-	if source == "modem" {
+	if update.Source == "modem" {
 		var latest SIMSubscription
-		err := DB.Select("vowifi_phone_number").
+		err := tx.Select("vowifi_phone_number").
 			Where("imsi = ?", imsi).
 			Limit(1).
 			First(&latest).Error
@@ -405,20 +419,24 @@ func updateSIMCardPhoneNumberByIMSI(imsi, phone, source string) error {
 		"last_seen":    now,
 		"updated_at":   now,
 	}
+	if currentICCID != "" {
+		updates["current_iccid"] = currentICCID
+	}
 
 	row := SIMSubscription{
-		IMSI:        imsi,
-		PhoneNumber: finalPhone,
-		LastSeen:    now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		IMSI:         imsi,
+		CurrentICCID: currentICCID,
+		PhoneNumber:  finalPhone,
+		LastSeen:     now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
-	if source == "modem" {
+	if update.Source == "modem" {
 		row.ModemPhoneNumber = normalized
 	} else {
 		row.VowifiPhoneNumber = normalized
 	}
-	return DB.Clauses(clause.OnConflict{
+	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "imsi"}},
 		DoUpdates: clause.Assignments(updates),
 	}).Create(&row).Error
@@ -479,10 +497,32 @@ func RecordModemPhoneNumber(imsi, iccid, phone string) error {
 
 // RecordVoWiFiPhoneNumber 路由：IMSI 已知写 sim_subscriptions，否则按 ICCID 暂存。
 func RecordVoWiFiPhoneNumber(imsi, iccid, phone string) error {
-	if strings.TrimSpace(imsi) != "" {
+	imsi = strings.TrimSpace(imsi)
+	iccid = CanonicalICCID(iccid)
+	if imsi == "" {
+		return updatePendingPhoneByICCID(iccid, phone, "vowifi")
+	}
+	if iccid == "" || DB == nil {
 		return UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, phone)
 	}
-	return updatePendingPhoneByICCID(iccid, phone, "vowifi")
+	return DB.Transaction(func(tx *gorm.DB) error {
+		identity := SMSIdentity{ICCID: iccid, IMSI: imsi}
+		if err := validateSMSIdentityMapping(tx, identity); err != nil {
+			return err
+		}
+		var subscription SIMSubscription
+		err := tx.Select("current_iccid").Where("imsi = ?", imsi).First(&subscription).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		current := CanonicalICCID(subscription.CurrentICCID)
+		if current != "" && current != iccid {
+			return fmt.Errorf("%w: current subscription ICCID does not match learned number identity", ErrSMSIdentityConflict)
+		}
+		return updateSIMCardPhoneNumberByIMSITx(tx, simPhoneNumberUpdate{
+			IMSI: imsi, Phone: phone, Source: "vowifi", CurrentICCID: iccid,
+		})
+	})
 }
 
 // migratePendingPhoneToSubscription 在 IMSI 到位后，把 ICCID 暂存的号码迁移进 sim_subscriptions，
