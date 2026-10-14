@@ -22,14 +22,21 @@ func TestDeleteManagedDevicePreservesConfigOnStopFailure(t *testing.T) {
 		rec := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(rec)
 		ctx.Params = gin.Params{{Key: "device_id", Value: "wwan0"}}
-		deleteManagedDevice(ctx, path, func(id string) error {
-			if id != "wwan0" {
-				t.Fatal("wrong device", id)
-			}
-			if fail {
-				return errors.New("modem hangup failed")
-			}
-			return nil
+		detached := false
+		deleteManagedDevice(ctx, path, managedDeviceDeleteOps{
+			abandon: func(id string) error {
+				if id != "wwan0" {
+					t.Fatal("wrong device", id)
+				}
+				if fail {
+					return errors.New("modem hangup failed")
+				}
+				return nil
+			},
+			detach: func(string) error {
+				detached = true
+				return nil
+			},
 		})
 		want := http.StatusOK
 		if fail {
@@ -41,6 +48,9 @@ func TestDeleteManagedDevicePreservesConfigOnStopFailure(t *testing.T) {
 		got, _ := config.GetDeviceByID("wwan0")
 		if (got != nil) != fail {
 			t.Fatalf("config preserved=%v stop failed=%v", got != nil, fail)
+		}
+		if detached == fail {
+			t.Fatalf("binding detached=%v stop failed=%v", detached, fail)
 		}
 	}
 }

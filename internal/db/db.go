@@ -279,6 +279,7 @@ func UpsertSIMCardIdentity(iccid, imsi, operator string, currentIMEI *string) er
 	iccid = CanonicalICCID(iccid)
 	imsi = strings.TrimSpace(imsi)
 	operator = strings.TrimSpace(operator)
+	currentIMEI = normalizedIMEIPointer(currentIMEI)
 	if iccid == "" {
 		return nil
 	}
@@ -309,13 +310,12 @@ func UpsertSIMCardIdentity(iccid, imsi, operator string, currentIMEI *string) er
 		if err := reconcileLiveICCIDTx(tx, SMSIdentity{ICCID: iccid, IMSI: imsi}); err != nil {
 			return err
 		}
-		if currentIMEI == nil {
-			if err := tx.Model(&Device{}).Where("iccid = ?", iccid).Updates(map[string]any{
-				"iccid":      nil,
-				"updated_at": now,
-			}).Error; err != nil {
-				return err
-			}
+		binding := simDeviceBinding{ICCID: iccid, Now: now}
+		if currentIMEI != nil {
+			binding.IMEI = *currentIMEI
+		}
+		if err := reconcileSIMDeviceBindingTx(tx, binding); err != nil {
+			return err
 		}
 		if imsi == "" {
 			return nil
@@ -546,14 +546,16 @@ func allSameRune(s string, r rune) bool {
 
 // UpdateDeviceCurrentSIM 更新设备当前插入的 SIM 卡
 func UpdateDeviceCurrentSIM(imei string, iccid *string) error {
-	if iccid != nil {
-		canonical := CanonicalICCID(*iccid)
-		iccid = &canonical
+	if DB == nil {
+		return nil
 	}
-	return DB.Model(&Device{}).Where("imei = ?", imei).Updates(map[string]interface{}{
-		"iccid":     iccid,
-		"last_seen": time.Now(),
-	}).Error
+	binding := simDeviceBinding{IMEI: strings.TrimSpace(imei), Now: time.Now()}
+	if iccid != nil {
+		binding.ICCID = CanonicalICCID(*iccid)
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return reconcileSIMDeviceBindingTx(tx, binding)
+	})
 }
 
 // UpdateDeviceSignal 更新设备信号强度
