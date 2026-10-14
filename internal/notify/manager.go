@@ -22,6 +22,7 @@ type Manager struct {
 	lastIncomingAt          time.Time
 	channels                []Channel // 所有已启用的通知渠道
 	channelActivity         []*channelActivity
+	deviceFilters           map[Channel]map[string]bool // guarded by channelsMu
 	stateStore              RuntimeStateStore
 	qqChannelFactory        func(config.QQConfig) (Channel, error)
 	commandMu               sync.Mutex
@@ -367,6 +368,12 @@ func (m *Manager) broadcastWithContext(ctx NotificationContext) {
 	deliveries := m.beginChannelSends()
 	for _, delivery := range deliveries {
 		delivery := delivery
+		if !delivery.accepts(ctx) {
+			logger.Debug("通知渠道按设备过滤，跳过", "channel", delivery.channel.Name(),
+				"event", ctx.Event, "device", ctx.DeviceID)
+			delivery.activity.sends.Done()
+			continue
+		}
 		go func() {
 			defer delivery.activity.sends.Done()
 			ch := delivery.channel
