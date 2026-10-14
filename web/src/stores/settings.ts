@@ -187,7 +187,7 @@ const DEFAULT_WECOM_SETTINGS: WeComSettings = {
 
 const NOTIFICATION_SECRET_MASK = '********'
 
-type NotificationBindingChannel = 'feishu' | 'weixin' | 'wecom-bot'
+type NotificationBindingChannel = 'feishu' | 'qq' | 'weixin' | 'wecom-bot'
 
 export function maskSavedWeComURLs(urls: string[]): string[] {
   return urls
@@ -385,6 +385,22 @@ export const useSettingsStore = defineStore('settings', () => {
       },
       merge(data) {
         feishuForm.value.chat_ids = mergeIDs(feishuForm.value.chat_ids, data.feishu?.chat_ids)
+      }
+    },
+    qq: {
+      replace(data) {
+        const settings = data.qq || {}
+        qqForm.value = {
+          enabled: !!settings.enabled,
+          app_id: settings.app_id || '',
+          app_secret: settings.app_secret || '',
+          group_ids: settings.group_ids || '',
+          direct_ids: settings.direct_ids || ''
+        }
+      },
+      merge(data) {
+        qqForm.value.group_ids = mergeIDs(qqForm.value.group_ids, data.qq?.group_ids?.split(','))
+        qqForm.value.direct_ids = mergeIDs(qqForm.value.direct_ids, data.qq?.direct_ids?.split(','))
       }
     },
     weixin: {

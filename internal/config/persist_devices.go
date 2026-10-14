@@ -101,19 +101,49 @@ func DeleteDeviceInFile(path string, deviceID string) error {
 	if deviceID == "" {
 		return fmt.Errorf("设备未找到: %s", deviceID)
 	}
-	return updateDevicesInFile(path, func(devices *yaml.Node) (*yaml.Node, error) {
-		for i, item := range devices.Content {
-			if item == nil || item.Kind != yaml.MappingNode {
-				continue
-			}
-			if strings.TrimSpace(getMapScalar(item, "id")) == deviceID {
-				devices.Content = append(devices.Content[:i], devices.Content[i+1:]...)
-				return devices, nil
+	return updateConfigInFile(path, func(root *yaml.Node) error {
+		devices := getMapValue(root, "devices")
+		if devices != nil && devices.Kind == yaml.SequenceNode {
+			removeDeviceNode(devices, deviceID)
+		}
+		removeDeviceFromNotificationFilters(root, deviceID)
+		return nil
+	})
+}
+
+func removeDeviceNode(devices *yaml.Node, deviceID string) {
+	for index, item := range devices.Content {
+		if item != nil && item.Kind == yaml.MappingNode && strings.TrimSpace(getMapScalar(item, "id")) == deviceID {
+			devices.Content = append(devices.Content[:index], devices.Content[index+1:]...)
+			return
+		}
+	}
+}
+
+func removeDeviceFromNotificationFilters(root *yaml.Node, deviceID string) {
+	filters := getMapValue(root, "notification_device_filters")
+	if filters == nil || filters.Kind != yaml.MappingNode {
+		return
+	}
+	for index := len(filters.Content) - 2; index >= 0; index -= 2 {
+		devices := filters.Content[index+1]
+		if devices == nil || devices.Kind != yaml.SequenceNode {
+			continue
+		}
+		kept := devices.Content[:0]
+		for _, entry := range devices.Content {
+			if entry == nil || strings.TrimSpace(entry.Value) != deviceID {
+				kept = append(kept, entry)
 			}
 		}
-		// 配置里已经没有这条，视为删除成功，避免 UI 删了却加不回去。
-		return devices, nil
-	})
+		devices.Content = kept
+		if len(devices.Content) == 0 {
+			filters.Content = append(filters.Content[:index], filters.Content[index+2:]...)
+		}
+	}
+	if len(filters.Content) == 0 {
+		deleteMapKey(root, "notification_device_filters")
+	}
 }
 
 func updateDevicesInFile(path string, mutate func(*yaml.Node) (*yaml.Node, error)) error {

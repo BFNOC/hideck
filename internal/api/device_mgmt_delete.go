@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
@@ -10,8 +11,9 @@ import (
 )
 
 type managedDeviceDeleteOps struct {
-	abandon func(string) error
-	detach  func(string) error
+	abandon      func(string) error
+	deleteConfig func(string) error
+	detach       func(string) error
 }
 
 func stopManagedDevice(c *gin.Context, id string, abandon func(string) error) bool {
@@ -37,7 +39,11 @@ func deleteManagedDevice(c *gin.Context, configPath string, ops managedDeviceDel
 	if !stopManagedDevice(c, id, ops.abandon) {
 		return
 	}
-	if err := config.DeleteDeviceInFile(configPath, id); err != nil {
+	deleteConfig := ops.deleteConfig
+	if deleteConfig == nil {
+		deleteConfig = func(deviceID string) error { return config.DeleteDeviceInFile(configPath, deviceID) }
+	}
+	if err := deleteConfig(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "删除设备配置失败: " + err.Error()})
 		return
 	}
@@ -54,4 +60,34 @@ func deleteManagedDevice(c *gin.Context, configPath string, ops managedDeviceDel
 
 func databaseManagedDeviceDeleteOps(abandon func(string) error) managedDeviceDeleteOps {
 	return managedDeviceDeleteOps{abandon: abandon, detach: db.DetachDeviceAlias}
+}
+
+func (s *Server) deleteManagedDeviceConfig(deviceID string) error {
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
+	if err := config.DeleteDeviceInFile(s.configPath, deviceID); err != nil {
+		return err
+	}
+	if s.fullCfg == nil {
+		return nil
+	}
+	filters := withoutNotificationDevice(s.fullCfg.NotificationDeviceFilters, deviceID)
+	s.fullCfg.NotificationDeviceFilters = filters
+	if s.notifyMgr != nil {
+		s.notifyMgr.UpdateDeviceFilters(filters)
+	}
+	return nil
+}
+
+func withoutNotificationDevice(filters map[string][]string, deviceID string) map[string][]string {
+	deviceID = strings.TrimSpace(deviceID)
+	updated := make(map[string][]string)
+	for channel, devices := range filters {
+		for _, candidate := range devices {
+			if candidate = strings.TrimSpace(candidate); candidate != "" && candidate != deviceID {
+				updated[channel] = append(updated[channel], candidate)
+			}
+		}
+	}
+	return updated
 }

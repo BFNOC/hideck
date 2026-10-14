@@ -190,7 +190,10 @@ func (m *Manager) notifySMS(sms device.InboundSMS, source string) {
 		source = "蜂窝"
 	}
 	title := notificationTitle("sms_received")
-	region := m.phoneNumberRegion(deviceID)
+	region := device.PhoneNumberRegionForIMSI(sms.IMSI)
+	if region == "" {
+		region = m.phoneNumberRegion(deviceID)
+	}
 	local := localSIMLabel(sms.IMSI, sms.ICCID, region)
 	fields := []string{"设备", m.deviceLabel(deviceID), "本机", local, "通道", source}
 	fields = append(fields, phoneIdentityFieldsWithRegion("号码", sender, region)...)

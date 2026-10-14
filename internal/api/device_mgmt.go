@@ -1644,7 +1644,9 @@ func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
 	if s.pool != nil {
 		abandon = s.pool.AbandonDevice
 	}
-	deleteManagedDevice(c, s.configPath, databaseManagedDeviceDeleteOps(abandon))
+	ops := databaseManagedDeviceDeleteOps(abandon)
+	ops.deleteConfig = s.deleteManagedDeviceConfig
+	deleteManagedDevice(c, s.configPath, ops)
 }
 
 type addDeviceRequest struct {
