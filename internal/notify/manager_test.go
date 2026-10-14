@@ -565,7 +565,7 @@ func TestFormatCallResultMessageUsesIncomingCallStyle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatCallResultMessage(callResultMessage{
-				DeviceID: tt.deviceID, Peer: tt.peer, Direction: tt.direction,
+				Device: tt.deviceID, Peer: tt.peer, Direction: tt.direction,
 				Status: tt.status, Reason: tt.reason,
 			}, "")
 			if got != tt.want {

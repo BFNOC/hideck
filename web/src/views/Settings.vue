@@ -919,7 +919,7 @@ onMounted(() => {
                       placeholder="{{device_label}} {{text}}"
                     />
                     <div class="text-[10px] text-[var(--ui-muted)] mt-1">
-                      支持占位符：<code v-pre>{{text}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>。留空则直接发送原始 text。
+                      支持占位符：<code v-pre>{{text}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{local_number}}</code>（收到短信的本机号码，无号码时为 ICCID 尾号）。留空则直接发送原始 text。
                     </div>
                   </div>
                   
@@ -998,7 +998,7 @@ onMounted(() => {
                       class="wecom-template-input"
                     />
                     <div class="text-[10px] text-[var(--ui-muted)] mt-1">
-                      变量需直接作为 JSON 值使用。支持 <code v-pre>{{event}}</code>、<code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{time}}</code>。
+                      变量需直接作为 JSON 值使用。支持 <code v-pre>{{event}}</code>、<code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{local_number}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{time}}</code>。
                     </div>
                   </div>
                 </div>
