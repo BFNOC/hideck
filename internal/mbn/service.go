@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -108,50 +107,6 @@ func inspect(ctx context.Context, session Session) (Snapshot, error) {
 func execute(ctx context.Context, session Session, command string) (string, error) {
 	response, err := session.Execute(ctx, command)
 	return response, CheckResponse(response, err)
-}
-
-func (s *Service) Start(ctx context.Context, deviceID string, request Request) (Operation, error) {
-	if err := validateRequest(request); err != nil {
-		return Operation{}, err
-	}
-	request.Candidates = append([]string(nil), request.Candidates...)
-	if request.ExpectedOwner != nil {
-		owner := *request.ExpectedOwner
-		request.ExpectedOwner = &owner
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	previous, err := s.store.FindRequest(ctx, deviceID, request.RequestID)
-	if err == nil {
-		a, _ := json.Marshal(previous.Request)
-		b, _ := json.Marshal(request)
-		if string(a) != string(b) {
-			return Operation{}, fmt.Errorf("%w: request_id 已用于不同请求", ErrConflict)
-		}
-		return previous, nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return Operation{}, err
-	}
-	if s.active[deviceID] != "" {
-		return Operation{}, ErrConflict
-	}
-	owner, err := s.gateway.Identity(ctx, deviceID)
-	if err != nil {
-		return Operation{}, err
-	}
-	if request.ExpectedOwner != nil && !sameGeneration(*request.ExpectedOwner, owner) {
-		return Operation{}, ErrOwnerChanged
-	}
-	op := Operation{ID: newID(), DeviceID: deviceID, RequestID: request.RequestID, Request: request, Status: "queued", Stage: "queued", Results: []TrialResult{}}
-	op.ExpectedOwner = owner
-	if err := s.store.SaveOperation(ctx, &op); err != nil {
-		return op, err
-	}
-	s.active[deviceID] = op.ID
-	s.wg.Add(1)
-	go s.run(op)
-	return op, nil
 }
 
 func (s *Service) Cancel(ctx context.Context, id string) (Operation, error) {

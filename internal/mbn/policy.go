@@ -142,7 +142,7 @@ func (s *Service) Reconcile(ctx context.Context, owner Owner) (bool, error) {
 		request.AssetID = policy.AssetID
 		request.AcceptUnknownCompatibility = true
 	}
-	op, err := s.Start(ctx, owner.DeviceID, request)
+	op, err := s.start(ctx, operationStart{deviceID: owner.DeviceID, request: request, policy: true})
 	if err != nil {
 		return false, err
 	}

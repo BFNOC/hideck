@@ -7,9 +7,10 @@ import (
 )
 
 var (
-	ErrConflict     = errors.New("MBN 操作冲突")
-	ErrOwnerChanged = errors.New("MBN 操作所属模组或 SIM 已改变")
-	ErrNotFound     = errors.New("MBN 记录不存在")
+	ErrConflict       = errors.New("MBN 操作冲突")
+	ErrOwnerChanged   = errors.New("MBN 操作所属模组或 SIM 已改变")
+	ErrNotFound       = errors.New("MBN 记录不存在")
+	ErrNeedsAttention = errors.New("MBN 操作结果待确认")
 )
 
 const (
@@ -107,6 +108,7 @@ type TrialResult struct {
 }
 
 type Operation struct {
+	RecoveryOf      []string      `gorm:"serializer:json" json:"recovery_of,omitempty"`
 	ExpectedOwner   Owner         `gorm:"serializer:json" json:"expected_owner"`
 	ID              string        `gorm:"primaryKey" json:"id"`
 	DeviceID        string        `gorm:"index;uniqueIndex:mbn_request" json:"device_id"`
