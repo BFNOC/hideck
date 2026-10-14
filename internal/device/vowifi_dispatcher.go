@@ -44,8 +44,16 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 	case eventhost.SMSReceived:
 		// One snapshot of the receiving SIM serves observers and notifiers,
 		// so a profile switch while the message is stored cannot split them.
-		receivedOn = recorder.resolveReceivingIdentity(v.DevID)
-		res, err := recorder.recordReceived(v, receivedOn)
+		var res vowifiSMSRecordResult
+		var err error
+		if smsnotify.ShouldSuppressReceivedSMS(v.Content) {
+			res = vowifiSMSRecordResult{Suppressed: true}
+		} else {
+			receivedOn, err = recorder.resolveReceivedEventIdentity(v)
+		}
+		if err == nil && !res.Suppressed {
+			res, err = recorder.recordReceived(v, receivedOn)
+		}
 		applyVoWiFiSMSMemoryPressure(func(full bool) {
 			d.pool.SetVoWiFiSMSMemoryFull(v.DevID, full)
 		}, err, res)
@@ -90,6 +98,10 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 		}
 		if recordResult.Duplicate {
 			logger.Info("VoWiFi 短信重复（通过数据库去重兜底），不进行重复通知推送", "device", sms.DevID, "sender", sms.Sender)
+			return
+		}
+		if receivedOn.ICCID == "" || receivedOn.IMSI == "" {
+			logger.Warn("VoWiFi 短信身份不完整，不发送可能串卡的通知", "device", sms.DevID, "sender", sms.Sender)
 			return
 		}
 		notifySMS(notifier, InboundSMS{

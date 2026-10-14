@@ -36,6 +36,8 @@ type SMSReceived struct {
 	TargetURI          string
 	FragmentSessionKey string
 	Incomplete         bool
+	ICCID              string
+	IMSI               string
 }
 
 // SMSSent is published when an SMS is sent.
@@ -57,6 +59,7 @@ type LocalNumberLearned struct {
 	Number string
 	Source string
 	Time   time.Time
+	ICCID  string
 }
 
 // LogNotify is a log notification event.

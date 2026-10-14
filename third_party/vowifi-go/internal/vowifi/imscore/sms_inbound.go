@@ -437,6 +437,7 @@ func (s *Service) publishInboundSMSWithFragment(
 		DevID: s.cfg.DeviceID, Sender: message.sender, TargetURI: message.targetURI,
 		Content: message.content, Time: message.timestamp,
 		FragmentSessionKey: strings.TrimSpace(fragmentSessionKey), Incomplete: incomplete,
+		ICCID: strings.TrimSpace(s.cfg.ICCID), IMSI: strings.TrimSpace(s.cfg.IMSI),
 	})
 }
 

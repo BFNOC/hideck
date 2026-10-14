@@ -124,6 +124,15 @@ func policySwitchEpoch(transition *policyTransition) uint64 {
 	return transition.switchEpoch
 }
 
+// DeviceOwnershipEpoch changes whenever removal or a profile switch invalidates
+// operations that were captured for an earlier device/SIM ownership interval.
+func (p *Pool) DeviceOwnershipEpoch(deviceID string) uint64 {
+	if p == nil {
+		return 0
+	}
+	return policySwitchEpoch(p.policyTransitionFor(deviceID))
+}
+
 func normalizeAutomationICCID(value string) string {
 	return simidentity.CanonicalICCID(value)
 }

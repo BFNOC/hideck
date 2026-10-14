@@ -38,7 +38,7 @@ func (e *automaticTaskExecutor) Execute(
 	if worker == nil {
 		return "", fmt.Errorf("device %s is offline", task.DeviceID)
 	}
-	owner := captureAutomaticTaskDeviceOwner(worker)
+	owner := captureAutomaticTaskDeviceOwner(e.server.pool, worker)
 	profileAction, err := resolveAutomaticTaskProfile(task, worker.CurrentICCID())
 	if err != nil {
 		return "", automation.Permanent(err)
@@ -47,8 +47,15 @@ func (e *automaticTaskExecutor) Execute(
 		if err := reportAutomationProgress(progress, "正在使用设备当前 SIM"); err != nil {
 			return "", err
 		}
-	} else if err := e.switchTaskESIM(ctx, task, progress); err != nil {
-		return "", err
+	} else {
+		if err := e.switchTaskESIM(ctx, task, progress); err != nil {
+			return "", err
+		}
+		worker = e.server.pool.GetWorker(task.DeviceID)
+		if worker == nil {
+			return "", fmt.Errorf("device %s went offline after switching profiles", task.DeviceID)
+		}
+		owner = captureAutomaticTaskDeviceOwner(e.server.pool, worker)
 	}
 
 	snapshot, err := db.ResolveCardPolicy(task.ProfileICCID)

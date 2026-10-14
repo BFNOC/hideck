@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yibaiba/hideck/internal/esim"
 	modemhost "github.com/yibaiba/hideck/internal/modemvoice/host"
 	"github.com/yibaiba/hideck/internal/volte"
 )
@@ -88,6 +89,30 @@ func TestAbandonDeviceInvalidatesActiveESIMOperation(t *testing.T) {
 	if p.IsESIMSwitching(id) {
 		t.Fatal("abandoned device retained eSIM switch state")
 	}
+}
+
+func TestRemovedWorkerCannotStartNewESIMSwitch(t *testing.T) {
+	p, port := testModemVoicePort(t)
+	id := port.worker.ID
+	onBefore, onAfter, _, _, _ := p.newESIMSwitchCallbacksForWorker(id, port.worker)
+	if err := p.AbandonDevice(id); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &Worker{ID: id, Config: port.worker.Config}
+	p.AttachWorkerForTest(replacement)
+
+	if token := onBefore(esim.SwitchOperationEnableProfile, "8944100000000000043"); token != 0 {
+		t.Fatalf("stale eSIM manager returned switch token %d", token)
+	}
+	if p.IsESIMSwitching(id) {
+		t.Fatal("stale eSIM manager marked the replacement worker as switching")
+	}
+	newSwitch := p.beginESIMSwitch(id, "8944100000000000044")
+	onAfter(0)
+	if !p.IsESIMSwitching(id) {
+		t.Fatal("stale eSIM completion cleared the replacement worker switch")
+	}
+	p.handleESIMSwitchFailed(id, newSwitch.SwitchToken)
 }
 
 func TestAutomationDeviceOwnerRejectsReplacementHardware(t *testing.T) {

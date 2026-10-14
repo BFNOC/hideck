@@ -198,7 +198,7 @@ func (p *Pool) newPCSCEsimManager(worker *Worker, service *pcsc.Service, selecto
 	channelFactory := func() (driver.SmartCardChannel, error) {
 		return pcsc.NewChannel(service, selector, true), nil
 	}
-	onBefore, onAfter, onFailed, onDegraded, onPhase := p.newESIMSwitchCallbacks(worker.ID)
+	onBefore, onAfter, onFailed, onDegraded, onPhase := p.newESIMSwitchCallbacksForWorker(worker.ID, worker)
 	return esim.NewManagerWithSmartCardChannelFactoryCallbacks(worker.ID, channelFactory, nil, esim.ChannelFactorySwitchCallbacks{
 		OnBeforeSwitch: onBefore,
 		OnAfterSwitch: func(_ esim.SwitchOperation, token uint64) {

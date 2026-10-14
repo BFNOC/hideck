@@ -86,10 +86,11 @@ func (p *Pool) SendRoutedSMS(
 	destination := strings.TrimSpace(phone)
 	checkOwner := p.outboundOwnerCheck(worker)
 	identity, identityErr := p.ResolveSMSIdentity(deviceID)
-	if identityErr == nil {
-		if err := checkOwner(); err != nil {
-			return routedSMSSendResult{Identity: identity, IdentityRead: true}, err
-		}
+	if identityErr != nil {
+		return routedSMSSendResult{}, fmt.Errorf("sms route: resolve SIM identity: %w", identityErr)
+	}
+	if err := checkOwner(); err != nil {
+		return routedSMSSendResult{Identity: identity, IdentityRead: true}, err
 	}
 	if err := p.authorizeSMS(ctx, outboundSMSRequest{Worker: worker, To: destination, Text: message, Options: opts}); err != nil {
 		return routedSMSSendResult{Identity: identity, IdentityRead: true}, err

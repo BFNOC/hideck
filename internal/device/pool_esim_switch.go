@@ -117,9 +117,21 @@ func (p *Pool) captureESIMSwitchContext(deviceID string, targetICCID string) esi
 }
 
 func (p *Pool) beginESIMSwitch(deviceID string, targetICCID string) esimSwitchContext {
+	return p.beginESIMSwitchForWorker(deviceID, targetICCID, nil)
+}
+
+func (p *Pool) beginESIMSwitchForWorker(
+	deviceID string,
+	targetICCID string,
+	expectedWorker *Worker,
+) esimSwitchContext {
 	transition := p.policyTransitionFor(deviceID)
 	transition.Lock()
 	defer transition.Unlock()
+	if expectedWorker != nil && p.GetWorker(deviceID) != expectedWorker {
+		logger.Warn("忽略已移除设备的 eSIM 切卡请求", "device", deviceID)
+		return esimSwitchContext{}
+	}
 	transition.switchEpoch++
 	snapshot := p.captureESIMSwitchContext(deviceID, targetICCID)
 	p.switchMu.Lock()
@@ -353,7 +365,18 @@ func (p *Pool) bringRadioOnlineAfterSwitch(deviceID string, worker *Worker, snap
 }
 
 func (p *Pool) handleESIMSwitchBefore(deviceID string, targetICCID string) uint64 {
-	snapshot := p.beginESIMSwitch(deviceID, targetICCID)
+	return p.handleESIMSwitchBeforeWorker(deviceID, targetICCID, nil)
+}
+
+func (p *Pool) handleESIMSwitchBeforeWorker(
+	deviceID string,
+	targetICCID string,
+	expectedWorker *Worker,
+) uint64 {
+	snapshot := p.beginESIMSwitchForWorker(deviceID, targetICCID, expectedWorker)
+	if snapshot.SwitchToken == 0 {
+		return 0
+	}
 	holdTargetRadio := snapshot.TargetLebaraCandidate || snapshot.TargetClassifyFailed
 	if worker := p.GetWorker(deviceID); worker != nil {
 		worker.markHealthRecoveryWindow(qmiHealthGraceAfterSwitch)
@@ -612,22 +635,44 @@ func (p *Pool) waitPostSwitchCoreReady(deviceID string, worker *Worker) {
 }
 
 func (p *Pool) newESIMSwitchCallbacks(deviceID string) (func(esim.SwitchOperation, string) uint64, func(uint64), func(uint64, error), func(uint64, esim.SwitchPhase, error), func(uint64, esim.SwitchPhase)) {
+	return p.newESIMSwitchCallbacksForWorker(deviceID, nil)
+}
+
+func (p *Pool) newESIMSwitchCallbacksForWorker(deviceID string, worker *Worker) (func(esim.SwitchOperation, string) uint64, func(uint64), func(uint64, error), func(uint64, esim.SwitchPhase, error), func(uint64, esim.SwitchPhase)) {
+	isCurrentWorker := func() bool {
+		return worker == nil || p.GetWorker(deviceID) == worker
+	}
 	onBefore := func(operation esim.SwitchOperation, targetICCID string) uint64 {
+		if !isCurrentWorker() {
+			return 0
+		}
 		if operation != esim.SwitchOperationEnableProfile {
 			targetICCID = ""
 		}
-		return p.handleESIMSwitchBefore(deviceID, targetICCID)
+		return p.handleESIMSwitchBeforeWorker(deviceID, targetICCID, worker)
 	}
 	onAfter := func(token uint64) {
+		if !isCurrentWorker() {
+			return
+		}
 		p.handleESIMSwitchAfter(deviceID, token)
 	}
 	onFailed := func(token uint64, err error) {
+		if !isCurrentWorker() {
+			return
+		}
 		p.handleESIMSwitchFailedWithError(deviceID, token, err)
 	}
 	onDegraded := func(token uint64, phase esim.SwitchPhase, err error) {
+		if !isCurrentWorker() {
+			return
+		}
 		p.handleESIMSwitchDegradedWithError(deviceID, token, phase, err)
 	}
 	onPhase := func(token uint64, phase esim.SwitchPhase) {
+		if !isCurrentWorker() {
+			return
+		}
 		p.markESIMSwitchPhaseIfToken(deviceID, token, phase)
 	}
 	return onBefore, onAfter, onFailed, onDegraded, onPhase

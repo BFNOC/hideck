@@ -1173,17 +1173,26 @@ func (p *Pool) AbandonDevice(deviceID string) error {
 		return nil
 	}
 	p.abandonModemRebootRecovery(deviceID)
-	p.clearESIMSwitch(deviceID)
-	transition := p.policyTransitionFor(deviceID)
-	transition.Lock()
-	transition.switchEpoch++
-	transition.Unlock()
 	p.mu.Lock()
 	p.beginRebuildAttemptLocked(deviceID)
 	delete(p.rebuilding, deviceID)
 	p.mu.Unlock()
-	if err := p.RemoveWorker(deviceID); err != nil && !errors.Is(err, ErrWorkerNotFound) {
-		return err
+	transition := p.policyTransitionFor(deviceID)
+	for {
+		transition.Lock()
+		p.clearESIMSwitch(deviceID)
+		transition.switchEpoch++
+		err := p.removeWorkerForPolicyTransition(deviceID)
+		transition.Unlock()
+		if !errors.Is(err, errWorkerInitializing) {
+			if err != nil && !errors.Is(err, ErrWorkerNotFound) {
+				return err
+			}
+			break
+		}
+		if !p.waitWorkerInitSettled(deviceID, 10*time.Second) {
+			return fmt.Errorf("设备 %s 正在初始化中，等待停止超时", deviceID)
+		}
 	}
 	p.forgetRuntimeQMIAttachment(deviceID)
 	return nil

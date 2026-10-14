@@ -35,6 +35,14 @@ func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity
 	if imsi == "" {
 		return identity.Profile{}, fmt.Errorf("实时 IMSI 为空")
 	}
+	iccid, err := reader.GetICCIDLive(liveCtx)
+	if err != nil {
+		return identity.Profile{}, fmt.Errorf("实时读取 ICCID 失败: %w", err)
+	}
+	iccid = strings.TrimSpace(iccid)
+	if iccid == "" {
+		return identity.Profile{}, fmt.Errorf("实时 ICCID 为空")
+	}
 
 	status := worker.ProjectDeviceStatus()
 	mcc, mnc, plmnSource := resolveVoWiFiProfileMCCMNC(liveCtx, worker, status, imsi, traceID)
@@ -43,7 +51,6 @@ func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity
 	}
 
 	imei := strings.TrimSpace(status.IMEI)
-	iccid := strings.TrimSpace(status.ICCID)
 
 	smsc := p.resolveVoWiFiSMSC(worker, imsi, iccid, traceID)
 

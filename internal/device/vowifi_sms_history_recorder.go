@@ -59,24 +59,6 @@ func (r vowifiSMSHistoryRecorder) resolveIMSI(devID, fallbackIMSI string) string
 	return strings.TrimSpace(w.GetIMSI())
 }
 
-func (r vowifiSMSHistoryRecorder) resolveICCID(devID string) string {
-	if r.pool == nil {
-		return ""
-	}
-	w := r.pool.GetWorker(strings.TrimSpace(devID))
-	if w == nil {
-		return ""
-	}
-	if iccid := strings.TrimSpace(w.GetCachedDeviceStatus().ICCID); iccid != "" {
-		return iccid
-	}
-	iccid, err := db.ResolveICCIDForIMSI(r.resolveIMSI(devID, ""))
-	if err != nil || strings.HasPrefix(iccid, "imsi:") {
-		return ""
-	}
-	return strings.TrimSpace(iccid)
-}
-
 func (r vowifiSMSHistoryRecorder) resolveReceivingIdentity(devID string) SMSIdentity {
 	if r.pool == nil {
 		return SMSIdentity{}
@@ -99,6 +81,21 @@ func (r vowifiSMSHistoryRecorder) resolveReceivingIdentity(devID string) SMSIden
 		iccid = ""
 	}
 	return normalizeSMSIdentity(SMSIdentity{ICCID: iccid, IMSI: imsi})
+}
+
+func (r vowifiSMSHistoryRecorder) resolveReceivedEventIdentity(e eventhost.SMSReceived) (SMSIdentity, error) {
+	identity := normalizeSMSIdentity(SMSIdentity{ICCID: e.ICCID, IMSI: e.IMSI})
+	if identity.ICCID != "" || identity.IMSI != "" {
+		if identity.ICCID == "" || identity.IMSI == "" {
+			return SMSIdentity{}, db.ErrSMSIdentityUnknown
+		}
+		return identity, nil
+	}
+	identity = normalizeSMSIdentity(r.resolveReceivingIdentity(e.DevID))
+	if identity.ICCID == "" || identity.IMSI == "" {
+		return SMSIdentity{}, db.ErrSMSIdentityUnknown
+	}
+	return identity, nil
 }
 
 func (r vowifiSMSHistoryRecorder) localPhoneForIdentity(identity SMSIdentity) string {
@@ -135,7 +132,14 @@ func (r vowifiSMSHistoryRecorder) eventTime(at time.Time) time.Time {
 }
 
 func (r vowifiSMSHistoryRecorder) RecordReceived(e eventhost.SMSReceived) (vowifiSMSRecordResult, error) {
-	return r.recordReceived(e, r.resolveReceivingIdentity(e.DevID))
+	if smsnotify.ShouldSuppressReceivedSMS(e.Content) {
+		return vowifiSMSRecordResult{Suppressed: true}, nil
+	}
+	identity, err := r.resolveReceivedEventIdentity(e)
+	if err != nil {
+		return vowifiSMSRecordResult{}, err
+	}
+	return r.recordReceived(e, identity)
 }
 
 func (r vowifiSMSHistoryRecorder) recordReceived(
@@ -146,11 +150,8 @@ func (r vowifiSMSHistoryRecorder) recordReceived(
 		return vowifiSMSRecordResult{Suppressed: true}, nil
 	}
 	identity = normalizeSMSIdentity(identity)
-	if identity.IMSI == "" {
-		return vowifiSMSRecordResult{}, nil
-	}
-	if identity.ICCID == "" {
-		identity.ICCID = db.GetICCIDForIMSI(identity.IMSI)
+	if identity.ICCID == "" || identity.IMSI == "" {
+		return vowifiSMSRecordResult{}, db.ErrSMSIdentityUnknown
 	}
 	localPhone := r.localPhoneForIdentity(identity)
 	ts := r.eventTime(e.Time)
@@ -239,14 +240,23 @@ func (r vowifiSMSHistoryRecorder) RecordSendFailure(failure VoWiFiSMSSendFailure
 }
 
 func (r vowifiSMSHistoryRecorder) RecordLocalNumberLearned(e eventhost.LocalNumberLearned) error {
-	imsi := r.resolveIMSI(e.DevID, e.IMSI)
 	number := strings.TrimSpace(e.Number)
 	if number == "" {
 		return nil
 	}
-	iccid := r.resolveICCID(e.DevID)
+	imsi := strings.TrimSpace(e.IMSI)
+	iccid := strings.TrimSpace(e.ICCID)
 	if imsi == "" && iccid == "" {
-		return nil
+		identity := r.resolveReceivingIdentity(e.DevID)
+		imsi, iccid = identity.IMSI, identity.ICCID
+	} else if imsi != "" && iccid == "" {
+		resolved, err := db.ResolveICCIDForIMSI(imsi)
+		if err == nil && !strings.HasPrefix(resolved, "imsi:") {
+			iccid = resolved
+		}
+	}
+	if imsi == "" && iccid == "" {
+		return db.ErrSMSIdentityUnknown
 	}
 	return db.RecordVoWiFiPhoneNumber(imsi, iccid, number)
 }

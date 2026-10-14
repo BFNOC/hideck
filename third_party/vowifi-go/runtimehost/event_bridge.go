@@ -70,6 +70,7 @@ func publicSMSReceived(value events.EventSMSReceived) eventhost.SMSReceived {
 		DevID: value.DevID, Sender: value.Sender, TargetURI: value.TargetURI,
 		Content: value.Content, Time: value.Time,
 		FragmentSessionKey: value.FragmentSessionKey, Incomplete: value.Incomplete,
+		ICCID: value.ICCID, IMSI: value.IMSI,
 	}
 }
 
@@ -84,7 +85,7 @@ func publicSMSSent(value events.EventSMSSent) eventhost.SMSSent {
 func publicLocalNumberLearned(value events.EventLocalNumberLearned) eventhost.LocalNumberLearned {
 	return eventhost.LocalNumberLearned{
 		DevID: value.DevID, IMSI: value.IMSI, Number: value.Number, Source: value.Source,
-		Time: value.Time,
+		Time: value.Time, ICCID: value.ICCID,
 	}
 }
 
