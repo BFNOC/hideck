@@ -963,6 +963,8 @@ func (s *Server) handleRotate(c *gin.Context) {
 			return
 		}
 	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(deviceID)
+	defer releaseMutation()
 
 	worker := s.pool.GetWorker(deviceID)
 	if worker == nil {
@@ -1019,6 +1021,10 @@ func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 	}
 	releaseMutation := s.pool.AcquireManagedDeviceMutation(deviceID)
 	defer releaseMutation()
+	s.handleDeviceMgmtStartNetworkLocked(c, deviceID)
+}
+
+func (s *Server) handleDeviceMgmtStartNetworkLocked(c *gin.Context, deviceID string) {
 	worker := s.pool.GetWorker(deviceID)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到"})
@@ -1061,6 +1067,10 @@ func (s *Server) handleDeviceMgmtStopNetwork(c *gin.Context) {
 	}
 	releaseMutation := s.pool.AcquireManagedDeviceMutation(deviceID)
 	defer releaseMutation()
+	s.handleDeviceMgmtStopNetworkLocked(c, deviceID)
+}
+
+func (s *Server) handleDeviceMgmtStopNetworkLocked(c *gin.Context, deviceID string) {
 	worker := s.pool.GetWorker(deviceID)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到"})
@@ -1286,8 +1296,7 @@ func (s *Server) handleSMSDelivery(c *gin.Context) {
 }
 
 // handleVoWiFiEnable 为指定设备启用 VoWiFi
-func (s *Server) handleVoWiFiEnable(c *gin.Context) {
-	deviceID := deviceIDParam(c)
+func (s *Server) handleVoWiFiEnableLocked(c *gin.Context, deviceID string) {
 	if deviceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "请指定设备 ID"})
 		return
@@ -1323,9 +1332,7 @@ func (s *Server) handleVoWiFiEnable(c *gin.Context) {
 }
 
 // handleVoWiFiDisable 禁用 VoWiFi，保留当前射频/网络状态
-func (s *Server) handleVoWiFiDisable(c *gin.Context) {
-	deviceID := deviceIDParam(c)
-
+func (s *Server) handleVoWiFiDisableLocked(c *gin.Context, deviceID string) {
 	if s.pool == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "message": "服务未就绪"})
 		return

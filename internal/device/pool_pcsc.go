@@ -78,34 +78,50 @@ func (p *Pool) reconcilePCSCReaders(opts rescanReconnectOptions, allDevices, dev
 	if err != nil {
 		return fmt.Errorf("PC/SC 读卡器重扫失败: %w", err)
 	}
-	for _, cfg := range devices {
-		if !FreeDeviceLimitAllowsConfiguredDevice(allDevices, cfg.ID) {
-			continue
-		}
-		reader, found := pcsc.MatchReader(readers, pcscSelector(cfg))
-		worker := p.GetWorker(cfg.ID)
-		if !found || !reader.CardPresent {
-			p.removeMissingPCSCWorker(opts, cfg, worker)
-			continue
-		}
-		if worker != nil || !opts.allowWorkerMutation(cfg.ID) {
-			continue
-		}
-		logger.Info("检测到 PC/SC 卡片上线，自动启动", "device", cfg.ID, "reader", reader.Name)
-		startedWorker, err := p.AddWorkerFromConfig(bindPCSCReader(cfg, reader))
-		if err != nil {
-			logger.Warn("自动启动 PC/SC 设备失败", "device", cfg.ID, "err", err)
-			continue
-		}
-		if cfg.VoWiFiEnabled {
-			start := p.captureVoWiFiReadyStart(startedWorker)
-			go p.enablePCSCVoWiFiAfterRecovery(start)
-		}
+	for _, snapshot := range devices {
+		p.reconcilePCSCReader(opts, allDevices, snapshot, readers)
 	}
 	return nil
 }
 
+func (p *Pool) reconcilePCSCReader(
+	opts rescanReconnectOptions,
+	fallback []config.DeviceConfig,
+	snapshot config.DeviceConfig,
+	readers []pcsc.Reader,
+) {
+	releaseMutation := p.AcquireManagedDeviceMutation(snapshot.ID)
+	defer releaseMutation()
+	devices := p.managedDevicesAfterLease(fallback)
+	cfg, ok := configuredDeviceByID(devices, snapshot.ID)
+	if !ok || resolvedBackendMode(cfg) != backend.BackendPCSC ||
+		!FreeDeviceLimitAllowsConfiguredDevice(devices, cfg.ID) || !opts.allowWorkerMutation(cfg.ID) {
+		return
+	}
+	reader, found := pcsc.MatchReader(readers, pcscSelector(cfg))
+	worker := p.GetWorker(cfg.ID)
+	if !found || !reader.CardPresent {
+		p.removeMissingPCSCWorker(opts, cfg, worker)
+		return
+	}
+	if worker != nil {
+		return
+	}
+	logger.Info("检测到 PC/SC 卡片上线，自动启动", "device", cfg.ID, "reader", reader.Name)
+	startedWorker, err := p.AddWorkerFromConfig(bindPCSCReader(cfg, reader))
+	if err != nil {
+		logger.Warn("自动启动 PC/SC 设备失败", "device", cfg.ID, "err", err)
+		return
+	}
+	if startedWorker.Config.VoWiFiEnabled {
+		start := p.captureVoWiFiReadyStart(startedWorker)
+		go p.enablePCSCVoWiFiAfterRecovery(start)
+	}
+}
+
 func (p *Pool) RetryPCSCPIN(ctx context.Context, deviceID string) error {
+	releaseMutation := p.AcquireManagedDeviceMutation(deviceID)
+	defer releaseMutation()
 	cfg, err := config.GetDeviceByID(deviceID)
 	if err != nil {
 		return fmt.Errorf("读取设备 %s 配置失败: %w", deviceID, err)
@@ -132,7 +148,7 @@ func (p *Pool) pcscMonitorLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-ticker.C:
-			devices := config.ListDevices()
+			devices := p.managedDevices()
 			_, readers := partitionManagedDevices(devices)
 			if err := p.reconcilePCSCReaders(rescanReconnectOptions{}, devices, readers); err != nil {
 				logger.Debug("PC/SC 卡片状态轮询失败", "err", err)

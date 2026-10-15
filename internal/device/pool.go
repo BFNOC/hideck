@@ -200,6 +200,7 @@ type Pool struct {
 	modemRebootCancels        map[string]chan struct{}
 	modemRebootGeneration     map[string]uint64
 	cfg                       *config.Config
+	managedDeviceSource       func() []config.DeviceConfig
 	notifier                  Notifier
 	mu                        sync.RWMutex
 	managedMutationMu         sync.Mutex
@@ -307,6 +308,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		atPortLocks:            make(map[string]chan struct{}),
 		openATSession:          openDeviceATSession,
 	}
+	p.managedDeviceSource = newManagedDeviceSource(cfg)
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)
 	p.voWiFiHost().ConfigureRuntimeRecycleHandler(p.handleVoWiFiRuntimeRecycle)
@@ -315,6 +317,28 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 	p.modemVoiceCtl = p.newModemVoiceController()
 
 	return p
+}
+
+func newManagedDeviceSource(cfg *config.Config) func() []config.DeviceConfig {
+	// The production pool follows config reloads; isolated pools retain their injected source.
+	if cfg != nil && cfg == config.GetConfig() {
+		return func() []config.DeviceConfig {
+			return append([]config.DeviceConfig(nil), config.ListDevices()...)
+		}
+	}
+	return func() []config.DeviceConfig {
+		if cfg == nil {
+			return nil
+		}
+		return append([]config.DeviceConfig(nil), cfg.Devices...)
+	}
+}
+
+func (p *Pool) managedDevices() []config.DeviceConfig {
+	if p == nil || p.managedDeviceSource == nil {
+		return nil
+	}
+	return p.managedDeviceSource()
 }
 
 func (p *Pool) OnDataConnected(handler func(deviceID string)) {
@@ -1129,6 +1153,8 @@ func (p *Pool) confirmSIMRemovedForOwner(owner workerLifecycleOwner, source stri
 	if !p.consumeSIMEventTimer(deviceID, expected) {
 		return
 	}
+	releaseMutation := p.AcquireManagedDeviceMutation(deviceID)
+	defer releaseMutation()
 	transition := p.policyTransitionFor(deviceID)
 	transition.Lock()
 	if !p.workerLifecycleOwnerCurrent(owner) {
@@ -1947,219 +1973,19 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 
 	liveWorkerIndex := BuildWorkerDiscoveryIndex(p.GetAllWorkers(), false)
 	hardware := p.collectRescanHardware(discovered, liveWorkerIndex)
-	managed := config.ListDevices()
+	managed := p.managedDevices()
 	modemDevices, pcscDevices := partitionManagedDevices(managed)
 	resolved := ResolveDeviceIdentities(hardware, modemDevices)
 
 	if len(resolved.Degraded) > 0 || len(resolved.Unmatched) > 0 {
 		logger.Debug("rescan 发现未匹配或退化设备", "degraded", len(resolved.Degraded), "unmatched", len(resolved.Unmatched))
 	}
-
 	for _, pair := range resolved.Matched {
-		md := pair.Config
-		if !FreeDeviceLimitAllowsConfiguredDevice(managed, md.ID) {
-			logger.Warn("当前版本设备数量限制，跳过启动配置设备",
-				"device", md.ID,
-				"limit", DefaultFreeDeviceLimit)
-			continue
-		}
-
-		hw := pair.Hardware
-		useQMI := requiresQMICore(md)
-		worker := p.GetWorker(md.ID)
-
-		if pair.BackfillIMEI != "" {
-			md.ModemIMEI = pair.BackfillIMEI
-		}
-
-		if worker == nil {
-			if !opts.allowWorkerMutation(md.ID) {
-				logger.Debug("跳过非目标设备自动启动：当前处于手动重启恢复重扫窗口",
-					"device", md.ID,
-					"target_device", opts.targetDeviceID)
-				continue
-			}
-			// Worker 不存在，需要启动
-			logger.Info("检测到设备上线，自动启动", "device", md.ID, "imei", md.ModemIMEI)
-			cfg := md
-			if !useQMI {
-				if hw.NetInterface != "" {
-					cfg.Interface = hw.NetInterface
-				}
-				cfg.ControlDevice = strings.TrimSpace(hw.ControlPath)
-				cfg.QMIDevice = strings.TrimSpace(hw.ControlPath)
-				cfg.ATPort = hw.ATPort
-				cfg.ManagePort = hw.ATPort
-			} else {
-				cfg = applyQMIManagedAttachment(cfg, QMIDevice{
-					ControlPath:  hw.ControlPath,
-					NetInterface: hw.NetInterface,
-					USBPath:      hw.USBPath,
-					ATPort:       hw.ATPort,
-				})
-			}
-			if p.lifecycle != nil {
-				p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_device_online", qmiLifecycleRecoveryTTL)
-			}
-			startedWorker, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg))
-			if err != nil {
-				logger.Warn("自动启动设备失败", "device", md.ID, "err", err)
-			} else if md.VoWiFiEnabled {
-				start := p.captureVoWiFiReadyStart(startedWorker)
-				deviceID := startedWorker.ID
-				go func() {
-					if err := p.enableVoWiFiWhenReady(start, 5*time.Second, "device_recovery"); err != nil {
-						logger.Warn("设备恢复后自动重启 VoWiFi 失败", "device", deviceID, "err", err)
-					}
-				}()
-			}
-		} else if !worker.IsDeviceHealthy() {
-			if !opts.allowWorkerMutation(md.ID) {
-				logger.Debug("跳过非目标设备重新初始化：当前处于手动重启恢复重扫窗口",
-					"device", md.ID,
-					"target_device", opts.targetDeviceID)
-				continue
-			}
-			// Worker 存在但不健康，需要重建
-			logger.Info("检测到设备恢复，尝试重新初始化", "device", md.ID, "imei", md.ModemIMEI)
-			p.teardownVoWiFiForReconnect(md.ID)
-			if p.lifecycle != nil {
-				p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_reinitialize", qmiLifecycleRecoveryTTL)
-			}
-			_ = p.RemoveWorker(md.ID)
-			cfg := md
-			if !useQMI {
-				if hw.NetInterface != "" {
-					cfg.Interface = hw.NetInterface
-				}
-				cfg.ControlDevice = strings.TrimSpace(hw.ControlPath)
-				cfg.QMIDevice = strings.TrimSpace(hw.ControlPath)
-				cfg.ATPort = hw.ATPort
-				cfg.ManagePort = hw.ATPort
-			} else {
-				cfg = applyQMIManagedAttachment(cfg, QMIDevice{
-					ControlPath:  hw.ControlPath,
-					NetInterface: hw.NetInterface,
-					USBPath:      hw.USBPath,
-					ATPort:       hw.ATPort,
-				})
-			}
-			startedWorker, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg))
-			if err != nil {
-				logger.Warn("重新初始化设备失败", "device", md.ID, "err", err)
-			} else if md.VoWiFiEnabled {
-				start := p.captureVoWiFiReadyStart(startedWorker)
-				deviceID := startedWorker.ID
-				go func() {
-					if err := p.enableVoWiFiWhenReady(start, 5*time.Second, "device_recovery"); err != nil {
-						logger.Warn("设备恢复后自动重启 VoWiFi 失败", "device", deviceID, "err", err)
-					}
-				}()
-			}
-		} else {
-			// Worker 存在且标记为健康
-			hwQMI := QMIDevice{
-				ControlPath:  hw.ControlPath,
-				NetInterface: hw.NetInterface,
-				USBPath:      hw.USBPath,
-				ATPort:       hw.ATPort,
-			}
-			if useQMI {
-				if changed, _ := qmiHealthyWorkerAttachmentUpdate(worker, hwQMI); changed {
-					if !opts.allowWorkerMutation(md.ID) {
-						logger.Debug("跳过非目标设备 QMI 路径变化重建：当前处于手动重启恢复重扫窗口",
-							"device", md.ID,
-							"target_device", opts.targetDeviceID,
-							"old_control", worker.Config.ControlDevice,
-							"new_control", hw.ControlPath,
-							"old_interface", worker.Config.Interface,
-							"new_interface", hw.NetInterface)
-						continue
-					}
-					nextCfg := applyQMIManagedAttachment(md, hwQMI)
-					logger.Info("检测到 QMI 设备路径变化，重建 Worker",
-						"device", md.ID,
-						"old_control", worker.Config.ControlDevice,
-						"new_control", nextCfg.ControlDevice,
-						"old_interface", worker.Config.Interface,
-						"new_interface", nextCfg.Interface,
-						"old_usb_path", worker.Config.USBPath,
-						"new_usb_path", nextCfg.USBPath)
-					p.teardownVoWiFiForReconnect(md.ID)
-					if p.lifecycle != nil {
-						p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_qmi_path_change", qmiLifecycleRecoveryTTL)
-					}
-					if err := p.RemoveWorker(md.ID); err != nil {
-						logger.Warn("移除旧 QMI Worker 失败", "device", md.ID, "err", err)
-						continue
-					}
-					startedWorker, err := p.AddWorkerFromConfig(withConnectHoldRF(nextCfg))
-					if err != nil {
-						logger.Warn("使用新 QMI 路径重建 Worker 失败", "device", md.ID, "err", err)
-					} else if md.VoWiFiEnabled {
-						start := p.captureVoWiFiReadyStart(startedWorker)
-						deviceID := startedWorker.ID
-						go func() {
-							if err := p.enableVoWiFiWhenReady(start, 5*time.Second, "device_qmi_path_change"); err != nil {
-								logger.Warn("QMI 路径变化后自动重启 VoWiFi 失败", "device", deviceID, "err", err)
-							}
-						}()
-					}
-					continue
-				}
-			}
-			currentATPort := hw.ATPort
-			if currentATPort != "" && currentATPort != worker.Config.ATPort {
-				logger.Info("检测到设备端口变化，重建 Worker",
-					"device", md.ID, "old_port", worker.Config.ATPort, "new_port", currentATPort)
-				p.teardownVoWiFiForReconnect(md.ID)
-				if p.lifecycle != nil {
-					p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_port_change", qmiLifecycleRecoveryTTL)
-				}
-				_ = p.RemoveWorker(md.ID)
-				cfg := md
-				if !useQMI {
-					if hw.NetInterface != "" {
-						cfg.Interface = hw.NetInterface
-					}
-					cfg.ControlDevice = strings.TrimSpace(hw.ControlPath)
-					cfg.QMIDevice = strings.TrimSpace(hw.ControlPath)
-					cfg.ATPort = hw.ATPort
-					cfg.ManagePort = hw.ATPort
-				} else {
-					cfg = applyQMIManagedAttachment(cfg, hwQMI)
-				}
-				startedWorker, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg))
-				if err != nil {
-					logger.Warn("端口变化后重建设备失败", "device", md.ID, "err", err)
-				} else if md.VoWiFiEnabled {
-					start := p.captureVoWiFiReadyStart(startedWorker)
-					deviceID := startedWorker.ID
-					go func() {
-						if err := p.enableVoWiFiWhenReady(start, 5*time.Second, "device_port_change"); err != nil {
-							logger.Warn("端口变化后自动重启 VoWiFi 失败", "device", deviceID, "err", err)
-						}
-					}()
-				}
-			}
-		}
+		p.reconcileMatchedRescanDevice(opts, pair, managed)
 	}
 
-	for _, md := range resolved.Offline {
-		if !FreeDeviceLimitAllowsConfiguredDevice(managed, md.ID) {
-			continue
-		}
-		worker := p.GetWorker(md.ID)
-		if worker != nil {
-			logger.Info("检测到设备离线，清理 Worker 以便后续重建",
-				"device", md.ID, "imei", md.ModemIMEI,
-				"was_healthy", worker.IsDeviceHealthy())
-			p.teardownVoWiFiForReconnect(md.ID)
-			if p.lifecycle != nil {
-				p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseUSBWait, "rescan_device_missing", qmiLifecycleRecoveryTTL)
-			}
-			_ = p.RemoveWorker(md.ID)
-		}
+	for _, snapshot := range resolved.Offline {
+		p.reconcileOfflineRescanDevice(opts, snapshot, hardware, managed)
 	}
 
 	return p.reconcilePCSCReaders(opts, managed, pcscDevices)

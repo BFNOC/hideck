@@ -2202,6 +2202,8 @@ func (s *Server) handleEsimSwitchProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 
 	worker := s.pool.GetWorker(id)
 	if worker == nil || worker.EsimMgr == nil {
@@ -2264,8 +2266,11 @@ func (s *Server) handleEsimDisableProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "iccid 不能为空"})
 		return
 	}
+	id := deviceIDParam(c)
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 
-	worker := s.pool.GetWorker(deviceIDParam(c))
+	worker := s.pool.GetWorker(id)
 	if worker == nil || worker.EsimMgr == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
 		return
@@ -2403,6 +2408,8 @@ func (s *Server) handleEsimGetOverview(c *gin.Context) {
 //	{"step":"error","msg":"<错误信息>","pct":-1}
 func (s *Server) handleEsimDownloadProfile(c *gin.Context) {
 	id := deviceIDParam(c)
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 	worker := s.pool.GetWorker(id)
 	if worker == nil || worker.EsimMgr == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
@@ -2502,6 +2509,8 @@ func (s *Server) handleEsimRenameProfile(c *gin.Context) {
 func (s *Server) handleEsimDeleteProfile(c *gin.Context) {
 	id := deviceIDParam(c)
 	iccid := c.Param("iccid")
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 	worker := s.pool.GetWorker(id)
 	if worker == nil || worker.EsimMgr == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
@@ -2877,6 +2886,16 @@ func validateRebootWorkerIdentity(ctx context.Context, worker *device.Worker) er
 // handleDeviceMgmtReconnectVoWiFi 执行重连 VoWiFi 的操作
 func (s *Server) handleDeviceMgmtReconnectVoWiFi(c *gin.Context) {
 	id := deviceIDParam(c)
+	if id == "" || s == nil || s.pool == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "设备参数无效"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
+	if s.pool.IsESIMSwitching(id) {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切换 SIM，暂不能重连 VoWiFi"})
+		return
+	}
 
 	// 验证设备存在（硬件/传输配置仍在 config.yaml）
 	md, err := config.GetDeviceByID(id)

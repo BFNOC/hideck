@@ -38,10 +38,16 @@ func (w *Worker) markSIMRemoved(reason string) {
 }
 
 func (p *Pool) retirePhoneRuntimesForSIMChange(owner workerLifecycleOwner) error {
-	if p == nil || owner.worker == nil || !p.workerLifecycleOwnerCurrent(owner) {
+	if p == nil || owner.worker == nil {
 		return errPolicyOwnerChanged
 	}
 	deviceID := owner.worker.ID
+	transition := p.policyTransitionFor(deviceID)
+	transition.Lock()
+	defer transition.Unlock()
+	if !p.workerLifecycleOwnerCurrent(owner) {
+		return errPolicyOwnerChanged
+	}
 	p.stopNativeVoLTE(deviceID, "sim_identity_changed")
 	if err := p.stopModemVoice(deviceID); err != nil {
 		return fmt.Errorf("stop modem voice: %w", err)

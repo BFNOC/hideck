@@ -58,6 +58,10 @@ func TestDeviceActionsWaitForManagedDeviceMutation(t *testing.T) {
 		{name: "reboot", method: http.MethodPost, handle: (*Server).handleDeviceMgmtReboot},
 		{name: "start network", method: http.MethodPost, handle: (*Server).handleDeviceMgmtStartNetwork},
 		{name: "stop network", method: http.MethodPost, handle: (*Server).handleDeviceMgmtStopNetwork},
+		{name: "esim switch", method: http.MethodPost, body: `{"iccid":"8901"}`, handle: (*Server).handleEsimSwitchProfile},
+		{name: "esim disable", method: http.MethodPost, body: `{"iccid":"8901"}`, handle: (*Server).handleEsimDisableProfile},
+		{name: "esim download", method: http.MethodGet, handle: (*Server).handleEsimDownloadProfile},
+		{name: "esim delete", method: http.MethodDelete, handle: (*Server).handleEsimDeleteProfile},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -90,6 +94,50 @@ func TestDeviceActionsWaitForManagedDeviceMutation(t *testing.T) {
 			}
 			if recorder.Code != http.StatusNotFound {
 				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestPolicyActionsWaitForManagedDeviceMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name   string
+		body   string
+		handle func(*Server, *gin.Context)
+	}{
+		{name: "network policy", body: `{"enabled":true}`, handle: (*Server).handleDeviceNetworkPatch},
+		{name: "phone policy", body: `{"enabled":true}`, handle: (*Server).handleDeviceVoWiFiPatch},
+		{name: "vowifi reconnect", handle: (*Server).handleDeviceMgmtReconnectVoWiFi},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pool := device.NewPool(&config.Config{})
+			t.Cleanup(func() { _ = pool.Shutdown() })
+			releaseMutation := pool.AcquireManagedDeviceMutation("dev-1")
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "device_id", Value: "dev-1"}}
+			ctx.Request = httptest.NewRequest(http.MethodPatch, "/devices/dev-1/action", strings.NewReader(test.body))
+			if test.body != "" {
+				ctx.Request.Header.Set("Content-Type", "application/json")
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				test.handle(&Server{pool: pool}, ctx)
+			}()
+
+			select {
+			case <-done:
+				t.Fatal("policy action bypassed the managed mutation lease")
+			case <-time.After(20 * time.Millisecond):
+			}
+			releaseMutation()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("policy action did not resume after mutation lease release")
 			}
 		})
 	}

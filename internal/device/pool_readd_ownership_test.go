@@ -143,6 +143,83 @@ func TestStaleSIMAndWakeEventsDoNotTargetReplacementWorker(t *testing.T) {
 	}
 }
 
+func TestSIMIdentityRuntimeRetirementRejectsReplacementWorker(t *testing.T) {
+	p := NewPool(&config.Config{})
+	old := &Worker{ID: "dev"}
+	p.AttachWorkerForTest(old)
+	owner := p.captureWorkerLifecycleOwner(old.ID)
+	transition := p.policyTransitionFor(old.ID)
+	transition.Lock()
+	done := make(chan error, 1)
+	go func() { done <- p.retirePhoneRuntimesForSIMChange(owner) }()
+
+	select {
+	case <-done:
+		t.Fatal("runtime retirement bypassed the policy transition lock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	replaceWorkerForLifecycleTest(p, &Worker{ID: old.ID})
+	transition.Unlock()
+	if err := <-done; err != errPolicyOwnerChanged {
+		t.Fatalf("retirement error=%v, want %v", err, errPolicyOwnerChanged)
+	}
+}
+
+func TestCurrentMatchedRescanPairRejectsDeletedSnapshot(t *testing.T) {
+	snapshot := MatchedPair{
+		Config:   config.DeviceConfig{ID: "dev", ModemIMEI: "860000000004004"},
+		Hardware: CompatibleModem{IMEI: "860000000004004"},
+	}
+	if _, ok := matchConfiguredRescanPair(snapshot, []config.DeviceConfig{}); ok {
+		t.Fatal("deleted configuration was accepted from a stale rescan snapshot")
+	}
+}
+
+func TestCurrentMatchedRescanPairReloadsReboundIdentity(t *testing.T) {
+	snapshot := MatchedPair{
+		Config:   config.DeviceConfig{ID: "dev", ModemIMEI: "860000000004004"},
+		Hardware: CompatibleModem{IMEI: "860000000004004"},
+	}
+	rebound := []config.DeviceConfig{{ID: "dev", ModemIMEI: "860000000005005"}}
+	if _, ok := matchConfiguredRescanPair(snapshot, rebound); ok {
+		t.Fatal("rebound configuration reused hardware matched by the stale identity")
+	}
+}
+
+func TestMatchedRescanRejectsConfigurationDeletedWhileWaitingForMutation(t *testing.T) {
+	cfg := &config.Config{Devices: []config.DeviceConfig{{
+		ID: "dev", ModemIMEI: "860000000004004",
+	}}}
+	p := NewPool(cfg)
+	t.Cleanup(func() { _ = p.Shutdown() })
+	release := p.AcquireManagedDeviceMutation("dev")
+	configured := append([]config.DeviceConfig(nil), cfg.Devices...)
+	snapshot := MatchedPair{
+		Config: configured[0], Hardware: CompatibleModem{IMEI: "860000000004004"},
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.reconcileMatchedRescanDevice(rescanReconnectOptions{}, snapshot, configured)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("rescan bypassed the managed mutation lease")
+	case <-time.After(20 * time.Millisecond):
+	}
+	cfg.Devices = nil
+	release()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("rescan did not resume after mutation lease release")
+	}
+	if worker := p.GetWorker("dev"); worker != nil {
+		t.Fatalf("stale scan recreated deleted worker: %+v", worker)
+	}
+}
+
 func TestStaleATDisconnectDoesNotStartReplacementRecovery(t *testing.T) {
 	p := NewPool(&config.Config{})
 	old := &Worker{ID: "dev"}
