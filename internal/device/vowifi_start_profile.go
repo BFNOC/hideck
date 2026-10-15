@@ -162,12 +162,14 @@ func (p *Pool) resolveVoWiFiSMSC(worker *Worker, imsi, iccid, traceID string) st
 
 func buildVoWiFiRawProfile(profile identity.Profile) identity.Profile {
 	return identity.Profile{
-		ICCID: strings.TrimSpace(profile.ICCID),
-		IMSI:  strings.TrimSpace(profile.IMSI),
-		MCC:   strings.TrimSpace(profile.MCC),
-		MNC:   strings.TrimSpace(profile.MNC),
-		IMEI:  strings.TrimSpace(profile.IMEI),
-		SMSC:  strings.TrimSpace(profile.SMSC),
+		ICCID:     strings.TrimSpace(profile.ICCID),
+		IMSI:      strings.TrimSpace(profile.IMSI),
+		MCC:       strings.TrimSpace(profile.MCC),
+		MNC:       strings.TrimSpace(profile.MNC),
+		IMEI:      strings.TrimSpace(profile.IMEI),
+		UserAgent: strings.TrimSpace(profile.UserAgent),
+		SMSC:      strings.TrimSpace(profile.SMSC),
+		IMSDomain: strings.TrimSpace(profile.IMSDomain),
 	}
 }
 
