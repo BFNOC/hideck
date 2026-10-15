@@ -1147,15 +1147,21 @@ func (p *Pool) consumeSIMEventTimer(deviceID string, expected *time.Timer) bool 
 }
 
 type simInsertionRefreshResult struct {
-	current bool
-	err     error
+	current         bool
+	identityChanged bool
+	err             error
 }
 
 // Caller holds the device policy transition lock.
 func (p *Pool) refreshConfirmedSIMInsertion(owner workerLifecycleOwner) simInsertionRefreshResult {
 	w := owner.worker
+	previous := currentSIMOwnership(w)
 	_, err := p.refreshWorkerIdentityState(w, "sim_status_inserted")
-	return simInsertionRefreshResult{current: p.workerLifecycleOwnerCurrent(owner), err: err}
+	return simInsertionRefreshResult{
+		current:         p.workerLifecycleOwnerCurrent(owner),
+		identityChanged: err == nil && currentSIMOwnership(w) != previous,
+		err:             err,
+	}
 }
 
 func (p *Pool) finishConfirmedSIMInsertion(owner workerLifecycleOwner, source string, result simInsertionRefreshResult) {
@@ -1168,13 +1174,25 @@ func (p *Pool) finishConfirmedSIMInsertion(owner workerLifecycleOwner, source st
 		logger.Warn("SIM 插入后刷新身份失败", "device", w.ID, "source", source, "err", result.err)
 		return
 	}
-	if result := p.resolveAndApplyPolicy(w, "sim_status_inserted"); result.Err != nil {
-		logger.Warn("SIM 插入后应用卡策略失败", "device", w.ID, "source", source, "err", result.Err)
+	if result.identityChanged {
+		if err := p.retirePhoneRuntimesForSIMChange(owner); err != nil {
+			logger.Warn("SIM 身份变化后停止旧电话运行时失败", "device", w.ID, "source", source, "err", err)
+			return
+		}
+	}
+	policyResult := p.resolveAndApplyPolicy(w, "sim_status_inserted")
+	if policyResult.Err != nil {
+		logger.Warn("SIM 插入后应用卡策略失败", "device", w.ID, "source", source, "err", policyResult.Err)
 		return
 	}
-	if p.workerLifecycleOwnerCurrent(owner) {
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(w.ID, "post_switch_"+strings.TrimSpace(source))
+	if !policyResult.Applied {
+		logger.Info("SIM 插入后卡策略尚未应用，等待后续收敛", "device", w.ID, "source", source, "reason", policyResult.Reason)
+		return
 	}
+	if !p.workerLifecycleOwnerCurrent(owner) {
+		return
+	}
+	p.wakeDesiredVoWiFiRecoverFromDeviceEvent(w.ID, "post_switch_"+strings.TrimSpace(source))
 }
 
 // Caller holds the device policy transition lock.
@@ -1191,7 +1209,9 @@ func (p *Pool) handleConfirmedSIMRemoval(owner workerLifecycleOwner, source stri
 	p.detachPersistedSIMBinding(w)
 	p.broadcastVoWiFiStateChange(deviceID)
 	p.clearDesiredVoWiFiRecoverState(deviceID)
-	if !p.IsVoWiFiActive(deviceID) {
+	p.stopNativeVoLTE(deviceID, "sim_removed")
+	_ = p.stopModemVoice(deviceID)
+	if !p.IsVoWiFiActive(deviceID) && !p.voWiFiHost().Starting(deviceID) && p.GetVoWiFiAppForDevice(deviceID) == nil {
 		return
 	}
 	logger.Warn("检测到 SIM 已拔出，自动停止 VoWiFi", "device", deviceID, "source", source)

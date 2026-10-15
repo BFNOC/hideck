@@ -1,6 +1,7 @@
 package device
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,6 +35,27 @@ func (w *Worker) markSIMRemoved(reason string) {
 	w.state.Meta.RuntimeUpdatedAt = now
 	w.state.Meta.UpdatedAt = now
 	w.cacheMu.Unlock()
+}
+
+func (p *Pool) retirePhoneRuntimesForSIMChange(owner workerLifecycleOwner) error {
+	if p == nil || owner.worker == nil || !p.workerLifecycleOwnerCurrent(owner) {
+		return errPolicyOwnerChanged
+	}
+	deviceID := owner.worker.ID
+	p.stopNativeVoLTE(deviceID, "sim_identity_changed")
+	if err := p.stopModemVoice(deviceID); err != nil {
+		return fmt.Errorf("stop modem voice: %w", err)
+	}
+	if !p.IsVoWiFiActive(deviceID) && !p.voWiFiHost().Starting(deviceID) && p.GetVoWiFiAppForDevice(deviceID) == nil {
+		return nil
+	}
+	if err := p.voWiFiHost().Disable(p.Context(), deviceID, "sim_identity_changed", false); err != nil {
+		return fmt.Errorf("stop VoWiFi: %w", err)
+	}
+	if !p.workerLifecycleOwnerCurrent(owner) {
+		return errPolicyOwnerChanged
+	}
+	return nil
 }
 
 func (p *Pool) detachPersistedSIMBinding(worker *Worker) {
