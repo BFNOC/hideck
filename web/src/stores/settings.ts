@@ -148,6 +148,7 @@ const DEFAULT_WEBHOOK_SETTINGS: WebhookSettings = {
   timeout_ms: 5000,
   retry_max: 3,
   text_template: '{{device_label}} {{text}}',
+  payload_template: '',
   headers: {}
 }
 
@@ -285,6 +286,7 @@ export const useSettingsStore = defineStore('settings', () => {
         timeout_ms: webhook.timeout_ms ?? 5000,
         retry_max: webhook.retry_max ?? 3,
         text_template: webhook.text_template ?? '{{device_label}} {{text}}',
+        payload_template: webhook.payload_template ?? '',
         headers: webhook.headers && typeof webhook.headers === 'object' ? { ...webhook.headers } : {}
       }
       const bark = result.data.bark || {}
@@ -500,6 +502,7 @@ export const useSettingsStore = defineStore('settings', () => {
         timeout_ms: Number(webhookSettings.value.timeout_ms) || 5000,
         retry_max: Number(webhookSettings.value.retry_max) || 3,
         text_template: String(webhookSettings.value.text_template || ''),
+        payload_template: String(webhookSettings.value.payload_template || ''),
         headers: sanitizeWebhookHeaders(webhookSettings.value.headers)
       },
       bark: {
@@ -533,6 +536,7 @@ export const useSettingsStore = defineStore('settings', () => {
       timeout_ms: Number(webhookSettings.value.timeout_ms) || 5000,
       retry_max: Number(webhookSettings.value.retry_max) || 3,
       text_template: String(webhookSettings.value.text_template || ''),
+      payload_template: String(webhookSettings.value.payload_template || ''),
       headers: sanitizeWebhookHeaders(webhookSettings.value.headers)
     }
     const result = await systemService.testWebhook(payload)

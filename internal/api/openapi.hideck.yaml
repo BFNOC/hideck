@@ -4992,6 +4992,9 @@ components:
           type: integer
         text_template:
           type: string
+        payload_template:
+          type: string
+          description: 可选的完整 JSON 请求体模板；留空使用默认 Webhook payload。模板变量必须直接作为 JSON 值使用。
 
     WeixinSettings:
       type: object
@@ -5093,6 +5096,8 @@ components:
         retry_max:
           type: integer
         text_template:
+          type: string
+        payload_template:
           type: string
 
     TestWebhookResponse:

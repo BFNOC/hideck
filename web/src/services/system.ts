@@ -86,6 +86,7 @@ export type WebhookSettings = {
   timeout_ms: number
   retry_max: number
   text_template: string
+  payload_template: string
   headers: Record<string, string>
 }
 
@@ -184,6 +185,7 @@ export type SaveNotificationsPayload = {
     timeout_ms: number
     retry_max: number
     text_template: string
+    payload_template: string
     headers?: Record<string, string>
   }
   bark: {
@@ -208,6 +210,7 @@ export type TestWebhookPayload = {
   timeout_ms: number
   retry_max: number
   text_template: string
+  payload_template: string
   headers?: Record<string, string>
 }
 

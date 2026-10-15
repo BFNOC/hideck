@@ -937,6 +937,24 @@ onMounted(() => {
                       支持占位符：<code v-pre>{{text}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{local_number}}</code>（收到短信的本机号码，无号码时为 ICCID 尾号）。留空则直接发送原始 text。
                     </div>
                   </div>
+
+                  <div class="space-y-1">
+                    <label class="text-xs font-bold text-[var(--ui-muted)] uppercase tracking-wider">JSON 请求体模板</label>
+                    <el-input
+                      v-model="webhookSettings.payload_template"
+                      :disabled="!webhookSettings.enabled"
+                      type="textarea"
+                      :rows="7"
+                      resize="vertical"
+                      placeholder="留空使用 HiDeck 默认 JSON 请求体"
+                      class="font-mono"
+                    />
+                    <div class="text-xs leading-relaxed text-[var(--ui-muted)] mt-1">
+                      用于 Server酱等要求特定字段的服务。变量必须直接作为 JSON 值使用，例如
+                      <code v-pre>{"title":{{title}},"desp":{{message}}}</code>。
+                      支持 <code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{event}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{local_number}}</code>、<code v-pre>{{device_id}}</code> 和 <code v-pre>{{device_label}}</code>。
+                    </div>
+                  </div>
                   
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div class="space-y-1">

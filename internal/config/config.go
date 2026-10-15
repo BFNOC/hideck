@@ -295,13 +295,14 @@ type WeComBotConfig struct {
 }
 
 type WebhookConfig struct {
-	Enabled      bool              `mapstructure:"enabled"`
-	URLs         []string          `mapstructure:"urls"`
-	Secret       string            `mapstructure:"secret"`
-	TimeoutMs    int               `mapstructure:"timeout_ms"`
-	RetryMax     int               `mapstructure:"retry_max"`
-	TextTemplate string            `mapstructure:"text_template"`
-	Headers      map[string]string `mapstructure:"headers,omitempty" json:"headers,omitempty"`
+	Enabled         bool              `mapstructure:"enabled"`
+	URLs            []string          `mapstructure:"urls"`
+	Secret          string            `mapstructure:"secret"`
+	TimeoutMs       int               `mapstructure:"timeout_ms"`
+	RetryMax        int               `mapstructure:"retry_max"`
+	TextTemplate    string            `mapstructure:"text_template"`
+	PayloadTemplate string            `mapstructure:"payload_template"`
+	Headers         map[string]string `mapstructure:"headers,omitempty" json:"headers,omitempty"`
 }
 
 type BarkConfig struct {
