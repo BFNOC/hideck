@@ -143,7 +143,8 @@ func (p *Pool) launchLebaraUKIdentityRecover(w *Worker, iccid string, manual, fr
 	if !manual && !class.LiveFlipped && p.pinnedLebaraUKRecoverICCID(w.ID) == "" {
 		return nil
 	}
-	if !p.beginLebaraUKIdentityRecover(w, target, manual) {
+	run := p.beginLebaraUKIdentityRecoverRun(w, target, manual)
+	if run == nil {
 		snap := p.LebaraUKIdentityRecoverSnapshot(w.ID)
 		if snap.InFlight {
 			return nil
@@ -156,7 +157,6 @@ func (p *Pool) launchLebaraUKIdentityRecover(w *Worker, iccid string, manual, fr
 		}
 		return nil
 	}
-	run := p.currentLebaraUKIdentityRecover(w.ID)
 	go p.runLebaraUKIdentityRecoverState(w, manual, run)
 	return nil
 }
@@ -186,8 +186,16 @@ func (p *Pool) pinnedLebaraUKRecoverICCID(deviceID string) string {
 }
 
 func (p *Pool) beginLebaraUKIdentityRecover(w *Worker, iccid string, manual bool) bool {
+	return p.beginLebaraUKIdentityRecoverRun(w, iccid, manual) != nil
+}
+
+func (p *Pool) beginLebaraUKIdentityRecoverRun(
+	w *Worker,
+	iccid string,
+	manual bool,
+) *lebaraUKIdentityRecoverState {
 	if p == nil || w == nil {
-		return false
+		return nil
 	}
 	deviceID := strings.TrimSpace(w.ID)
 	pinned := normalizeSIMIdentity(iccid)
@@ -202,7 +210,7 @@ func (p *Pool) beginLebaraUKIdentityRecover(w *Worker, iccid string, manual bool
 	}
 	if deviceID == "" || pinned == "" {
 		p.lebaraRecoverMu.Unlock()
-		return false
+		return nil
 	}
 	if p.lebaraRecover == nil {
 		p.lebaraRecover = make(map[string]*lebaraUKIdentityRecoverState)
@@ -210,7 +218,7 @@ func (p *Pool) beginLebaraUKIdentityRecover(w *Worker, iccid string, manual bool
 	state := p.lebaraRecover[deviceID]
 	if state != nil && state.InFlight {
 		p.lebaraRecoverMu.Unlock()
-		return false
+		return nil
 	}
 	if state != nil && !manual && normalizeSIMIdentityForCompare(state.ICCID) == normalizeSIMIdentityForCompare(pinned) &&
 		state.Attempts >= lebaraUKIdentityRecoverMaxRounds {
@@ -218,7 +226,7 @@ func (p *Pool) beginLebaraUKIdentityRecover(w *Worker, iccid string, manual bool
 		state.Message = ErrLebaraUKIdentityRecoverStopped.Error()
 		state.UpdatedAt = time.Now()
 		p.lebaraRecoverMu.Unlock()
-		return false
+		return nil
 	}
 	attempts := 0
 	if state != nil && normalizeSIMIdentityForCompare(state.ICCID) == normalizeSIMIdentityForCompare(pinned) && !manual {
@@ -237,14 +245,18 @@ func (p *Pool) beginLebaraUKIdentityRecover(w *Worker, iccid string, manual bool
 	state.UpdatedAt = time.Now()
 	p.lebaraRecover[deviceID] = state
 	p.lebaraRecoverMu.Unlock()
-	return true
+	return state
 }
 
 func (p *Pool) runLebaraUKIdentityRecover(w *Worker, manual bool) {
 	if p == nil || w == nil {
 		return
 	}
-	p.runLebaraUKIdentityRecoverState(w, manual, p.currentLebaraUKIdentityRecover(w.ID))
+	run := p.currentLebaraUKIdentityRecover(w.ID)
+	if run == nil || run.owner.worker != w || run.owner.generation != w.generation {
+		return
+	}
+	p.runLebaraUKIdentityRecoverState(w, manual, run)
 }
 
 func (p *Pool) runLebaraUKIdentityRecoverState(w *Worker, manual bool, run *lebaraUKIdentityRecoverState) {

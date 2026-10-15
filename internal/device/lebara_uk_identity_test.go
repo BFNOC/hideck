@@ -218,6 +218,32 @@ func TestBeginLebaraUKIdentityRecoverCreatesNewRunState(t *testing.T) {
 	}
 }
 
+func TestBeginLebaraUKIdentityRecoverRunStaysBoundToCreatingWorker(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	oldWorker := &Worker{ID: "dev-1"}
+	oldWorker.state.Identity.ICCID = "8944000000000000087"
+	p.assignWorkerGeneration(oldWorker)
+	p.workers[oldWorker.ID] = oldWorker
+	oldRun := p.beginLebaraUKIdentityRecoverRun(oldWorker, "", false)
+	if oldRun == nil {
+		t.Fatal("begin old recovery")
+	}
+	p.cancelWorkerLifecycleTimers(oldWorker.ID)
+
+	newWorker := &Worker{ID: oldWorker.ID}
+	newWorker.state.Identity.ICCID = "8944000000000000087"
+	p.assignWorkerGeneration(newWorker)
+	p.workers[newWorker.ID] = newWorker
+	newRun := p.beginLebaraUKIdentityRecoverRun(newWorker, "", false)
+	if newRun == nil {
+		t.Fatal("begin replacement recovery")
+	}
+	if oldRun == newRun || oldRun.owner.worker != oldWorker || newRun.owner.worker != newWorker {
+		t.Fatalf("recovery ownership crossed workers: old=%+v new=%+v", oldRun.owner, newRun.owner)
+	}
+}
+
 func TestRecoverLebaraUKIdentityOnceSelfCycleThenVoWiFi(t *testing.T) {
 	withFastLebaraUKIdentityWait(t)
 	p := NewPool(&config.Config{})
