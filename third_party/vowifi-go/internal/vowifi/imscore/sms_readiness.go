@@ -1,6 +1,10 @@
 package imscore
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+)
 
 const (
 	smsReadyReasonReady             = "IMS SMS receiver ready"
@@ -114,8 +118,13 @@ func (s *Service) setSMSReceiverReady(ready bool) {
 	if ready {
 		s.maybeNotifySMSReady(smsReadyReasonReady)
 	}
-	if changed && callback != nil {
-		callback(s.SMSReadiness())
+	if !changed {
+		return
+	}
+	readiness := s.SMSReadiness()
+	s.logSMSReadinessChange(readiness)
+	if callback != nil {
+		callback(readiness)
 	}
 }
 
@@ -127,9 +136,24 @@ func (s *Service) notifySMSReadiness() {
 	callback := s.onSMSReadiness
 	s.mu.RUnlock()
 	s.maybeNotifySMSReady(smsReadyReasonReady)
+	readiness := s.SMSReadiness()
+	s.logSMSReadinessChange(readiness)
 	if callback != nil {
-		callback(s.SMSReadiness())
+		callback(readiness)
 	}
+}
+
+// logSMSReadinessChange logs each new readiness reason. The UI shows SMS RX
+// state from these snapshots, and the not-ready transitions were otherwise
+// visible only there.
+func (s *Service) logSMSReadinessChange(readiness SMSReadiness) {
+	if previous, _ := s.smsReadinessReason.Swap(readiness.Reason).(string); previous == readiness.Reason {
+		return
+	}
+	logging.Info("IMS SMS readiness changed",
+		"device", s.DeviceID(), "reason", readiness.Reason,
+		"ready", readiness.Ready, "health_ready", readiness.HealthReady,
+		"receiver_pending", readiness.ReceiverPending, "port_s_connected", s.portSPushReady.Load())
 }
 
 func evaluateSMSReadiness(registered, profileReady, transportReady, receiverReady bool, smsc string) SMSReadiness {
