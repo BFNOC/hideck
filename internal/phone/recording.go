@@ -18,7 +18,11 @@ func (s *Service) startMixedRecording(call *activeCall, media *MediaSession) {
 		var recorder *mixedRecorder
 		var recorderErr error
 		if pathErr == nil {
-			recorder, recorderErr = newMixedRecorder(path)
+			if call.autoAnswered {
+				recorder, recorderErr = newIncomingRecorder(path)
+			} else {
+				recorder, recorderErr = newMixedRecorder(path)
+			}
 		}
 		recordingErr := errors.Join(pathErr, recorderErr)
 		s.mu.Lock()

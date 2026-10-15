@@ -249,6 +249,7 @@ func (s *Service) autoAnswerCall(callID string) {
 	s.startMixedRecording(call, media)
 	media.StartPrompt(config.pcm, config.sampleRate, func(playErr error) {
 		logger.Error("自动接听录音播放失败", "device_id", call.view.DeviceID, "call_id", callID, "err", playErr)
+		s.failMediaAttachment(callID, playErr)
 	})
 	logger.Info("未接来电已自动接听", "device_id", call.view.DeviceID, "call_id", callID, "delay", config.delay)
 }

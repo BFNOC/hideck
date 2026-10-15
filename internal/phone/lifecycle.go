@@ -250,7 +250,7 @@ func (s *Service) attachOutboundMedia(callID, deviceID, mediaID string) *MediaSe
 func (s *Service) failMediaAttachment(callID string, err error) {
 	s.mu.Lock()
 	call := s.calls[callID]
-	if call == nil {
+	if call == nil || call.terminal {
 		s.mu.Unlock()
 		return
 	}
