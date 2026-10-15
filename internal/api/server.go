@@ -1013,6 +1013,12 @@ func (s *Server) handleRotate(c *gin.Context) {
 
 func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 	deviceID := deviceIDParam(c)
+	if deviceID == "" || s == nil || s.pool == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "设备参数无效"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(deviceID)
+	defer releaseMutation()
 	worker := s.pool.GetWorker(deviceID)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到"})
@@ -1034,7 +1040,7 @@ func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "启动数据网络失败: " + err.Error()})
 		return
 	}
-	go func() { _ = worker.RefreshRuntime(nil, "start_network") }()
+	go s.refreshManagedWorkerRuntime(worker, "start_network")
 	c.JSON(http.StatusOK, gin.H{
 		"status":            "ok",
 		"message":           "数据网络已启动",
@@ -1049,6 +1055,12 @@ func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 
 func (s *Server) handleDeviceMgmtStopNetwork(c *gin.Context) {
 	deviceID := deviceIDParam(c)
+	if deviceID == "" || s == nil || s.pool == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "设备参数无效"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(deviceID)
+	defer releaseMutation()
 	worker := s.pool.GetWorker(deviceID)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到"})
@@ -1063,7 +1075,7 @@ func (s *Server) handleDeviceMgmtStopNetwork(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "停止数据网络失败: " + err.Error()})
 		return
 	}
-	go func() { _ = worker.RefreshRuntime(nil, "stop_network") }()
+	go s.refreshManagedWorkerRuntime(worker, "stop_network")
 	c.JSON(http.StatusOK, gin.H{
 		"status":            "ok",
 		"message":           "数据网络已停止",

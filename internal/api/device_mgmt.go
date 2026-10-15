@@ -2717,6 +2717,8 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "参数错误"})
 		return
 	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 
 	worker := s.pool.GetWorker(id)
 	if worker == nil {
@@ -2764,14 +2766,7 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 	if err := s.pool.ApplyCurrentCardPolicy(id, "flight_mode_change"); err != nil {
 		logger.Debug("飞行切换后重投影卡策略失败", "device", id, "err", err)
 	}
-	go func(disabled bool) {
-		_ = worker.RefreshRuntime(nil, "flight_mode_change")
-		if !disabled {
-			// 切回在线后补一次延迟刷新，覆盖“先注册后PLMN”恢复窗口。
-			time.Sleep(3 * time.Second)
-			_ = worker.RefreshRuntime(nil, "flight_mode_recover")
-		}
-	}(!flightModeEnabled)
+	s.scheduleFlightModeRuntimeRefresh(worker, !flightModeEnabled)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":         "ok",
@@ -2792,6 +2787,16 @@ func shouldUseATFirstReboot(backendMode string) bool {
 // handleDeviceMgmtReboot 执行模组重启 (QMI 模式走 QMI ModeReset，AT 模式走 AT+CFUN=1,1)
 func (s *Server) handleDeviceMgmtReboot(c *gin.Context) {
 	id := deviceIDParam(c)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "参数错误"})
+		return
+	}
+	if s == nil || s.pool == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "message": "服务未就绪"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
 
 	worker := s.pool.GetWorker(id)
 	if worker == nil {
@@ -2836,8 +2841,13 @@ func (s *Server) handleDeviceMgmtReboot(c *gin.Context) {
 		return
 	}
 
+	if !s.pool.ScheduleModemRebootRecoveryForWorker(worker, "manual_reboot") {
+		c.JSON(http.StatusConflict, gin.H{
+			"status": "error", "message": "重启指令已发送，但设备实例已更换，未启动旧设备恢复任务",
+		})
+		return
+	}
 	s.pool.MarkLifecycleRecovery(id, device.LifecyclePhaseRebooting, "manual_reboot", 3*time.Minute)
-	s.pool.ScheduleModemRebootRecovery(id, "manual_reboot")
 
 	// 因为重启后设备会脱网并暂时下线，前端仅需知道命令已送达
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "response": "重启指令已发送"})

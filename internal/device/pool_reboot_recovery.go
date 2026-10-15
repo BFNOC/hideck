@@ -483,6 +483,20 @@ func (p *Pool) ScheduleModemRebootRecovery(deviceID string, reason string) {
 	go p.runModemRebootRecovery(opts)
 }
 
+// ScheduleModemRebootRecoveryForWorker binds a manually requested reset to the
+// Worker that received it. A replacement with the same ID must not inherit the
+// old modem's recovery loop.
+func (p *Pool) ScheduleModemRebootRecoveryForWorker(worker *Worker, reason string) bool {
+	if p == nil || worker == nil || p.GetWorker(worker.ID) != worker {
+		return false
+	}
+	opts := defaultModemRebootRecoveryOptions(worker.ID, reason)
+	opts.delays = recoveryDelaysForReason(reason)
+	opts.initialWorker = worker
+	go p.runModemRebootRecovery(opts)
+	return true
+}
+
 func (p *Pool) scheduleWorkerRecoveryWithTransportEvent(deviceID string, reason string, event *TransportRecoveryEvent) bool {
 	deviceID = strings.TrimSpace(deviceID)
 	reason = strings.TrimSpace(reason)
