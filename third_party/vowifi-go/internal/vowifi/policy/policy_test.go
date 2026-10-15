@@ -146,6 +146,10 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		!spark.KeepChildSAOnRekeyDecline || !CarrierPlanFromEffectiveConfig(spark).IKE.KeepChildSAOnRekeyDecline {
 		t.Fatalf("spark nz = %+v", spark)
 	}
+	if globe := ResolveEffectiveCarrierConfig("515", "02"); globe.PresetID != "globe_ph_51502" ||
+		globe.EPDGAddr != "weconnect.globe.com.ph" || globe.EPDGAddrSource != "preset" {
+		t.Fatalf("globe ph = %+v", globe)
+	}
 	lebaraUK := ResolveEffectiveCarrierConfig("234", "87")
 	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
 		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
@@ -211,7 +215,6 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		{"248", "02", "elisa_ee_24802", "epdg.epc.mnc002.mcc248.pub.3gppnetwork.org"},
 		{"204", "08", "kpn_nl_20408", "epdg.epc.mnc008.mcc204.pub.3gppnetwork.org"},
 		{"502", "12", "hotlink_my_50212", "epdg.epc.mnc012.mcc502.pub.3gppnetwork.org"},
-		{"515", "02", "globe_ph_51502", "epdg.epc.mnc002.mcc515.pub.3gppnetwork.org"},
 		{"515", "03", "smart_ph_51503", "epdg.epc.mnc003.mcc515.pub.3gppnetwork.org"},
 		{"520", "01", "ais_th_52001", "epdg.epc.mnc001.mcc520.pub.3gppnetwork.org"},
 		{"520", "03", "ais_th_52003", "epdg.epc.mnc003.mcc520.pub.3gppnetwork.org"},

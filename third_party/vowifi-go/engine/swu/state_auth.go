@@ -103,10 +103,10 @@ func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 		{Type: ikev2.CPAttrIP4DNS},
 		{Type: ikev2.CPAttrPCSCFIP4},
 	}
-	ipv6Address := make([]byte, net.IPv6len+1)
-	ipv6Address[net.IPv6len] = 64
+	// RFC 7296 3.15.1 allows an empty request. A non-empty value suggests an
+	// address, which some ePDGs read as a handover attach and reject.
 	ipv6 := []*ikev2.CPAttribute{
-		{Type: ikev2.CPAttrIP6Address, Value: ipv6Address},
+		{Type: ikev2.CPAttrIP6Address},
 		{Type: ikev2.CPAttrIP6DNS},
 		{Type: ikev2.CPAttrPCSCFIP6},
 		{Type: ikev2.ASSIGNED_PCSCF_IP6_ADDRESS},
