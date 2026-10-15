@@ -146,6 +146,10 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		!spark.KeepChildSAOnRekeyDecline || !CarrierPlanFromEffectiveConfig(spark).IKE.KeepChildSAOnRekeyDecline {
 		t.Fatalf("spark nz = %+v", spark)
 	}
+	if one := ResolveEffectiveCarrierConfig("530", "01"); one.PresetID != "one_nz_53001" ||
+		!one.WithholdDeviceIdentity || !CarrierPlanFromEffectiveConfig(one).Device.Withhold {
+		t.Fatalf("one nz = %+v", one)
+	}
 	if globe := ResolveEffectiveCarrierConfig("515", "02"); globe.PresetID != "globe_ph_51502" ||
 		globe.EPDGAddr != "weconnect.globe.com.ph" || globe.EPDGAddrSource != "preset" {
 		t.Fatalf("globe ph = %+v", globe)
