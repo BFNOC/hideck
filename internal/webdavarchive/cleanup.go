@@ -19,7 +19,7 @@ func (service *Service) PreviewCleanup(ctx context.Context, settings Settings) (
 			return CleanupPreview{}, err
 		}
 	}
-	if settings.IncludeCalls {
+	if settings.IncludeCalls || settings.IncludeRecordings {
 		if err := service.collectCleanupCalls(ctx, settings, &preview); err != nil {
 			return CleanupPreview{}, err
 		}
@@ -32,14 +32,14 @@ func (service *Service) Cleanup(ctx context.Context, settings Settings) (Cleanup
 	if err != nil {
 		return CleanupPreview{}, err
 	}
-	request := DeleteRequest{SMSIDs: preview.EligibleSMSIDs, CallIDs: preview.EligibleCallIDs}
-	if err := service.store.DeleteRecords(ctx, request); err != nil {
-		return CleanupPreview{}, fmt.Errorf("删除已归档本地记录失败: %w", err)
-	}
 	for _, path := range preview.RecordingFiles {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return preview, fmt.Errorf("删除已归档录音 %q 失败: %w", path, err)
 		}
+	}
+	request := DeleteRequest{SMSIDs: preview.EligibleSMSIDs, CallIDs: preview.EligibleCallIDs}
+	if err := service.store.DeleteRecords(ctx, request); err != nil {
+		return preview, fmt.Errorf("删除已归档本地记录失败: %w", err)
 	}
 	return preview, nil
 }
@@ -75,31 +75,68 @@ func (service *Service) collectCleanupCalls(ctx context.Context, settings Settin
 	if err != nil {
 		return fmt.Errorf("读取通话记录失败: %w", err)
 	}
+	protectedRecordings := currentRecordingNames(rows, preview.Before)
+	seenRecordings := make(map[string]struct{})
 	for _, row := range rows {
 		if !endedBefore(row, preview.Before) {
-			continue
-		}
-		archived, err := service.callArchived(ctx, row)
-		if err != nil {
-			return err
-		}
-		if !archived {
 			continue
 		}
 		files, bytes, safe, err := service.cleanupRecording(ctx, settings, row)
 		if err != nil {
 			return err
 		}
-		if !safe {
+		callEligible, err := service.cleanupCallEligible(ctx, settings, row, safe)
+		if err != nil {
+			return err
+		}
+		if callEligible {
+			preview.EligibleCallIDs = append(preview.EligibleCallIDs, row.ID)
+			preview.CallCount++
+		}
+		if _, protected := protectedRecordings[strings.TrimSpace(row.RecordingName)]; protected {
 			continue
 		}
-		preview.EligibleCallIDs = append(preview.EligibleCallIDs, row.ID)
-		preview.CallCount++
-		preview.RecordingFiles = append(preview.RecordingFiles, files...)
-		preview.RecordingCount += len(files)
-		preview.RecordingBytes += bytes
+		for _, path := range files {
+			if _, found := seenRecordings[path]; found {
+				continue
+			}
+			seenRecordings[path] = struct{}{}
+			preview.RecordingFiles = append(preview.RecordingFiles, path)
+			preview.RecordingCount++
+			preview.RecordingBytes += bytes
+		}
 	}
 	return nil
+}
+
+func (service *Service) cleanupCallEligible(
+	ctx context.Context,
+	settings Settings,
+	row CallRecord,
+	recordingSafe bool,
+) (bool, error) {
+	if !settings.IncludeCalls {
+		return false, nil
+	}
+	archived, err := service.callArchived(ctx, row)
+	if err != nil || !archived {
+		return false, err
+	}
+	if strings.TrimSpace(row.RecordingName) == "" {
+		return true, nil
+	}
+	return recordingSafe, nil
+}
+
+func currentRecordingNames(rows []CallRecord, cutoff time.Time) map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, row := range rows {
+		name := strings.TrimSpace(row.RecordingName)
+		if name != "" && !endedBefore(row, cutoff) {
+			result[name] = struct{}{}
+		}
+	}
+	return result
 }
 
 func (service *Service) callArchived(ctx context.Context, row CallRecord) (bool, error) {

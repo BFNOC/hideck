@@ -147,6 +147,9 @@ func (service *Service) archiveItem(ctx context.Context, item archiveItem, summa
 		err = service.remote.PutFile(ctx, FileUpload{
 			RemotePath: item.object.RemotePath, LocalPath: item.localPath, ContentType: item.contentType,
 		})
+		if err == nil {
+			err = verifyFileUnchanged(item.localPath, item.object)
+		}
 	} else {
 		err = service.remote.Put(ctx, Upload{
 			RemotePath: item.object.RemotePath, Data: item.data, ContentType: item.contentType,
@@ -226,21 +229,48 @@ func safeRecordingPath(directory, name string) (string, error) {
 }
 
 func hashFile(path string) (string, int64, error) {
-	file, err := os.Open(path)
+	file, info, err := openRegularFile(path)
 	if err != nil {
 		return "", 0, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return "", 0, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", 0, errors.New("录音路径不是普通文件")
-	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", 0, err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), info.Size(), nil
+}
+
+func verifyFileUnchanged(path string, expected Object) error {
+	checksum, size, err := hashFile(path)
+	if err != nil {
+		return fmt.Errorf("上传后重新读取录音失败: %w", err)
+	}
+	if checksum != expected.Checksum || size != expected.SizeBytes {
+		return errors.New("录音在上传期间发生变化，请等待录音完成后重试")
+	}
+	return nil
+}
+
+func openRegularFile(path string) (*os.File, os.FileInfo, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
+		return nil, nil, errors.New("归档路径不是普通文件")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		_ = file.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.New("归档文件在打开时发生变化")
+	}
+	return file, openedInfo, nil
 }

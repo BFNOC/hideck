@@ -287,7 +287,7 @@ func (s *Service) finalizeInboundSMSData(
 	}
 	var persistenceErr error
 	if shouldDispatch {
-		persistenceErr, _ = s.publishInboundSMSWithFragment(message, message.fragmentSessionID, false)
+		persistenceErr = s.publishInboundSMSWithFragment(message, message.fragmentSessionID, false)
 	}
 	s.reportMTQueueBlocked(mtSMSIdentity(message))
 	fingerprint := buildMTSMSFingerprint(message, raw)
@@ -429,14 +429,14 @@ func (s *Service) handleInboundSMSProtocolFailure(failure inboundSMSProtocolFail
 }
 
 func (s *Service) publishInboundSMS(message inboundSMS) {
-	_, _ = s.publishInboundSMSWithFragment(message, "", false)
+	s.publishInboundSMSWithFragment(message, "", false)
 }
 
 func (s *Service) publishInboundSMSWithFragment(
 	message inboundSMS,
 	fragmentSessionKey string,
 	incomplete bool,
-) (error, bool) {
+) error {
 	if message.timestamp.IsZero() {
 		message.timestamp = time.Now()
 	}
@@ -450,9 +450,9 @@ func (s *Service) publishInboundSMSWithFragment(
 	})
 	select {
 	case err := <-result:
-		return err, true
+		return err
 	default:
-		return nil, false
+		return nil
 	}
 }
 

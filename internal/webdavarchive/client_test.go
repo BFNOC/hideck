@@ -67,9 +67,9 @@ func TestClientRejectsUnsafePathsAndRedactsPassword(t *testing.T) {
 	if _, err := NewClient(ClientConfig{Endpoint: "ftp://example.test/dav"}); err == nil {
 		t.Fatal("ftp endpoint accepted")
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusInternalServerError)
-		_, _ = writer.Write([]byte("storage unavailable"))
+		_, _ = writer.Write([]byte("storage unavailable do-not-log " + request.Header.Get("Authorization")))
 	}))
 	defer server.Close()
 	client, err := NewClient(ClientConfig{Endpoint: server.URL, Username: "alice", Password: "do-not-log"})
@@ -80,7 +80,8 @@ func TestClientRejectsUnsafePathsAndRedactsPassword(t *testing.T) {
 		t.Fatal("traversal path accepted")
 	}
 	err = client.Put(context.Background(), Upload{RemotePath: "safe.json", ContentType: "application/json"})
-	if err == nil || !strings.Contains(err.Error(), "storage unavailable") || strings.Contains(err.Error(), "do-not-log") {
+	if err == nil || !strings.Contains(err.Error(), "storage unavailable") ||
+		strings.Contains(err.Error(), "do-not-log") || strings.Contains(err.Error(), "YWxpY2U6ZG8tbm90LWxvZw==") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

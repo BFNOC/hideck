@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
@@ -114,18 +114,11 @@ func (c *Client) Put(ctx context.Context, upload Upload) error {
 }
 
 func (c *Client) PutFile(ctx context.Context, upload FileUpload) error {
-	file, err := os.Open(upload.LocalPath)
+	file, info, err := openRegularFile(upload.LocalPath)
 	if err != nil {
 		return fmt.Errorf("打开归档文件失败: %w", err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("读取归档文件信息失败: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("归档文件不是普通文件")
-	}
 	return c.putReader(ctx, upload.RemotePath, file, info.Size(), upload.ContentType)
 }
 
@@ -203,7 +196,21 @@ func (c *Client) request(ctx context.Context, options requestOptions) error {
 		}
 	}
 	message, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
-	return fmt.Errorf("WebDAV %s 返回 %s: %s", options.Method, response.Status, strings.TrimSpace(string(message)))
+	return fmt.Errorf("WebDAV %s 返回 %s: %s", options.Method, response.Status, c.redactCredentials(string(message)))
+}
+
+func (c *Client) redactCredentials(message string) string {
+	message = strings.TrimSpace(message)
+	values := []string{c.password}
+	if c.username != "" || c.password != "" {
+		values = append(values, base64.StdEncoding.EncodeToString([]byte(c.username+":"+c.password)))
+	}
+	for _, value := range values {
+		if value != "" {
+			message = strings.ReplaceAll(message, value, "[REDACTED]")
+		}
+	}
+	return message
 }
 
 func (c *Client) resolve(remotePath string, includeBase bool) (*url.URL, error) {

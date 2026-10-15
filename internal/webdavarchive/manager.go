@@ -130,13 +130,13 @@ func (manager *Manager) PreviewCleanup(ctx context.Context) (CleanupPreview, err
 }
 
 func (manager *Manager) Cleanup(ctx context.Context) (CleanupPreview, error) {
-	config, err := manager.beginRun()
+	config, err := manager.beginExclusive()
 	if err != nil {
 		return CleanupPreview{}, err
 	}
 	service := manager.newCleanupService()
 	preview, cleanupErr := service.Cleanup(ctx, config.ContentSettings())
-	manager.finishRun(RunSummary{}, cleanupErr)
+	manager.finishCleanup()
 	return preview, cleanupErr
 }
 
@@ -218,14 +218,24 @@ func (manager *Manager) runScheduled(ctx context.Context) {
 }
 
 func (manager *Manager) beginRun() (RuntimeConfig, error) {
+	config, err := manager.beginExclusive()
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	manager.mu.Lock()
+	now := manager.now().UTC()
+	manager.status.LastStartedAt = &now
+	manager.mu.Unlock()
+	return config, nil
+}
+
+func (manager *Manager) beginExclusive() (RuntimeConfig, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if manager.status.Running {
 		return RuntimeConfig{}, ErrRunInProgress
 	}
-	now := manager.now().UTC()
 	manager.status.Running = true
-	manager.status.LastStartedAt = &now
 	return manager.config, nil
 }
 
@@ -240,6 +250,12 @@ func (manager *Manager) finishRun(summary RunSummary, err error) {
 	if err != nil {
 		manager.status.LastError = err.Error()
 	}
+}
+
+func (manager *Manager) finishCleanup() {
+	manager.mu.Lock()
+	manager.status.Running = false
+	manager.mu.Unlock()
 }
 
 func (manager *Manager) runArchive(ctx context.Context, config RuntimeConfig) (RunSummary, error) {

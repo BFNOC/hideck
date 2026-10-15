@@ -3,6 +3,7 @@ package webdavarchive
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,6 +188,175 @@ func TestMissingRecordingPreventsCallCleanup(t *testing.T) {
 	if preview.CallCount != 0 || preview.RecordingCount != 0 {
 		t.Fatalf("missing recording became cleanup eligible: %+v", preview)
 	}
+}
+
+func TestRecordingOnlyCleanupKeepsCallHistory(t *testing.T) {
+	database := newArchiveTestDB(t)
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	ended := now.AddDate(0, 0, -60)
+	call := db.VoiceCallRecord{
+		CallID: "recording-only", DeviceID: "wwan0", Direction: "inbound", Status: "completed",
+		StartedAt: ended.Add(-time.Minute), EndedAt: &ended, RecordingName: "recording-only.mp3",
+	}
+	if err := database.Create(&call).Error; err != nil {
+		t.Fatal(err)
+	}
+	recordingDir := t.TempDir()
+	recordingPath := filepath.Join(recordingDir, call.RecordingName)
+	if err := os.WriteFile(recordingPath, []byte("archived audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := newArchiveTestService(t, archiveTestServiceOptions{
+		database: database, remote: &memoryRemote{objects: make(map[string][]byte)},
+		recordingDir: recordingDir, now: now,
+	})
+	settings := Settings{IncludeRecordings: true, RetentionDays: 30}
+	if _, err := service.Run(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.Cleanup(context.Background(), settings)
+	if err != nil || preview.CallCount != 0 || preview.RecordingCount != 1 {
+		t.Fatalf("recording-only cleanup = %+v, %v", preview, err)
+	}
+	var calls int64
+	if err := database.Model(&db.VoiceCallRecord{}).Count(&calls).Error; err != nil || calls != 1 {
+		t.Fatalf("call count = %d, %v", calls, err)
+	}
+	if _, err := os.Stat(recordingPath); !os.IsNotExist(err) {
+		t.Fatalf("recording still exists: %v", err)
+	}
+}
+
+func TestCleanupKeepsRecordingReferencedByCurrentCall(t *testing.T) {
+	database := newArchiveTestDB(t)
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	oldEnded := now.AddDate(0, 0, -60)
+	currentEnded := now.AddDate(0, 0, -1)
+	for index, ended := range []*time.Time{&oldEnded, &currentEnded} {
+		call := db.VoiceCallRecord{
+			CallID: fmt.Sprintf("shared-%d", index), DeviceID: "wwan0", Direction: "inbound",
+			Status: "completed", StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+			RecordingName: "shared.mp3",
+		}
+		if err := database.Create(&call).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	recordingDir := t.TempDir()
+	recordingPath := filepath.Join(recordingDir, "shared.mp3")
+	if err := os.WriteFile(recordingPath, []byte("shared audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := newArchiveTestService(t, archiveTestServiceOptions{
+		database: database, remote: &memoryRemote{objects: make(map[string][]byte)},
+		recordingDir: recordingDir, now: now,
+	})
+	settings := Settings{IncludeRecordings: true, RetentionDays: 30}
+	if _, err := service.Run(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.Cleanup(context.Background(), settings)
+	if err != nil || preview.RecordingCount != 0 {
+		t.Fatalf("shared recording cleanup = %+v, %v", preview, err)
+	}
+	if _, err := os.Stat(recordingPath); err != nil {
+		t.Fatalf("current recording was removed: %v", err)
+	}
+}
+
+func TestCleanupCanRetryDatabaseFailureAfterArchivedRecordingRemoval(t *testing.T) {
+	database := newArchiveTestDB(t)
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	started := now.AddDate(0, 0, -60)
+	ended := started.Add(time.Minute)
+	call := db.VoiceCallRecord{
+		CallID: "cleanup-retry", DeviceID: "wwan0", Direction: "inbound", Status: "completed",
+		StartedAt: started, EndedAt: &ended, RecordingName: "cleanup-retry.mp3",
+	}
+	if err := database.Create(&call).Error; err != nil {
+		t.Fatal(err)
+	}
+	recordingDir := t.TempDir()
+	recordingPath := filepath.Join(recordingDir, call.RecordingName)
+	if err := os.WriteFile(recordingPath, []byte("archived audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	remote := &memoryRemote{objects: make(map[string][]byte)}
+	store := &failingDeleteStore{Store: NewDatabaseStore(database)}
+	service, err := NewService(ServiceOptions{
+		Store: store, Remote: remote, RecordingDir: recordingDir, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := Settings{IncludeCalls: true, IncludeRecordings: true, RetentionDays: 30}
+	if _, err := service.Run(context.Background(), settings); err != nil {
+		t.Fatal(err)
+	}
+	store.failNext = true
+	if _, err := service.Cleanup(context.Background(), settings); err == nil {
+		t.Fatal("database failure reported successful cleanup")
+	}
+	if _, err := os.Stat(recordingPath); !os.IsNotExist(err) {
+		t.Fatalf("archived recording was not removed: %v", err)
+	}
+	if preview, err := service.Cleanup(context.Background(), settings); err != nil || preview.CallCount != 1 {
+		t.Fatalf("retry cleanup = %+v, %v", preview, err)
+	}
+}
+
+func TestChangedRecordingIsNotCommittedToArchiveLedger(t *testing.T) {
+	database := newArchiveTestDB(t)
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	ended := now.Add(-time.Minute)
+	call := db.VoiceCallRecord{
+		CallID: "changing-recording", DeviceID: "wwan0", Direction: "inbound", Status: "completed",
+		StartedAt: now.Add(-2 * time.Minute), EndedAt: &ended, RecordingName: "changing.mp3",
+	}
+	if err := database.Create(&call).Error; err != nil {
+		t.Fatal(err)
+	}
+	recordingDir := t.TempDir()
+	path := filepath.Join(recordingDir, call.RecordingName)
+	if err := os.WriteFile(path, []byte("first version"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	remote := &mutatingFileRemote{memoryRemote: memoryRemote{objects: make(map[string][]byte)}}
+	service := newArchiveTestService(t, archiveTestServiceOptions{
+		database: database, remote: remote, recordingDir: recordingDir, now: now,
+	})
+	settings := Settings{IncludeCalls: true, IncludeRecordings: true, RetentionDays: 30}
+	if _, err := service.Run(context.Background(), settings); err == nil {
+		t.Fatal("changed recording reported successful archive")
+	}
+	_, found, err := NewDatabaseStore(database).FindObject(context.Background(), KindRecording, call.RecordingName)
+	if err != nil || found {
+		t.Fatalf("recording ledger found=%v err=%v", found, err)
+	}
+}
+
+type mutatingFileRemote struct{ memoryRemote }
+
+func (remote *mutatingFileRemote) PutFile(_ context.Context, upload FileUpload) error {
+	data, err := os.ReadFile(upload.LocalPath)
+	if err != nil {
+		return err
+	}
+	remote.objects[upload.RemotePath] = data
+	return os.WriteFile(upload.LocalPath, []byte("second version"), 0o600)
+}
+
+type failingDeleteStore struct {
+	Store
+	failNext bool
+}
+
+func (store *failingDeleteStore) DeleteRecords(ctx context.Context, request DeleteRequest) error {
+	if store.failNext {
+		store.failNext = false
+		return errors.New("database temporarily unavailable")
+	}
+	return store.Store.DeleteRecords(ctx, request)
 }
 
 func newArchiveTestDB(t *testing.T) *gorm.DB {

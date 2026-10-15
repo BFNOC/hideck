@@ -73,6 +73,31 @@ func TestManagerRejectsConcurrentRun(t *testing.T) {
 	}
 }
 
+func TestCleanupDoesNotReplaceLastArchiveStatus(t *testing.T) {
+	database := newArchiveTestDB(t)
+	now := time.Date(2026, 10, 16, 8, 0, 0, 0, time.UTC)
+	if err := database.Create(&db.SMS{Content: "status", Timestamp: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	remote := &memoryRemote{objects: make(map[string][]byte)}
+	manager := newArchiveTestManager(t, database, remote, RuntimeConfig{
+		Endpoint: "https://dav.example.test", Interval: time.Hour,
+		RetentionDays: 30, IncludeSMS: true,
+	}, now)
+	if _, err := manager.RunNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := manager.Status()
+	if _, err := manager.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after := manager.Status()
+	if after.Running || after.LastSummary != before.LastSummary ||
+		after.LastStartedAt != before.LastStartedAt || after.LastCompletedAt != before.LastCompletedAt {
+		t.Fatalf("cleanup changed archive status: before=%+v after=%+v", before, after)
+	}
+}
+
 type blockingRemote struct {
 	once    sync.Once
 	started chan struct{}

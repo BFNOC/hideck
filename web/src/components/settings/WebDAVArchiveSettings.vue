@@ -38,9 +38,11 @@ const testing = ref(false)
 const running = ref(false)
 const previewing = ref(false)
 const cleaning = ref(false)
+const savedSnapshot = ref('')
 
 const busy = computed(() => saving.value || testing.value || running.value || cleaning.value || status.value.running)
 const contentSelected = computed(() => form.include_sms || form.include_calls || form.include_recordings)
+const hasUnsavedChanges = computed(() => savedSnapshot.value !== serializeForm())
 
 function applySettings(settings: ArchiveSettings) {
   Object.assign(form, {
@@ -59,6 +61,11 @@ function applySettings(settings: ArchiveSettings) {
   })
   passwordSet.value = settings.password_set
   status.value = settings.status || emptyStatus()
+  savedSnapshot.value = serializeForm()
+}
+
+function serializeForm() {
+  return JSON.stringify(form)
 }
 
 async function loadSettings() {
@@ -184,9 +191,10 @@ onMounted(loadSettings)
           <span>用户名</span>
           <el-input v-model="form.username" size="large" autocomplete="username" />
         </label>
-        <label class="archive-field">
-          <span>密码</span>
+        <div class="archive-field">
+          <label for="archive-webdav-password">密码</label>
           <el-input
+            id="archive-webdav-password"
             v-model="form.password"
             size="large"
             type="password"
@@ -196,7 +204,7 @@ onMounted(loadSettings)
             :placeholder="passwordSet ? '留空保留现有密码' : '输入 WebDAV 密码'"
           />
           <el-checkbox v-if="passwordSet" v-model="form.clear_password">清除已保存的密码</el-checkbox>
-        </label>
+        </div>
         <label class="archive-field sm:col-span-2">
           <span>远端目录</span>
           <el-input v-model="form.base_path" size="large" placeholder="hideck" />
@@ -222,7 +230,8 @@ onMounted(loadSettings)
           <el-button size="large" type="primary" :loading="saving" :disabled="busy || !contentSelected" @click="saveSettings">
             <el-icon><Save24Regular /></el-icon>保存设置
           </el-button>
-          <el-button size="large" :loading="running" :disabled="busy || !form.endpoint" @click="runArchive">立即归档</el-button>
+          <el-button size="large" :loading="running" :disabled="busy || !form.endpoint || hasUnsavedChanges" @click="runArchive">立即归档</el-button>
+          <p v-if="hasUnsavedChanges" class="w-full text-xs text-[var(--ui-muted)]">保存当前设置后才能归档或预览清理。</p>
         </div>
       </div>
 
@@ -249,7 +258,7 @@ onMounted(loadSettings)
               <el-switch v-model="form.auto_cleanup" :disabled="busy" aria-label="归档成功后自动清理" />
             </label>
           </div>
-          <el-button class="mt-4 !min-h-11 w-full" :loading="previewing" :disabled="busy" @click="previewCleanup">预览清理范围</el-button>
+          <el-button class="mt-4 !min-h-11 w-full" :loading="previewing" :disabled="busy || hasUnsavedChanges" @click="previewCleanup">预览清理范围</el-button>
 
           <div v-if="cleanupPreview" class="cleanup-preview" aria-live="polite">
             <dl>
