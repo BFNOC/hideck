@@ -751,11 +751,12 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 			logger.Info("模组重启恢复成功", "device", opts.deviceID, "round", round+1)
 			p.markQMIControlRecovered(worker, opts.reason)
 			if hadVoWiFi {
-				go func(deviceID string) {
-					if err := p.enableVoWiFiWhenReady(deviceID, 5*time.Second, opts.reason); err != nil {
-						logger.Warn("模组重启恢复后恢复 VoWiFi 失败", "device", deviceID, "err", err)
+				start := p.captureVoWiFiReadyStart(worker)
+				go func() {
+					if err := p.enableVoWiFiWhenReady(start, 5*time.Second, opts.reason); err != nil {
+						logger.Warn("模组重启恢复后恢复 VoWiFi 失败", "device", opts.deviceID, "err", err)
 					}
-				}(opts.deviceID)
+				}()
 			}
 			return
 		}

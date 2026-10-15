@@ -71,6 +71,9 @@ func TestDetachAndReaddDeviceAliasDoesNotReuseOldSIM(t *testing.T) {
 	if err != nil || !found || identity.ICCID != newCard || identity.IMSI != "imsi-new" {
 		t.Fatalf("re-added device identity=%+v found=%v err=%v", identity, found, err)
 	}
+	if current := CurrentICCIDForDevice(alias); current != newCard {
+		t.Fatalf("re-added device current ICCID=%q want %q", current, newCard)
+	}
 	var historyCount int64
 	if err := DB.Model(&SMS{}).Where("iccid = ?", oldCard).Count(&historyCount).Error; err != nil {
 		t.Fatal(err)

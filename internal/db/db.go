@@ -1268,14 +1268,9 @@ func DeleteSMSByICCIDAndPeer(iccid, peer string) (int64, error) {
 
 // CurrentICCIDForDevice 尝试通过 alias (即 device id) 或 imei 查询关联的当前 ICCID。
 func CurrentICCIDForDevice(deviceID string) string {
-	if DB == nil {
+	identity, found, err := LookupDeviceSMSIdentity(deviceID)
+	if err != nil || !found {
 		return ""
 	}
-	var dev Device
-	if err := DB.Where("alias = ? OR imei = ?", deviceID, deviceID).First(&dev).Error; err == nil {
-		if dev.CurrentICCID != nil {
-			return *dev.CurrentICCID
-		}
-	}
-	return ""
+	return identity.ICCID
 }

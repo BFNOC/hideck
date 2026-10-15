@@ -94,12 +94,14 @@ func (p *Pool) reconcilePCSCReaders(opts rescanReconnectOptions, allDevices, dev
 			continue
 		}
 		logger.Info("检测到 PC/SC 卡片上线，自动启动", "device", cfg.ID, "reader", reader.Name)
-		if _, err := p.AddWorkerFromConfig(bindPCSCReader(cfg, reader)); err != nil {
+		startedWorker, err := p.AddWorkerFromConfig(bindPCSCReader(cfg, reader))
+		if err != nil {
 			logger.Warn("自动启动 PC/SC 设备失败", "device", cfg.ID, "err", err)
 			continue
 		}
 		if cfg.VoWiFiEnabled {
-			go p.enablePCSCVoWiFiAfterRecovery(cfg.ID)
+			start := p.captureVoWiFiReadyStart(startedWorker)
+			go p.enablePCSCVoWiFiAfterRecovery(start)
 		}
 	}
 	return nil
@@ -155,8 +157,12 @@ func (p *Pool) removeMissingPCSCWorker(opts rescanReconnectOptions, cfg config.D
 	}
 }
 
-func (p *Pool) enablePCSCVoWiFiAfterRecovery(deviceID string) {
-	if err := p.enableVoWiFiWhenReady(deviceID, 5*time.Second, "pcsc_card_recovery"); err != nil {
+func (p *Pool) enablePCSCVoWiFiAfterRecovery(start voWiFiReadyStart) {
+	if err := p.enableVoWiFiWhenReady(start, 5*time.Second, "pcsc_card_recovery"); err != nil {
+		deviceID := ""
+		if start.owner.worker != nil {
+			deviceID = start.owner.worker.ID
+		}
 		logger.Warn("PC/SC 卡片恢复后自动重启 VoWiFi 失败", "device", deviceID, "err", err)
 	}
 }

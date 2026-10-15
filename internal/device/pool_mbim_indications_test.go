@@ -20,8 +20,10 @@ func TestBindMBIMStateIndicationsTriggersHandleSIMStatusEvent(t *testing.T) {
 	}
 	defer mc.Close()
 
-	p := &Pool{ctx: context.Background()}
+	p := NewPool(nil)
+	defer p.cancel()
 	w := &Worker{ID: "dev1", MBIMCore: mc}
+	p.AttachWorkerForTest(w)
 	p.bindMBIMStateIndications(w)
 
 	info := mbim.TestSubscriberReadyInfo(1, "460001234567890", "89860012345678901234")
@@ -59,8 +61,10 @@ func TestBindMBIMSlotIndicationsWakesVoWiFiWithoutTouchingEsimMgr(t *testing.T) 
 	}
 	defer mc.Close()
 
-	p := &Pool{ctx: context.Background()}
+	p := NewPool(nil)
+	defer p.cancel()
 	w := &Worker{ID: "dev1", MBIMCore: mc}
+	p.AttachWorkerForTest(w)
 	p.bindMBIMSlotIndications(w)
 
 	info := mbim.TestSlotInfoStatusInfo(0, mbim.UICCSlotStateActiveEsim)
