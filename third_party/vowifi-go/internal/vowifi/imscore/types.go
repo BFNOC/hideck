@@ -285,6 +285,7 @@ type Service struct {
 	onSMSReady             func()
 	onSMSReadiness         func(SMSReadiness)
 	smsReceiverReady       bool
+	smsReadinessReason     atomic.Value
 	smsMemoryFull          bool
 	smsMemoryDenied        bool
 	smsMemoryDeniedGateway string
