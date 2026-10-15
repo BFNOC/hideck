@@ -97,7 +97,7 @@ func assertOriginalCarrierProjection(
 	}
 	if plan.IKE.DPDIntervalSeconds != want.dpdSeconds || plan.IKE.ReauthIntervalSeconds != want.reauthSeconds ||
 		plan.IKE.AKAChallengeMode != want.akaMode || len(plan.IKE.ESPProposals) == 0 ||
-		plan.IKE.ESPProposals[0] != want.espFirst {
+		plan.IKE.ESPProposals[0] != want.espFirst || !plan.Device.Withhold {
 		t.Fatalf("IKE projection = %+v", plan.IKE)
 	}
 	if plan.IMS.RegisterTemplate.ID != want.templateID || plan.E911.Provider != want.e911Provider {

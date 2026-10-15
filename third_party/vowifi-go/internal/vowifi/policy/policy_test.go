@@ -154,7 +154,7 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
 		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
 		lebaraUK.EPDGAddrSource != "standard" || lebaraUK.IKERekeyIntervalSeconds != 9000 ||
-		lebaraUK.WithholdDeviceIdentity || lebaraUK.KeepChildSAOnRekeyDecline ||
+		!lebaraUK.WithholdDeviceIdentity || lebaraUK.KeepChildSAOnRekeyDecline ||
 		lebaraUK.IMSRegisterTemplate.ID != "lebara_uk_23487" {
 		t.Fatalf("lebara uk = %+v", lebaraUK)
 	}
