@@ -110,6 +110,7 @@ func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 type Config struct {
 	ModemVoice     ModemVoiceConfig `mapstructure:"modem_voice"`
 	OutboundLimits outbound.Config  `mapstructure:"outbound_limits"`
+	Archive        ArchiveConfig    `mapstructure:"archive"`
 	Server         ServerConfig     `mapstructure:"server"`
 	System         SystemConfig     `mapstructure:"system"`
 	Devices        []DeviceConfig   `mapstructure:"devices"`
@@ -132,6 +133,20 @@ type Config struct {
 	// to the listed device IDs. A channel without an entry gets every device.
 	// Notifications without a device, such as IP changes, go to every channel.
 	NotificationDeviceFilters map[string][]string `mapstructure:"notification_device_filters"`
+}
+
+type ArchiveConfig struct {
+	Enabled           bool   `mapstructure:"enabled" json:"enabled"`
+	Endpoint          string `mapstructure:"endpoint" json:"endpoint"`
+	Username          string `mapstructure:"username" json:"username"`
+	Password          string `mapstructure:"password" json:"-"`
+	BasePath          string `mapstructure:"base_path" json:"base_path"`
+	IntervalHours     int    `mapstructure:"interval_hours" json:"interval_hours"`
+	RetentionDays     int    `mapstructure:"retention_days" json:"retention_days"`
+	AutoCleanup       bool   `mapstructure:"auto_cleanup" json:"auto_cleanup"`
+	IncludeSMS        bool   `mapstructure:"include_sms" json:"include_sms"`
+	IncludeCalls      bool   `mapstructure:"include_calls" json:"include_calls"`
+	IncludeRecordings bool   `mapstructure:"include_recordings" json:"include_recordings"`
 }
 
 type SystemConfig struct {
@@ -371,6 +386,12 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("server.port", 7575)
 	viper.SetDefault("system.openwrt_dynamic_interfaces", false)
 	viper.SetDefault("system.auto_answer.audio_file", "data/phone/auto-answer.wav")
+	viper.SetDefault("archive.base_path", "hideck")
+	viper.SetDefault("archive.interval_hours", 24)
+	viper.SetDefault("archive.retention_days", 30)
+	viper.SetDefault("archive.include_sms", true)
+	viper.SetDefault("archive.include_calls", true)
+	viper.SetDefault("archive.include_recordings", true)
 	viper.SetDefault("telegram.recording_mode", TelegramRecordingModeVoice)
 	viper.SetDefault("webhook.timeout_ms", 5000)
 	viper.SetDefault("webhook.retry_max", 3)
