@@ -537,41 +537,44 @@ func (p *Pool) scheduleWorkerRecovery(deviceID string, reason string) {
 	p.ScheduleModemRebootRecovery(deviceID, reason)
 }
 
-func (p *Pool) scheduleATDisconnectRecovery(deviceID string, reason string) {
-	deviceID = strings.TrimSpace(deviceID)
+func (p *Pool) scheduleATDisconnectRecovery(owner workerLifecycleOwner, reason string) {
+	if p == nil || owner.worker == nil || !p.workerLifecycleOwnerCurrent(owner) {
+		return
+	}
+	deviceID := strings.TrimSpace(owner.worker.ID)
 	reason = strings.TrimSpace(reason)
-	if p == nil || deviceID == "" {
+	if deviceID == "" {
 		return
 	}
 	if reason == "" {
 		reason = "modem_disconnect"
 	}
-	if worker := p.GetWorker(deviceID); worker != nil {
-		state := HealthStateRecovering
-		if reason == "at_timeout_threshold" {
-			state = HealthStateInvalid
-		}
-		worker.RecordWatchdogEvent(WatchdogEvent{
-			Layer:     HealthLayerAT,
-			State:     state,
-			EventType: reason,
-			Reason:    reason,
-			Threshold: func() int {
-				if reason == "at_timeout_threshold" {
-					return 5
-				}
-				return 0
-			}(),
-		})
-		worker.RecordWatchdogEvent(WatchdogEvent{
-			Layer:     HealthLayerPool,
-			State:     HealthStateReprobing,
-			EventType: "worker_reprobe",
-			Reason:    reason,
-		})
+	worker := owner.worker
+	state := HealthStateRecovering
+	if reason == "at_timeout_threshold" {
+		state = HealthStateInvalid
 	}
+	worker.RecordWatchdogEvent(WatchdogEvent{
+		Layer:     HealthLayerAT,
+		State:     state,
+		EventType: reason,
+		Reason:    reason,
+		Threshold: func() int {
+			if reason == "at_timeout_threshold" {
+				return 5
+			}
+			return 0
+		}(),
+	})
+	worker.RecordWatchdogEvent(WatchdogEvent{
+		Layer:     HealthLayerPool,
+		State:     HealthStateReprobing,
+		EventType: "worker_reprobe",
+		Reason:    reason,
+	})
 	opts := defaultModemRebootRecoveryOptions(deviceID, reason)
 	opts.removeBeforeScan = false
+	opts.initialWorker = worker
 	go p.runModemRebootRecovery(opts)
 }
 

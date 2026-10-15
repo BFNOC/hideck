@@ -353,9 +353,6 @@ func (p *Pool) assignWorkerGeneration(worker *Worker) uint64 {
 	generation := p.nextWorkerGenerationLocked(worker.ID)
 	p.mu.Unlock()
 	worker.generation = generation
-	if p.transportRecovery != nil {
-		p.transportRecovery.SetWorkerGeneration(worker.ID, generation)
-	}
 	return generation
 }
 
@@ -386,14 +383,19 @@ func (p *Pool) registerWorkerStarting(worker *Worker) error {
 	transition.Lock()
 	defer transition.Unlock()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if current := p.workers[worker.ID]; current != nil && current != worker {
+		p.mu.Unlock()
 		return fmt.Errorf("设备已存在")
 	}
-	p.workers[worker.ID] = worker
 	if worker.generation == 0 {
 		worker.generation = p.nextWorkerGenerationLocked(worker.ID)
 	}
+	generation := worker.generation
+	if p.transportRecovery != nil {
+		p.transportRecovery.SetWorkerGeneration(worker.ID, generation)
+	}
+	p.workers[worker.ID] = worker
+	p.mu.Unlock()
 	return nil
 }
 
@@ -823,9 +825,10 @@ func (p *Pool) bindQMIStateIndications(worker *Worker) {
 		return
 	}
 
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.QMICore.OnSimStatusChanged(func() {
 		logger.Info("[事件驱动] SIM 状态变化", "device", worker.ID)
-		p.handleSIMStatusEvent(worker.ID, "qmi_sim_status", nil, "")
+		p.handleSIMStatusEventForOwner(owner, "qmi_sim_status", nil, "")
 	})
 
 	worker.QMICore.OnNASServingSystemChanged(func(info *qmi.ServingSystem) {
@@ -834,7 +837,7 @@ func (p *Pool) bindQMIStateIndications(worker *Worker) {
 }
 
 func (p *Pool) handleNASServingSystemChanged(worker *Worker, info *qmi.ServingSystem) {
-	if p == nil || worker == nil {
+	if p == nil || worker == nil || !p.workerLifecycleOwnerCurrent(workerLifecycleOwner{worker: worker, generation: worker.generation}) {
 		return
 	}
 	if worker.shouldAbortCellularRegistration() {
@@ -856,9 +859,10 @@ func (p *Pool) bindMBIMStateIndications(worker *Worker) {
 		return
 	}
 
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.MBIMCore.OnSimStatusChanged(func() {
 		logger.Info("[事件驱动] MBIM SIM 状态变化", "device", worker.ID)
-		p.handleSIMStatusEvent(worker.ID, "mbim_sim_status", nil, "")
+		p.handleSIMStatusEventForOwner(owner, "mbim_sim_status", nil, "")
 	})
 }
 
@@ -866,9 +870,10 @@ func (p *Pool) bindMBIMSlotIndications(worker *Worker) {
 	if worker == nil || worker.MBIMCore == nil {
 		return
 	}
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.MBIMCore.OnSlotStatus(func(slotIndex, state uint32) {
 		logger.Debug("收到 MBIM 卡槽状态指示", "device", worker.ID, "slot", slotIndex, "state", state)
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(worker.ID, "mbim_slot_status")
+		p.wakeDesiredVoWiFiRecoverForOwner(owner, "mbim_slot_status")
 	})
 }
 
@@ -876,10 +881,17 @@ func (p *Pool) bindMBIMHealthIndications(worker *Worker) {
 	if worker == nil || worker.MBIMCore == nil {
 		return
 	}
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.MBIMCore.OnRecoveryExhausted(func(reason string, err error) {
+		if !p.workerLifecycleOwnerCurrent(owner) {
+			return
+		}
 		p.maybeScheduleTransportRebuild(worker, HealthLayerMBIM, reason, err)
 	})
 	worker.MBIMCore.OnHealth(func(event mbimcore.HealthEvent) {
+		if !p.workerLifecycleOwnerCurrent(owner) {
+			return
+		}
 		switch event.State {
 		case mbimcore.HealthEventHealthy:
 			worker.RecordWatchdogEvent(WatchdogEvent{
@@ -919,10 +931,17 @@ func (p *Pool) bindQMIHealthIndications(worker *Worker) {
 	if worker == nil || worker.QMICore == nil {
 		return
 	}
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.QMICore.OnRecoveryExhausted(func(reason string, err error) {
+		if !p.workerLifecycleOwnerCurrent(owner) {
+			return
+		}
 		p.maybeScheduleTransportRebuild(worker, HealthLayerQMI, reason, err)
 	})
 	worker.QMICore.OnHealthEvent(func(event qmicore.HealthEvent) {
+		if !p.workerLifecycleOwnerCurrent(owner) {
+			return
+		}
 		switch event.State {
 		case qmicore.HealthEventHealthy:
 			worker.RecordWatchdogEvent(WatchdogEvent{
@@ -963,16 +982,20 @@ func (p *Pool) handleSIMStatusEvent(deviceID, source string, insertedHint *bool,
 	if p == nil || deviceID == "" {
 		return
 	}
+	p.handleSIMStatusEventForOwner(p.captureWorkerLifecycleOwner(deviceID), source, insertedHint, state)
+}
+
+func (p *Pool) handleSIMStatusEventForOwner(owner workerLifecycleOwner, source string, insertedHint *bool, state string) {
+	if p == nil || owner.worker == nil || !p.workerLifecycleOwnerCurrent(owner) {
+		return
+	}
 	if insertedHint != nil && *insertedHint {
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(state), "READY") {
 		return
 	}
-	owner := p.captureWorkerLifecycleOwner(deviceID)
-	if owner.worker == nil {
-		return
-	}
+	deviceID := owner.worker.ID
 
 	p.simEventMu.Lock()
 	if p.simEventTimers == nil {
@@ -1005,13 +1028,18 @@ func (p *Pool) wakeDesiredVoWiFiRecoverFromDeviceEvent(deviceID, reason string) 
 	if deviceID == "" {
 		return
 	}
+	owner := p.captureWorkerLifecycleOwner(deviceID)
+	p.wakeDesiredVoWiFiRecoverForOwner(owner, reason)
+}
+
+func (p *Pool) wakeDesiredVoWiFiRecoverForOwner(owner workerLifecycleOwner, reason string) {
+	if p == nil || p.ctx.Err() != nil || owner.worker == nil || !p.workerLifecycleOwnerCurrent(owner) {
+		return
+	}
+	deviceID := owner.worker.ID
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = vowifiDesiredReconcileReason
-	}
-	owner := p.captureWorkerLifecycleOwner(deviceID)
-	if owner.worker == nil {
-		return
 	}
 
 	delay := deviceEventRecoverWakeDelay
@@ -1248,6 +1276,7 @@ func (p *Pool) bindESIMUIMIndications(worker *Worker) {
 		return
 	}
 
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	worker.QMICore.OnUIMRefresh(func(info *qmi.UIMRefreshIndication) {
 		fileCount := 0
 		stage := uint8(0)
@@ -1259,7 +1288,7 @@ func (p *Pool) bindESIMUIMIndications(worker *Worker) {
 			"device", worker.ID,
 			"stage", stage,
 			"file_count", fileCount)
-		if !workerAcceptsRuntimeUIMIndication(worker) {
+		if !p.workerLifecycleOwnerCurrent(owner) || !workerAcceptsRuntimeUIMIndication(worker) {
 			logger.Debug("QMI 启动期 UIM refresh 指示已延后处理",
 				"device", worker.ID,
 				"stage", stage,
@@ -1272,7 +1301,7 @@ func (p *Pool) bindESIMUIMIndications(worker *Worker) {
 		if src := worker.currentSwitchEventSource(); src != nil {
 			src.PublishRefresh(stage)
 		}
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(worker.ID, "post_switch_uim_refresh")
+		p.wakeDesiredVoWiFiRecoverForOwner(owner, "post_switch_uim_refresh")
 	})
 
 	worker.QMICore.OnUIMSlotStatus(func(info *qmi.UIMSlotStatus) {
@@ -1281,7 +1310,7 @@ func (p *Pool) bindESIMUIMIndications(worker *Worker) {
 			slotCount = len(info.Slots)
 		}
 		logger.Debug("收到 UIM 卡槽状态指示", "device", worker.ID, "slot_count", slotCount)
-		if !workerAcceptsRuntimeUIMIndication(worker) {
+		if !p.workerLifecycleOwnerCurrent(owner) || !workerAcceptsRuntimeUIMIndication(worker) {
 			logger.Debug("QMI 启动期 UIM 卡槽状态指示已延后处理",
 				"device", worker.ID,
 				"slot_count", slotCount)
@@ -1293,7 +1322,7 @@ func (p *Pool) bindESIMUIMIndications(worker *Worker) {
 		if src := worker.currentSwitchEventSource(); src != nil {
 			src.PublishSlotStatus()
 		}
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(worker.ID, "post_switch_uim_slot_status")
+		p.wakeDesiredVoWiFiRecoverForOwner(owner, "post_switch_uim_slot_status")
 	})
 }
 
@@ -1760,6 +1789,7 @@ func (p *Pool) bindModemReadyIndications(worker *Worker) {
 	if worker == nil || worker.Modem == nil {
 		return
 	}
+	owner := workerLifecycleOwner{worker: worker, generation: worker.generation}
 	go func(w *Worker) {
 		for {
 			ch := w.Modem.SubscribeRDY()
@@ -1770,7 +1800,7 @@ func (p *Pool) bindModemReadyIndications(worker *Worker) {
 				return
 			case <-ch:
 				logger.Info("[事件驱动] Modem RDY（切卡补刷新已禁用）", "device", w.ID)
-				p.wakeDesiredVoWiFiRecoverFromDeviceEvent(w.ID, "post_switch_modem_ready")
+				p.wakeDesiredVoWiFiRecoverForOwner(owner, "post_switch_modem_ready")
 			}
 		}
 	}(worker)

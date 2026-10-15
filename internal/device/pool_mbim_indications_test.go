@@ -108,8 +108,10 @@ func TestBindMBIMHealthIndicationsRecordsHealthyAndSuspect(t *testing.T) {
 	}
 	defer mc.Close()
 
-	p := &Pool{ctx: context.Background()}
+	p := NewPool(nil)
+	defer p.cancel()
 	w := &Worker{ID: "dev1", MBIMCore: mc}
+	p.AttachWorkerForTest(w)
 	p.bindMBIMHealthIndications(w)
 
 	deadline := time.Now().Add(3 * time.Second)

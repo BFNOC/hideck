@@ -483,8 +483,12 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 
 	if qmiCore != nil {
+		owner := workerLifecycleOwner{worker: w, generation: w.generation}
 		var resetRecoveryRunning atomic.Bool
 		qmiCore.OnModemReset(func() {
+			if !p.workerLifecycleOwnerCurrent(owner) {
+				return
+			}
 			if p.lifecycle != nil {
 				p.lifecycle.BeginRecovery(w.ID, LifecyclePhaseRecovering, "qmi_modem_reset", qmiLifecycleRecoveryTTL)
 			}
@@ -541,6 +545,9 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		})
 
 		qmiCore.SetOnConnect(func() {
+			if !p.workerLifecycleOwnerCurrent(owner) {
+				return
+			}
 			p.markQMIControlRecovered(w, "qmi_connected")
 			if err := p.ensureDynamicInterfaceMapping(p.ctx, w); err != nil {
 				disconnectErr := w.NetworkController().Disconnect()
@@ -554,13 +561,14 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 
 	if backendUsesATRuntime(backendMode) {
+		owner := workerLifecycleOwner{worker: w, generation: w.generation}
 		m.SetOnDisconnectWithReason(func(reason string) {
 			devID := w.ID
 			if strings.TrimSpace(reason) == "" {
 				reason = "modem_disconnect"
 			}
 			logger.Warn(fmt.Sprintf("[%s] 检测到模块掉线，将进入重启恢复扫描", devID), "reason", reason)
-			p.scheduleATDisconnectRecovery(devID, reason)
+			p.scheduleATDisconnectRecovery(owner, reason)
 		})
 		p.bindModemReadyIndications(w)
 	}
@@ -568,11 +576,18 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	if backendMode == backend.BackendQMI {
 		w.smsMode = smsModeQMI
 		if smsCore := w.smsQMICore(); smsCore != nil {
+			owner := workerLifecycleOwner{worker: w, generation: w.generation}
 			smsCore.OnNewSMSWithStorage(func(storage uint8, index uint32) {
+				if !p.workerLifecycleOwnerCurrent(owner) {
+					return
+				}
 				logger.Info(fmt.Sprintf("[%s] 收到 QMI 短信 URC 通知", w.ID), "index", index, "storage", storage)
 				w.handleNewSMSQMI(storage, index)
 			})
 			smsCore.OnNewSMSRaw(func(info qmicore.RawSMSIndication) {
+				if !p.workerLifecycleOwnerCurrent(owner) {
+					return
+				}
 				logger.Info(fmt.Sprintf("[%s] 收到 QMI 原始短信通知", w.ID),
 					"pdu_len", len(info.PDU),
 					"ack_required", info.AckRequired,
@@ -665,12 +680,13 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 
 	if !qmiWorkerRegistered {
-		transition := p.policyTransitionFor(devCfg.ID)
-		transition.Lock()
-		p.mu.Lock()
-		p.workers[devCfg.ID] = w
-		p.mu.Unlock()
-		transition.Unlock()
+		if err := p.registerWorkerStarting(w); err != nil {
+			if mbimCore != nil {
+				_ = mbimCore.Close()
+			}
+			m.Stop()
+			return nil, err
+		}
 	}
 	w.uimIndicationsReady.Store(true)
 	if w.Config.ConnectHoldRF {
