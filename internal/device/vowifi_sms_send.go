@@ -148,6 +148,21 @@ func (p *Pool) AttachWorkerForTest(worker *Worker) {
 	_ = p.registerWorkerStarting(worker)
 }
 
+// AttachWorkerWithSMSIdentityForTest registers a worker whose SIM identity is
+// already stable, allowing external package tests to exercise outbound SMS.
+func (p *Pool) AttachWorkerWithSMSIdentityForTest(worker *Worker, identity SMSIdentity) {
+	if p == nil || worker == nil {
+		return
+	}
+	worker.cacheMu.Lock()
+	worker.state.Identity.ICCID = identity.ICCID
+	worker.state.Identity.IMSI = identity.IMSI
+	worker.state.Identity.Ready = true
+	worker.state.Identity.Phase = simIdentityPhaseReady
+	worker.cacheMu.Unlock()
+	p.AttachWorkerForTest(worker)
+}
+
 // SetRoutedSMSTestSenders overrides the VoWiFi and CS legs of SendRoutedSMS for tests.
 func (p *Pool) SetRoutedSMSTestSenders(
 	sendVoWiFi func(context.Context, string, string, string, smscodec.SubmitOptions) (messaging.SendOutcome, error),
