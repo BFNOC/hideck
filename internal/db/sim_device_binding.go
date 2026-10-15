@@ -13,6 +13,25 @@ type simDeviceBinding struct {
 	Now   time.Time
 }
 
+func releaseReassignedDeviceAliasTx(tx *gorm.DB, imei, alias string, now time.Time) error {
+	alias = strings.TrimSpace(alias)
+	imei = strings.TrimSpace(imei)
+	if alias == "" {
+		return nil
+	}
+	var previous []Device
+	if err := tx.Select("imei").Where("alias = ? AND imei <> ?", alias, imei).Find(&previous).Error; err != nil {
+		return err
+	}
+	for _, device := range previous {
+		if err := detachDeviceSIMTx(tx, device.IMEI, now); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&Device{}).Where("alias = ? AND imei <> ?", alias, imei).
+		Updates(map[string]any{"alias": "", "updated_at": now}).Error
+}
+
 func normalizedIMEIPointer(value *string) *string {
 	if value == nil {
 		return nil

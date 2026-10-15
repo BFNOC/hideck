@@ -1,0 +1,56 @@
+package device
+
+import (
+	"strings"
+	"time"
+
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/pkg/logger"
+)
+
+func (w *Worker) markSIMRemoved(reason string) {
+	if w == nil {
+		return
+	}
+	now := time.Now()
+	w.cacheMu.Lock()
+	hadIdentity := strings.TrimSpace(w.state.Identity.ICCID) != "" ||
+		strings.TrimSpace(w.state.Identity.IMSI) != "" || w.state.Identity.Ready
+	if hadIdentity {
+		w.state.Identity.Generation++
+	}
+	w.state.Identity.ICCID = ""
+	w.state.Identity.IMSI = ""
+	w.state.Identity.NativeSPN = ""
+	w.clearSIMMetadataLocked()
+	w.state.Identity.Ready = false
+	w.state.Identity.Phase = simIdentityPhaseDegraded
+	w.state.Identity.TargetICCID = ""
+	w.state.Identity.LastReason = strings.TrimSpace(reason)
+	w.state.Identity.LastError = "sim_removed"
+	w.state.Runtime.SimInserted = false
+	w.state.Meta.IdentityUpdatedAt = now
+	w.state.Meta.RuntimeUpdatedAt = now
+	w.state.Meta.UpdatedAt = now
+	w.cacheMu.Unlock()
+}
+
+func (p *Pool) detachPersistedSIMBinding(worker *Worker) {
+	if p == nil || worker == nil || resolvedBackendMode(worker.Config) == backend.BackendPCSC ||
+		(worker.Backend != nil && worker.Backend.Mode() == backend.BackendPCSC) {
+		return
+	}
+	status := worker.ProjectDeviceStatus()
+	imei := strings.TrimSpace(status.IMEI)
+	if imei == "" {
+		imei = strings.TrimSpace(worker.Config.ModemIMEI)
+	}
+	if imei == "" {
+		logger.Warn("SIM 拔出后无法解除设备绑定：IMEI 为空", "device", worker.ID)
+		return
+	}
+	if err := db.UpdateDeviceCurrentSIM(imei, nil); err != nil {
+		logger.Warn("SIM 拔出后解除设备绑定失败", "device", worker.ID, "imei", imei, "err", err)
+	}
+}

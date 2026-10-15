@@ -826,12 +826,6 @@ func (p *Pool) bindQMIStateIndications(worker *Worker) {
 	worker.QMICore.OnSimStatusChanged(func() {
 		logger.Info("[事件驱动] SIM 状态变化", "device", worker.ID)
 		p.handleSIMStatusEvent(worker.ID, "qmi_sim_status", nil, "")
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(worker.ID, "post_switch_qmi_sim_status")
-		go func() {
-			if err := p.applyNetworkPreference(worker); err != nil {
-				logger.Warn("SIM 状态变化后 QMI 网络偏好协调失败", "device", worker.ID, "err", err)
-			}
-		}()
 	})
 
 	worker.QMICore.OnNASServingSystemChanged(func(info *qmi.ServingSystem) {
@@ -865,7 +859,6 @@ func (p *Pool) bindMBIMStateIndications(worker *Worker) {
 	worker.MBIMCore.OnSimStatusChanged(func() {
 		logger.Info("[事件驱动] MBIM SIM 状态变化", "device", worker.ID)
 		p.handleSIMStatusEvent(worker.ID, "mbim_sim_status", nil, "")
-		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(worker.ID, "post_switch_mbim_sim_status")
 	})
 }
 
@@ -1102,27 +1095,25 @@ func (p *Pool) confirmSIMRemovedForOwner(owner workerLifecycleOwner, source stri
 		return
 	}
 	deviceID := owner.worker.ID
-	p.simEventMu.Lock()
-	if expected == nil || p.simEventTimers[deviceID] == expected {
-		delete(p.simEventTimers, deviceID)
+	if !p.consumeSIMEventTimer(deviceID, expected) {
+		return
 	}
-	p.simEventMu.Unlock()
-
 	transition := p.policyTransitionFor(deviceID)
 	transition.Lock()
-	defer transition.Unlock()
 	if !p.workerLifecycleOwnerCurrent(owner) {
+		transition.Unlock()
 		return
 	}
 	if p.IsESIMSwitching(deviceID) {
+		transition.Unlock()
 		logger.Info("SIM 状态变化发生在 eSIM 切换中，跳过 VoWiFi 自动停止", "device", deviceID, "source", source)
 		return
 	}
 	w := owner.worker
 	if w.Backend == nil {
+		transition.Unlock()
 		return
 	}
-
 	baseCtx := p.ctx
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -1131,21 +1122,74 @@ func (p *Pool) confirmSIMRemovedForOwner(owner workerLifecycleOwner, source stri
 	defer cancel()
 	inserted, err := w.Backend.IsSimInserted(ctx)
 	if err != nil {
+		transition.Unlock()
 		logger.Warn("SIM 拔卡确认失败，跳过 VoWiFi 自动停止", "device", deviceID, "source", source, "err", err)
 		return
 	}
 	if inserted {
-		if !p.workerLifecycleOwnerCurrent(owner) {
-			return
-		}
-		_ = w.RefreshRuntime(ctx, "sim_status_inserted")
+		result := p.refreshConfirmedSIMInsertion(owner)
+		transition.Unlock()
+		p.finishConfirmedSIMInsertion(owner, source, result)
 		return
 	}
+	p.handleConfirmedSIMRemoval(owner, source, baseCtx)
+	transition.Unlock()
+}
 
+func (p *Pool) consumeSIMEventTimer(deviceID string, expected *time.Timer) bool {
+	p.simEventMu.Lock()
+	defer p.simEventMu.Unlock()
+	if expected != nil && p.simEventTimers[deviceID] != expected {
+		return false
+	}
+	delete(p.simEventTimers, deviceID)
+	return true
+}
+
+type simInsertionRefreshResult struct {
+	current bool
+	err     error
+}
+
+// Caller holds the device policy transition lock.
+func (p *Pool) refreshConfirmedSIMInsertion(owner workerLifecycleOwner) simInsertionRefreshResult {
+	w := owner.worker
+	_, err := p.refreshWorkerIdentityState(w, "sim_status_inserted")
+	return simInsertionRefreshResult{current: p.workerLifecycleOwnerCurrent(owner), err: err}
+}
+
+func (p *Pool) finishConfirmedSIMInsertion(owner workerLifecycleOwner, source string, result simInsertionRefreshResult) {
+	w := owner.worker
+	if !result.current || !p.workerLifecycleOwnerCurrent(owner) {
+		return
+	}
+	p.broadcastVoWiFiStateChange(w.ID)
+	if result.err != nil {
+		logger.Warn("SIM 插入后刷新身份失败", "device", w.ID, "source", source, "err", result.err)
+		return
+	}
+	if result := p.resolveAndApplyPolicy(w, "sim_status_inserted"); result.Err != nil {
+		logger.Warn("SIM 插入后应用卡策略失败", "device", w.ID, "source", source, "err", result.Err)
+		return
+	}
+	if p.workerLifecycleOwnerCurrent(owner) {
+		p.wakeDesiredVoWiFiRecoverFromDeviceEvent(w.ID, "post_switch_"+strings.TrimSpace(source))
+	}
+}
+
+// Caller holds the device policy transition lock.
+func (p *Pool) handleConfirmedSIMRemoval(owner workerLifecycleOwner, source string, baseCtx context.Context) {
 	if !p.workerLifecycleOwnerCurrent(owner) {
 		return
 	}
-	_ = w.RefreshRuntime(ctx, "sim_removed")
+	w := owner.worker
+	deviceID := w.ID
+	refreshCtx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+	_ = w.RefreshRuntime(refreshCtx, "sim_removed")
+	cancel()
+	w.markSIMRemoved("sim_removed")
+	p.detachPersistedSIMBinding(w)
+	p.broadcastVoWiFiStateChange(deviceID)
 	p.clearDesiredVoWiFiRecoverState(deviceID)
 	if !p.IsVoWiFiActive(deviceID) {
 		return
@@ -1485,15 +1529,10 @@ func (p *Pool) refreshIdentityAndApplyCardPolicy(worker *Worker, reason string) 
 	if worker == nil {
 		return liveSIMIdentityRefreshResult{}, nil
 	}
-
-	_ = worker.RefreshRuntime(nil, reason)
-	result, identityErr := worker.refreshIdentityLive(nil, reason)
+	result, identityErr := p.refreshWorkerIdentityState(worker, reason)
 	refreshErr := identityErr
 
 	if p != nil {
-		p.PersistRuntimeState(worker)
-		p.PersistIdentityState(worker)
-
 		if identityErr == nil {
 			if worker.CurrentICCID() != "" {
 				policyResult := p.resolveAndApplyPolicy(worker, reason)
@@ -1506,6 +1545,19 @@ func (p *Pool) refreshIdentityAndApplyCardPolicy(worker *Worker, reason string) 
 		p.broadcastVoWiFiStateChange(worker.ID)
 	}
 	return result, refreshErr
+}
+
+func (p *Pool) refreshWorkerIdentityState(worker *Worker, reason string) (liveSIMIdentityRefreshResult, error) {
+	if worker == nil {
+		return liveSIMIdentityRefreshResult{}, fmt.Errorf("worker_nil")
+	}
+	_ = worker.RefreshRuntime(nil, reason)
+	result, err := worker.refreshIdentityLive(nil, reason)
+	if p != nil {
+		p.PersistRuntimeState(worker)
+		p.PersistIdentityState(worker)
+	}
+	return result, err
 }
 
 func (p *Pool) applyNetworkPreference(worker *Worker) error {
@@ -2725,6 +2777,10 @@ func (p *Pool) PersistRuntimeState(worker *Worker) {
 	if worker == nil {
 		return
 	}
+	if worker.generation != 0 && !p.workerLifecycleOwnerCurrent(workerLifecycleOwner{worker: worker, generation: worker.generation}) {
+		logger.Debug("忽略已退役 Worker 的设备状态持久化", "device", worker.ID)
+		return
+	}
 	if resolvedBackendMode(worker.Config) == backend.BackendPCSC || (worker.Backend != nil && worker.Backend.Mode() == backend.BackendPCSC) {
 		return
 	}
@@ -2745,6 +2801,10 @@ func (p *Pool) PersistRuntimeState(worker *Worker) {
 
 func (p *Pool) PersistIdentityState(worker *Worker) {
 	if worker == nil {
+		return
+	}
+	if worker.generation != 0 && !p.workerLifecycleOwnerCurrent(workerLifecycleOwner{worker: worker, generation: worker.generation}) {
+		logger.Debug("忽略已退役 Worker 的 SIM 身份持久化", "device", worker.ID)
 		return
 	}
 

@@ -37,6 +37,12 @@ func TestBindMBIMStateIndicationsTriggersHandleSIMStatusEvent(t *testing.T) {
 		_, scheduled := p.simEventTimers["dev1"]
 		p.simEventMu.Unlock()
 		if scheduled {
+			p.deviceEventWakeMu.Lock()
+			_, wokeBeforeIdentityRefresh := p.deviceEventWakeups["dev1"]
+			p.deviceEventWakeMu.Unlock()
+			if wokeBeforeIdentityRefresh {
+				t.Fatal("SIM indication scheduled VoWiFi recovery before identity confirmation")
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/db"
 )
 
 func replaceWorkerForLifecycleTest(p *Pool, worker *Worker) {
@@ -82,5 +83,27 @@ func TestOnDemandCallCleanupRejectsReplacementWorker(t *testing.T) {
 	p.cleanupOnDemandCellularCall(old, checkOwner)
 	if !network.connected {
 		t.Fatal("old call cleanup disconnected the replaced worker resources")
+	}
+}
+
+func TestRetiredWorkerCannotReclaimPersistedSIM(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	p := NewPool(&config.Config{})
+	old := &Worker{ID: "dev", Pool: p, Config: config.DeviceConfig{ModemIMEI: "imei"}}
+	old.state.Identity.IMEI = "imei"
+	setWorkerSMSIdentity(old, SMSIdentity{ICCID: "card-old", IMSI: "imsi-old"})
+	p.AttachWorkerForTest(old)
+	p.PersistRuntimeState(old)
+	p.PersistIdentityState(old)
+
+	replacement := &Worker{ID: old.ID, Pool: p, Config: old.Config}
+	replacement.state.Identity.IMEI = "imei"
+	setWorkerSMSIdentity(replacement, SMSIdentity{ICCID: "card-new", IMSI: "imsi-new"})
+	replaceWorkerForLifecycleTest(p, replacement)
+	p.PersistIdentityState(replacement)
+	p.PersistIdentityState(old)
+
+	if got := db.CurrentICCIDForDevice(old.ID); got != "card-new" {
+		t.Fatalf("retired worker restored ICCID %q", got)
 	}
 }

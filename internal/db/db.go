@@ -237,26 +237,28 @@ func UpsertDevice(imei, alias, model, port string) error {
 	if DB == nil {
 		return nil
 	}
-	var device Device
-	result := DB.Where("imei = ?", imei).First(&device)
-	if result.Error == gorm.ErrRecordNotFound {
-		device = Device{
-			IMEI:      imei,
-			Alias:     alias,
-			Model:     model,
-			Port:      port,
-			LastSeen:  time.Now(),
-			CreatedAt: time.Now(),
+	imei = strings.TrimSpace(imei)
+	alias = strings.TrimSpace(alias)
+	now := time.Now()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := releaseReassignedDeviceAliasTx(tx, imei, alias, now); err != nil {
+			return err
 		}
-		return DB.Create(&device).Error
-	}
-	// 更新现有设备
-	return DB.Model(&device).Updates(map[string]interface{}{
-		"alias":     alias,
-		"model":     model,
-		"port":      port,
-		"last_seen": time.Now(),
-	}).Error
+		var device Device
+		err := tx.Where("imei = ?", imei).First(&device).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(&Device{
+				IMEI: imei, Alias: alias, Model: model, Port: port,
+				LastSeen: now, CreatedAt: now,
+			}).Error
+		}
+		if err != nil {
+			return err
+		}
+		return tx.Model(&device).Updates(map[string]interface{}{
+			"alias": alias, "model": model, "port": port, "last_seen": now,
+		}).Error
+	})
 }
 
 // UpsertSIMCard 更新或插入 SIM 卡记录

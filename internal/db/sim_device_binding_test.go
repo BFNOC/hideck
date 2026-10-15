@@ -83,6 +83,43 @@ func TestDetachAndReaddDeviceAliasDoesNotReuseOldSIM(t *testing.T) {
 	}
 }
 
+func TestReassignedAliasReleasesOldHardwareAndSIM(t *testing.T) {
+	openTestDB(t)
+	const (
+		alias   = "wwan0"
+		oldIMEI = "860000000000121"
+		newIMEI = "860000000000122"
+		oldCard = "8944100000000000121"
+		newCard = "8944100000000000122"
+	)
+	if err := UpsertDevice(oldIMEI, alias, "old", "old-port"); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertSIMCardIdentity(oldCard, "imsi-old", "", ptrString(oldIMEI)); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertDevice(newIMEI, alias, "new", "new-port"); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertSIMCardIdentity(newCard, "imsi-new", "", ptrString(newIMEI)); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, found, err := LookupDeviceSMSIdentity(alias)
+	if err != nil || !found || identity.ICCID != newCard || identity.IMSI != "imsi-new" {
+		t.Fatalf("reassigned identity=%+v found=%v err=%v", identity, found, err)
+	}
+	assertDeviceSIMBinding(t, oldIMEI, "")
+	assertSIMDeviceBinding(t, oldCard, "")
+	var old Device
+	if err := DB.First(&old, "imei = ?", oldIMEI).Error; err != nil {
+		t.Fatal(err)
+	}
+	if old.Alias != "" {
+		t.Fatalf("old hardware retained alias %q", old.Alias)
+	}
+}
+
 func assertDeviceSIMBinding(t *testing.T, imei, wantICCID string) {
 	t.Helper()
 	var device Device
