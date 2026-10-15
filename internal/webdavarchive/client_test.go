@@ -45,7 +45,9 @@ func TestClientProbeAndPut(t *testing.T) {
 	if err := client.Probe(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Put(context.Background(), "sms/2026/message name.json", []byte("{}"), "application/json"); err != nil {
+	if err := client.Put(context.Background(), Upload{
+		RemotePath: "sms/2026/message name.json", Data: []byte("{}"), ContentType: "application/json",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(requests, "\n")
@@ -74,10 +76,10 @@ func TestClientRejectsUnsafePathsAndRedactsPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Put(context.Background(), "../escape", nil, "application/octet-stream"); err == nil {
+	if err := client.Put(context.Background(), Upload{RemotePath: "../escape"}); err == nil {
 		t.Fatal("traversal path accepted")
 	}
-	err = client.Put(context.Background(), "safe.json", nil, "application/json")
+	err = client.Put(context.Background(), Upload{RemotePath: "safe.json", ContentType: "application/json"})
 	if err == nil || !strings.Contains(err.Error(), "storage unavailable") || strings.Contains(err.Error(), "do-not-log") {
 		t.Fatalf("unexpected error: %v", err)
 	}

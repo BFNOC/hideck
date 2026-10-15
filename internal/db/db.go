@@ -179,6 +179,7 @@ func Init(dbPath string) error {
 		&TrafficWeek{},
 		&TrafficMonth{},
 		&VoiceCallRecord{},
+		&ArchiveObject{},
 		&PhoneContact{},
 		&DisclaimerAcceptance{},
 		&IMSSubscriptionRejection{},

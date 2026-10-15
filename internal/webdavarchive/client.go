@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -36,13 +37,26 @@ type Client struct {
 	http     *http.Client
 }
 
-type requestOptions struct {
-	Method      string
+type Upload struct {
 	RemotePath  string
-	Body        io.Reader
-	Headers     map[string]string
-	Accepted    []int
-	IncludeBase bool
+	Data        []byte
+	ContentType string
+}
+
+type FileUpload struct {
+	RemotePath  string
+	LocalPath   string
+	ContentType string
+}
+
+type requestOptions struct {
+	Method        string
+	RemotePath    string
+	Body          io.Reader
+	Headers       map[string]string
+	ContentLength int64
+	Accepted      []int
+	IncludeBase   bool
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
@@ -84,7 +98,9 @@ func (c *Client) Probe(ctx context.Context) error {
 		return fmt.Errorf("生成 WebDAV 探测标识失败: %w", err)
 	}
 	name := ".hideck-probe-" + hex.EncodeToString(token[:])
-	if err := c.Put(ctx, name, []byte("hideck webdav probe\n"), "text/plain; charset=utf-8"); err != nil {
+	if err := c.Put(ctx, Upload{
+		RemotePath: name, Data: []byte("hideck webdav probe\n"), ContentType: "text/plain; charset=utf-8",
+	}); err != nil {
 		return err
 	}
 	if err := c.delete(ctx, name); err != nil {
@@ -93,7 +109,27 @@ func (c *Client) Probe(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) Put(ctx context.Context, remotePath string, data []byte, contentType string) error {
+func (c *Client) Put(ctx context.Context, upload Upload) error {
+	return c.putReader(ctx, upload.RemotePath, bytes.NewReader(upload.Data), int64(len(upload.Data)), upload.ContentType)
+}
+
+func (c *Client) PutFile(ctx context.Context, upload FileUpload) error {
+	file, err := os.Open(upload.LocalPath)
+	if err != nil {
+		return fmt.Errorf("打开归档文件失败: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("读取归档文件信息失败: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("归档文件不是普通文件")
+	}
+	return c.putReader(ctx, upload.RemotePath, file, info.Size(), upload.ContentType)
+}
+
+func (c *Client) putReader(ctx context.Context, remotePath string, body io.Reader, size int64, contentType string) error {
 	cleaned, err := cleanRelativePath(remotePath)
 	if err != nil || cleaned == "" {
 		return errors.New("WebDAV 文件路径无效")
@@ -103,7 +139,7 @@ func (c *Client) Put(ctx context.Context, remotePath string, data []byte, conten
 	}
 	headers := map[string]string{"Content-Type": contentType}
 	return c.request(ctx, requestOptions{
-		Method: http.MethodPut, RemotePath: cleaned, Body: bytes.NewReader(data), Headers: headers,
+		Method: http.MethodPut, RemotePath: cleaned, Body: body, Headers: headers, ContentLength: size,
 		Accepted: []int{http.StatusOK, http.StatusCreated, http.StatusNoContent}, IncludeBase: true,
 	})
 }
@@ -145,6 +181,9 @@ func (c *Client) request(ctx context.Context, options requestOptions) error {
 	request, err := http.NewRequestWithContext(ctx, options.Method, requestURL.String(), options.Body)
 	if err != nil {
 		return fmt.Errorf("创建 WebDAV 请求失败: %w", err)
+	}
+	if options.ContentLength > 0 {
+		request.ContentLength = options.ContentLength
 	}
 	if c.username != "" || c.password != "" {
 		request.SetBasicAuth(c.username, c.password)
