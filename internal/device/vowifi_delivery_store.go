@@ -73,7 +73,12 @@ func (vowifiDeliveryStore) LoadInboundFragments(
 	}
 	result := make([]messaging.StoredInboundFragment, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, inboundFragmentFromDB(row))
+		// The rows already match the owner's canonical ICCID and IMSI. Hand
+		// the owner back as given so imscore's exact owner check accepts
+		// fragments saved on another device or under a padded ICCID.
+		fragment := inboundFragmentFromDB(row)
+		fragment.Scope.Owner = owner
+		result = append(result, fragment)
 	}
 	return result, nil
 }
