@@ -123,6 +123,7 @@ declare module 'vue' {
     SwitchLocale: typeof import('./components/SwitchLocale.vue')['default']
     TelegramNotificationTab: typeof import('./components/settings/TelegramNotificationTab.vue')['default']
     TrafficAnalysisPanel: typeof import('./components/TrafficAnalysisPanel.vue')['default']
+    WebDAVArchiveSettings: typeof import('./components/settings/WebDAVArchiveSettings.vue')['default']
     WeComBotNotificationTab: typeof import('./components/settings/WeComBotNotificationTab.vue')['default']
     WeixinNotificationTab: typeof import('./components/settings/WeixinNotificationTab.vue')['default']
     WiFiCallingHealth: typeof import('./components/WiFiCallingHealth.vue')['default']

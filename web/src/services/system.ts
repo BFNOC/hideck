@@ -28,6 +28,48 @@ export type SystemSettings = {
 	openwrt_dynamic_interfaces: boolean
 }
 
+export type ArchiveStatus = {
+  running: boolean
+  last_started_at?: string
+  last_completed_at?: string
+  last_error?: string
+  last_summary: ArchiveRunSummary
+}
+
+export type ArchiveRunSummary = {
+  uploaded: number
+  skipped: number
+  bytes: number
+}
+
+export type ArchiveSettings = {
+  enabled: boolean
+  endpoint: string
+  username: string
+  password_set: boolean
+  base_path: string
+  interval_hours: number
+  retention_days: number
+  auto_cleanup: boolean
+  include_sms: boolean
+  include_calls: boolean
+  include_recordings: boolean
+  status: ArchiveStatus
+}
+
+export type ArchiveSettingsPayload = Omit<ArchiveSettings, 'password_set' | 'status'> & {
+  password: string
+  clear_password?: boolean
+}
+
+export type ArchiveCleanupPreview = {
+  before: string
+  sms_count: number
+  call_count: number
+  recording_count: number
+  recording_bytes: number
+}
+
 export type AutoAnswerSettings = {
   audio_ready: boolean
   audio_name: string
@@ -309,6 +351,42 @@ export const systemService = {
     return callService(async () => {
       await api.put('/settings/system', payload)
       return true
+    })
+  },
+  getArchiveSettings() {
+    return callService(async () => {
+      const res = await api.get<ArchiveSettings>('/settings/archive')
+      return res.data
+    })
+  },
+  saveArchiveSettings(payload: ArchiveSettingsPayload) {
+    return callService(async () => {
+      const res = await api.put<ArchiveSettings>('/settings/archive', payload)
+      return res.data
+    })
+  },
+  testArchiveSettings(payload: ArchiveSettingsPayload) {
+    return callService(async () => {
+      await api.post('/settings/archive/test', payload)
+      return true
+    })
+  },
+  runArchive() {
+    return callService(async () => {
+      const res = await api.post<{ status: string; summary: ArchiveRunSummary }>('/archive/actions/run', {})
+      return res.data.summary
+    })
+  },
+  previewArchiveCleanup() {
+    return callService(async () => {
+      const res = await api.get<ArchiveCleanupPreview>('/archive/cleanup/preview')
+      return res.data
+    })
+  },
+  cleanupArchive() {
+    return callService(async () => {
+      const res = await api.post<{ status: string; cleaned: ArchiveCleanupPreview }>('/archive/cleanup', { confirm: true })
+      return res.data.cleaned
     })
   },
   getPhoneSettings() {

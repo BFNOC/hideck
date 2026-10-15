@@ -14,6 +14,7 @@ import WeComBotNotificationTab from '../components/settings/WeComBotNotification
 import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
 import FeishuNotificationTab from '../components/settings/FeishuNotificationTab.vue'
 import AutoAnswerSettings from '../components/settings/AutoAnswerSettings.vue'
+import WebDAVArchiveSettings from '../components/settings/WebDAVArchiveSettings.vue'
 import { 
   Key24Regular, 
   Save24Regular,
@@ -636,6 +637,8 @@ onMounted(() => {
             </div>
          </div>
       </section>
+
+      <WebDAVArchiveSettings />
 
       <section class="notify-card p-4 sm:p-6 lg:p-8">
          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
