@@ -31,6 +31,7 @@ import (
 	"github.com/yibaiba/hideck/internal/proxy/traffic"
 	"github.com/yibaiba/hideck/internal/upstreamproxy"
 	"github.com/yibaiba/hideck/internal/volte"
+	"github.com/yibaiba/hideck/internal/webdavarchive"
 
 	"github.com/yibaiba/hideck/internal/web"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -256,6 +257,15 @@ func main() {
 	}
 
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
+	archiveManager, err := webdavarchive.NewManager(webdavarchive.ManagerOptions{
+		Store: webdavarchive.NewDatabaseStore(db.DB), RecordingDir: voiceRecordingDirectory,
+		Config: archiveRuntimeConfig(cfg.Archive),
+	})
+	if err != nil {
+		log.Fatalf("初始化 WebDAV 归档服务失败: %v", err)
+	}
+	archiveManager.Start(context.Background())
+	apiServer.SetArchiveManager(archiveManager)
 	if notifyMgr != nil {
 		notifyMgr.StartCommandReceivers()
 	}
@@ -345,6 +355,16 @@ func main() {
 	}
 
 	logger.Info("再见!")
+}
+
+func archiveRuntimeConfig(value config.ArchiveConfig) webdavarchive.RuntimeConfig {
+	return webdavarchive.RuntimeConfig{
+		Enabled: value.Enabled, Endpoint: value.Endpoint, Username: value.Username,
+		Password: value.Password, BasePath: value.BasePath,
+		Interval: time.Duration(value.IntervalHours) * time.Hour, RetentionDays: value.RetentionDays,
+		AutoCleanup: value.AutoCleanup, IncludeSMS: value.IncludeSMS,
+		IncludeCalls: value.IncludeCalls, IncludeRecordings: value.IncludeRecordings,
+	}
 }
 
 func phoneAutoAnswerDevices(devices map[string]config.AutoAnswerDeviceConfig) map[string]phone.AutoAnswerDeviceConfig {

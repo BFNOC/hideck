@@ -22,6 +22,8 @@ type memoryRemote struct {
 	failNext error
 }
 
+func (remote *memoryRemote) Probe(context.Context) error { return nil }
+
 func (remote *memoryRemote) Put(_ context.Context, upload Upload) error {
 	remote.mu.Lock()
 	defer remote.mu.Unlock()

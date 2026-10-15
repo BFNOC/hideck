@@ -35,6 +35,7 @@ import (
 	proxytraffic "github.com/yibaiba/hideck/internal/proxy/traffic"
 	"github.com/yibaiba/hideck/internal/updater"
 	"github.com/yibaiba/hideck/internal/volte"
+	"github.com/yibaiba/hideck/internal/webdavarchive"
 	vwebsheet "github.com/yibaiba/hideck/internal/websheet"
 	"github.com/yibaiba/hideck/pkg/smscodec"
 
@@ -89,6 +90,7 @@ type Server struct {
 	notificationConfigMu    sync.Mutex
 	phoneSettingsMu         sync.Mutex
 	systemConfigMu          sync.RWMutex
+	archiveConfigMu         sync.Mutex
 	weixinQRMu              sync.Mutex
 	wecomQRMu               sync.Mutex
 	qqQRMu                  sync.Mutex
@@ -113,6 +115,7 @@ type Server struct {
 	systemTime              systemTimeProvider
 	backendSwitch           deviceBackendSwitcher
 	updateChecker           systemUpdateChecker
+	archive                 archiveManager
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
@@ -130,6 +133,17 @@ type Server struct {
 
 type realtimeTrafficSubscriber interface {
 	Subscribe(ctx context.Context, deviceID string) (<-chan proxytraffic.RealtimeSnapshot, func())
+}
+
+type archiveManager interface {
+	Config() webdavarchive.RuntimeConfig
+	Status() webdavarchive.Status
+	Configure(webdavarchive.RuntimeConfig) error
+	Probe(context.Context, webdavarchive.RuntimeConfig) error
+	RunNow(context.Context) (webdavarchive.RunSummary, error)
+	PreviewCleanup(context.Context) (webdavarchive.CleanupPreview, error)
+	Cleanup(context.Context) (webdavarchive.CleanupPreview, error)
+	Stop(context.Context) error
 }
 
 // New 创建一个新的 API 服务器实例
@@ -213,6 +227,10 @@ func (s *Server) SetRealtimeTraffic(m *proxytraffic.RealtimeManager) {
 // SetVoiceRecordingDirectory injects the directory owned by the voice gateway.
 func (s *Server) SetVoiceRecordingDirectory(directory string) {
 	s.voiceRecordingDirectory = strings.TrimSpace(directory)
+}
+
+func (s *Server) SetArchiveManager(manager archiveManager) {
+	s.archive = manager
 }
 
 func (s *Server) SetPhoneService(service *phone.Service) {
@@ -362,6 +380,12 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PUT("/settings/notifications", s.handleUpdateNotificationSettings) // 更新通知设置
 		api.GET("/settings/system", s.handleGetSystemSettings)
 		api.PUT("/settings/system", s.handleUpdateSystemSettings)
+		api.GET("/settings/archive", s.handleGetArchiveSettings)
+		api.PUT("/settings/archive", s.handleUpdateArchiveSettings)
+		api.POST("/settings/archive/test", s.handleTestArchiveSettings)
+		api.POST("/archive/actions/run", s.handleRunArchive)
+		api.GET("/archive/cleanup/preview", s.handlePreviewArchiveCleanup)
+		api.POST("/archive/cleanup", s.handleArchiveCleanup)
 		api.GET("/settings/phone", s.handleGetPhoneSettings)
 		api.PUT("/settings/phone/auto-answer/devices/:device_id", s.handleUpdateAutoAnswerDevice)
 		api.POST("/settings/phone/auto-answer/audio", s.handleUploadAutoAnswerAudio)
@@ -507,6 +531,10 @@ func isCommandEventStreamPath(path string) bool {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	var archiveErr error
+	if s.archive != nil {
+		archiveErr = s.archive.Stop(ctx)
+	}
 	var automaticTaskErr error
 	if s.automaticTasks != nil {
 		automaticTaskErr = s.automaticTasks.Stop(ctx)
@@ -529,7 +557,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	httpServer, httpsServer := s.httpSrv, s.httpsSrv
 	s.httpSrvMu.Unlock()
 	if httpServer == nil && httpsServer == nil {
-		return errors.Join(automaticTaskErr, phoneErr)
+		return errors.Join(automaticTaskErr, phoneErr, archiveErr)
 	}
 	shutdownErrors := make(chan error, 2)
 	shutdownCount := 0
@@ -541,7 +569,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		shutdownCount++
 		go func() { shutdownErrors <- httpsServer.Shutdown(ctx) }()
 	}
-	result := errors.Join(automaticTaskErr, phoneErr)
+	result := errors.Join(automaticTaskErr, phoneErr, archiveErr)
 	for range shutdownCount {
 		result = errors.Join(result, <-shutdownErrors)
 	}

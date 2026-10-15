@@ -2,8 +2,11 @@ package webdavarchive
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrRunInProgress = errors.New("WebDAV 归档任务正在运行")
 
 const (
 	KindSMS       = "sms"
@@ -16,6 +19,27 @@ type Settings struct {
 	IncludeCalls      bool
 	IncludeRecordings bool
 	RetentionDays     int
+}
+
+type RuntimeConfig struct {
+	Enabled           bool
+	Endpoint          string
+	Username          string
+	Password          string
+	BasePath          string
+	Interval          time.Duration
+	RetentionDays     int
+	AutoCleanup       bool
+	IncludeSMS        bool
+	IncludeCalls      bool
+	IncludeRecordings bool
+}
+
+func (config RuntimeConfig) ContentSettings() Settings {
+	return Settings{
+		IncludeSMS: config.IncludeSMS, IncludeCalls: config.IncludeCalls,
+		IncludeRecordings: config.IncludeRecordings, RetentionDays: config.RetentionDays,
+	}
 }
 
 type SMSRecord struct {
@@ -79,10 +103,23 @@ type Remote interface {
 	PutFile(context.Context, FileUpload) error
 }
 
+type ProbeRemote interface {
+	Remote
+	Probe(context.Context) error
+}
+
 type RunSummary struct {
 	Uploaded int   `json:"uploaded"`
 	Skipped  int   `json:"skipped"`
 	Bytes    int64 `json:"bytes"`
+}
+
+type Status struct {
+	Running         bool       `json:"running"`
+	LastStartedAt   *time.Time `json:"last_started_at,omitempty"`
+	LastCompletedAt *time.Time `json:"last_completed_at,omitempty"`
+	LastError       string     `json:"last_error,omitempty"`
+	LastSummary     RunSummary `json:"last_summary"`
 }
 
 type CleanupPreview struct {
