@@ -83,6 +83,35 @@ func TestDetachAndReaddDeviceAliasDoesNotReuseOldSIM(t *testing.T) {
 	}
 }
 
+func TestDetachDeviceIMEIDoesNotDetachReplacementAlias(t *testing.T) {
+	openTestDB(t)
+	const (
+		alias   = "wwan0"
+		oldIMEI = "860000000000211"
+		newIMEI = "860000000000212"
+		oldCard = "8944100000000000211"
+		newCard = "8944100000000000212"
+	)
+	for _, device := range []Device{{IMEI: oldIMEI, Alias: alias}, {IMEI: newIMEI, Alias: alias}} {
+		if err := DB.Create(&device).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := UpsertSIMCardIdentity(oldCard, "imsi-old", "", ptrString(oldIMEI)); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertSIMCardIdentity(newCard, "imsi-new", "", ptrString(newIMEI)); err != nil {
+		t.Fatal(err)
+	}
+	if err := DetachDeviceIMEI(oldIMEI); err != nil {
+		t.Fatal(err)
+	}
+	assertDeviceSIMBinding(t, oldIMEI, "")
+	assertSIMDeviceBinding(t, oldCard, "")
+	assertDeviceSIMBinding(t, newIMEI, newCard)
+	assertSIMDeviceBinding(t, newCard, newIMEI)
+}
+
 func TestReassignedAliasReleasesOldHardwareAndSIM(t *testing.T) {
 	openTestDB(t)
 	const (

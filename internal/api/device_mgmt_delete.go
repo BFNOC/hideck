@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/device"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
@@ -60,6 +61,31 @@ func deleteManagedDevice(c *gin.Context, configPath string, ops managedDeviceDel
 
 func databaseManagedDeviceDeleteOps(abandon func(string) error) managedDeviceDeleteOps {
 	return managedDeviceDeleteOps{abandon: abandon, detach: db.DetachDeviceAlias}
+}
+
+func managedDeviceIMEI(deviceID string, pool *device.Pool) string {
+	if pool != nil {
+		if worker := pool.GetWorker(deviceID); worker != nil {
+			if imei := strings.TrimSpace(worker.Config.ModemIMEI); config.NormalizeIMEI(imei) != "" {
+				return imei
+			}
+		}
+	}
+	cfg, err := config.GetDeviceByID(deviceID)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	if imei := strings.TrimSpace(cfg.ModemIMEI); config.NormalizeIMEI(imei) != "" {
+		return imei
+	}
+	return ""
+}
+
+func exactManagedDeviceDetach(imei string) func(string) error {
+	if imei = strings.TrimSpace(imei); config.NormalizeIMEI(imei) != "" {
+		return func(string) error { return db.DetachDeviceIMEI(imei) }
+	}
+	return db.DetachDeviceAlias
 }
 
 func (s *Server) deleteManagedDeviceConfig(deviceID string) error {

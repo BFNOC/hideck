@@ -202,6 +202,8 @@ type Pool struct {
 	cfg                       *config.Config
 	notifier                  Notifier
 	mu                        sync.RWMutex
+	managedMutationMu         sync.Mutex
+	managedMutations          map[string]*managedDeviceMutation
 	policyTransitionsMu       sync.Mutex
 	policyTransitions         map[string]*policyTransition
 	ctx                       context.Context
@@ -280,6 +282,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		rebuilding:             make(map[string]bool),
 		rebuildAttempt:         make(map[string]uint64),
 		workerGenerations:      make(map[string]uint64),
+		managedMutations:       make(map[string]*managedDeviceMutation),
 		modemRebootRecovering:  make(map[string]bool),
 		modemRebootWakeups:     make(map[string]chan struct{}),
 		modemRebootCancels:     make(map[string]chan struct{}),
@@ -1256,6 +1259,7 @@ func (p *Pool) cancelWorkerLifecycleTimers(deviceID string) {
 		return
 	}
 	deviceID = strings.TrimSpace(deviceID)
+	p.cancelLebaraUKIdentityRecover(deviceID)
 	p.simEventMu.Lock()
 	if timer := p.simEventTimers[deviceID]; timer != nil {
 		timer.Stop()

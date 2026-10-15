@@ -1502,6 +1502,10 @@ func detectDeviceBindingConflictInList(cfg config.DeviceConfig, excludeID string
 
 func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	id := deviceIDParam(c)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
+		return
+	}
 	var req updateDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "参数错误"})
@@ -1510,6 +1514,12 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	if strings.TrimSpace(req.Config.ID) != "" && strings.TrimSpace(req.Config.ID) != id {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "不支持修改设备 ID"})
 		return
+	}
+	mutationLeaseHeld := false
+	if s.pool != nil {
+		releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+		defer releaseMutation()
+		mutationLeaseHeld = true
 	}
 
 	oldMD, err := config.GetDeviceByID(id)
@@ -1557,9 +1567,10 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 		switchCtx, cancel := context.WithTimeout(c.Request.Context(), backendSwitchRequestTimeout)
 		defer cancel()
 		result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
-			Current: oldCfg,
-			Desired: newCfg,
-			Target:  newBackend,
+			Current:           oldCfg,
+			Desired:           newCfg,
+			Target:            newBackend,
+			MutationLeaseHeld: mutationLeaseHeld,
 		})
 		if switchErr != nil {
 			respondBackendSwitchFailure(c, switchErr)
@@ -1640,11 +1651,22 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 }
 
 func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
+	id := deviceIDParam(c)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
+		return
+	}
+	if s.pool != nil {
+		releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+		defer releaseMutation()
+	}
+	deletedIMEI := managedDeviceIMEI(id, s.pool)
 	var abandon func(string) error
 	if s.pool != nil {
 		abandon = s.pool.AbandonDevice
 	}
 	ops := databaseManagedDeviceDeleteOps(abandon)
+	ops.detach = exactManagedDeviceDetach(deletedIMEI)
 	ops.deleteConfig = s.deleteManagedDeviceConfig
 	deleteManagedDevice(c, s.configPath, ops)
 }
@@ -1685,6 +1707,10 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 	if strings.TrimSpace(newCfg.ID) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
 		return
+	}
+	if s.pool != nil {
+		releaseMutation := s.pool.AcquireManagedDeviceMutation(newCfg.ID)
+		defer releaseMutation()
 	}
 	if err := validateManagedNetworkConfig(newCfg); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
@@ -1820,6 +1846,10 @@ type setUSBNetModeRequest struct {
 
 func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 	id := deviceIDParam(c)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
+		return
+	}
 	var req setUSBNetModeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "参数错误"})
@@ -1839,6 +1869,12 @@ func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 		})
 		return
 	}
+	mutationLeaseHeld := false
+	if s.pool != nil {
+		releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+		defer releaseMutation()
+		mutationLeaseHeld = true
+	}
 	current, err := config.GetDeviceByID(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "读取设备配置失败: " + err.Error()})
@@ -1853,9 +1889,10 @@ func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 	switchCtx, cancel := context.WithTimeout(c.Request.Context(), backendSwitchRequestTimeout)
 	defer cancel()
 	result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
-		Current: *current,
-		Desired: desired,
-		Target:  target,
+		Current:           *current,
+		Desired:           desired,
+		Target:            target,
+		MutationLeaseHeld: mutationLeaseHeld,
 	})
 	if switchErr != nil {
 		respondBackendSwitchFailure(c, switchErr)

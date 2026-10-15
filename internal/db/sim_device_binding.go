@@ -121,3 +121,14 @@ func DetachDeviceAlias(alias string) error {
 		return nil
 	})
 }
+
+// DetachDeviceIMEI clears the SIM binding for exactly one physical modem.
+func DetachDeviceIMEI(imei string) error {
+	imei = strings.TrimSpace(imei)
+	if DB == nil || imei == "" {
+		return nil
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return detachDeviceSIMTx(tx, imei, time.Now())
+	})
+}
