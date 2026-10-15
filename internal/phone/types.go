@@ -80,6 +80,18 @@ type ResultNotifier interface {
 	NotifyCallResult(deviceID, peer, direction, status, reason string, at time.Time)
 }
 
+type AutoAnswerRecordingNotification struct {
+	DeviceID      string
+	Peer          string
+	RecordingPath string
+	RecordingName string
+	At            time.Time
+}
+
+type autoAnswerRecordingNotifier interface {
+	NotifyAutoAnswerRecording(notification AutoAnswerRecordingNotification)
+}
+
 type ServiceOptions struct {
 	Gateway          VoiceGateway
 	Store            RecordStore
@@ -178,6 +190,7 @@ type activeCall struct {
 	mixedAudioPath  string
 	mixedRecordOnce sync.Once
 	mixedAttempted  bool
+	autoAnswered    bool
 	autoAnswerTimer *time.Timer
 	controlPending  bool
 	terminalDone    chan struct{}

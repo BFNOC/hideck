@@ -296,7 +296,7 @@ func (s *Service) answerWithHeadlessMedia(call *activeCall, media *MediaSession)
 		go s.hangupAutoAnsweredCall(deviceID, callID)
 		return errors.New("phone: incoming call ended during auto-answer")
 	}
-	call.controlPending = false
+	call.controlPending, call.autoAnswered = false, true
 	call.owner, call.mediaID = autoAnswerOwner, media.ID
 	s.mediaCalls[media.ID] = callID
 	return nil

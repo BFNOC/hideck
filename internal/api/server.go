@@ -87,6 +87,7 @@ type Server struct {
 	proxyRepo               repo.ProxyInstanceRepository
 	proxySyncMu             sync.Mutex
 	notificationConfigMu    sync.Mutex
+	phoneSettingsMu         sync.Mutex
 	systemConfigMu          sync.RWMutex
 	weixinQRMu              sync.Mutex
 	wecomQRMu               sync.Mutex

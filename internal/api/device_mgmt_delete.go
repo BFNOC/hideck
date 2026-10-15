@@ -91,6 +91,8 @@ func exactManagedDeviceDetach(imei string) func(string) error {
 func (s *Server) deleteManagedDeviceConfig(deviceID string) error {
 	s.notificationConfigMu.Lock()
 	defer s.notificationConfigMu.Unlock()
+	s.phoneSettingsMu.Lock()
+	defer s.phoneSettingsMu.Unlock()
 	if err := config.DeleteDeviceInFile(s.configPath, deviceID); err != nil {
 		return err
 	}

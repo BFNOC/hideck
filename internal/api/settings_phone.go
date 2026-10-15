@@ -56,7 +56,7 @@ func (s *Server) handleUpdateAutoAnswerDevice(c *gin.Context) {
 		return
 	}
 	deviceID := strings.TrimSpace(c.Param("device_id"))
-	if deviceID == "" || !s.hasAutoAnswerDevice(deviceID) {
+	if deviceID == "" {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备不存在"})
 		return
 	}
@@ -72,6 +72,12 @@ func (s *Server) handleUpdateAutoAnswerDevice(c *gin.Context) {
 	delay := time.Duration(request.DelaySeconds) * time.Second
 	if int(delay/time.Second) != request.DelaySeconds || delay <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "自动接听等待时间超出支持范围"})
+		return
+	}
+	s.phoneSettingsMu.Lock()
+	defer s.phoneSettingsMu.Unlock()
+	if !s.hasAutoAnswerDevice(deviceID) {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备不存在"})
 		return
 	}
 	status := s.phone.AutoAnswerStatus()
@@ -170,6 +176,8 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 	if c.Request.MultipartForm != nil {
 		defer c.Request.MultipartForm.RemoveAll()
 	}
+	s.phoneSettingsMu.Lock()
+	defer s.phoneSettingsMu.Unlock()
 	target := s.autoAnswerAudioPath()
 	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 		s.respondAutoAnswerUploadError(c, err)
@@ -194,11 +202,7 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 		s.respondAutoAnswerUploadError(c, err)
 		return
 	}
-	if err := os.Rename(temporaryPath, target); err != nil {
-		s.respondAutoAnswerUploadError(c, err)
-		return
-	}
-	if err := s.reloadAutoAnswerAudio(target); err != nil {
+	if err := s.installAutoAnswerAudio(temporaryPath, target); err != nil {
 		s.respondAutoAnswerUploadError(c, err)
 		return
 	}

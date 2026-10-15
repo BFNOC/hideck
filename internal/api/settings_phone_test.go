@@ -169,3 +169,52 @@ func TestPhoneSettingsUploadsAndActivatesAudio(t *testing.T) {
 		t.Fatalf("uploaded audio = %q", content)
 	}
 }
+
+func TestPhoneSettingsUploadRestoresPreviousAudioWhenConfigWriteFails(t *testing.T) {
+	directory := t.TempDir()
+	audioPath := filepath.Join(directory, "auto-answer.wav")
+	if err := os.WriteFile(audioPath, []byte("previous wav"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := phone.NewService(phone.ServiceOptions{
+		Gateway: &phoneRouteGatewayStub{}, WebRTCUDPAddress: "127.0.0.1:0", PromptDecoder: settingsPromptDecoder{},
+		AutoAnswer: phone.AutoAnswerConfig{AudioPath: audioPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close(context.Background()) })
+	server := &Server{
+		phone: service, configPath: directory,
+		fullCfg: &config.Config{System: config.SystemConfig{AutoAnswer: config.AutoAnswerConfig{AudioFile: audioPath}}},
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "replacement.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("replacement wav")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/settings/phone/auto-answer/audio", body)
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	server.handleUploadAutoAnswerAudio(ctx)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	content, err := os.ReadFile(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "previous wav" {
+		t.Fatalf("restored audio = %q", content)
+	}
+}

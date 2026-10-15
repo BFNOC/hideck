@@ -100,7 +100,7 @@ async function toggleDevice(row: DeviceRow, value: string | number | boolean) {
   }
   try {
     await ElMessageBox.confirm(
-      `${row.name} 来电持续 ${row.delay_seconds} 秒无人接听时，HiDeck 将自动接听、播放录音并保存对方语音。确认启用？`,
+      `${row.name} 来电持续 ${row.delay_seconds} 秒无人接听时，HiDeck 将自动接听、播放录音、保存对方语音，并发送到 QQ、飞书、Telegram、微信或企业微信机器人。确认启用？`,
       '启用自动接听',
       { type: 'warning', confirmButtonText: '启用', cancelButtonText: '取消' }
     )
@@ -136,7 +136,7 @@ onMounted(load)
       <div>
         <div class="text-sm font-bold text-[var(--ui-text)]">未接来电自动应答</div>
         <div class="text-xs leading-relaxed text-[var(--ui-muted)]">
-          每台设备独立设置等待时间；默认关闭，不依赖浏览器保持在线。
+          每台设备独立设置等待时间；默认关闭，不依赖浏览器保持在线。通话结束后，录音会发送到支持附件的 Bot 渠道。
         </div>
       </div>
     </div>
