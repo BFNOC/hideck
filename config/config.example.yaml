@@ -65,6 +65,12 @@ proxy:
 vowifi:
   enabled: false
 
+system:
+  openwrt_dynamic_interfaces: false
+  auto_answer:
+    audio_file: data/phone/auto-answer.wav
+    devices: {}
+
 webhook:
   enabled: false
 

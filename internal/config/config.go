@@ -135,7 +135,18 @@ type Config struct {
 }
 
 type SystemConfig struct {
-	OpenWRTDynamicInterfaces bool `mapstructure:"openwrt_dynamic_interfaces" json:"openwrt_dynamic_interfaces"`
+	OpenWRTDynamicInterfaces bool             `mapstructure:"openwrt_dynamic_interfaces" json:"openwrt_dynamic_interfaces"`
+	AutoAnswer               AutoAnswerConfig `mapstructure:"auto_answer" json:"auto_answer"`
+}
+
+type AutoAnswerConfig struct {
+	AudioFile string                            `mapstructure:"audio_file" json:"audio_file"`
+	Devices   map[string]AutoAnswerDeviceConfig `mapstructure:"devices" json:"devices"`
+}
+
+type AutoAnswerDeviceConfig struct {
+	Enabled      bool `mapstructure:"enabled" json:"enabled"`
+	DelaySeconds int  `mapstructure:"delay_seconds" json:"delay_seconds"`
 }
 
 // ProxyConfig 定义代理服务配置
@@ -359,6 +370,7 @@ func Load(path string) (*Config, error) {
 	// 默认值设置
 	viper.SetDefault("server.port", 7575)
 	viper.SetDefault("system.openwrt_dynamic_interfaces", false)
+	viper.SetDefault("system.auto_answer.audio_file", "data/phone/auto-answer.wav")
 	viper.SetDefault("telegram.recording_mode", TelegramRecordingModeVoice)
 	viper.SetDefault("webhook.timeout_ms", 5000)
 	viper.SetDefault("webhook.retry_max", 3)

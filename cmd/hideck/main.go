@@ -237,7 +237,8 @@ func main() {
 	}
 	phoneService, err := phone.NewService(phone.ServiceOptions{
 		Gateway: phoneGateway, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
-		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
+		PromptDecoder: audioTranscoder,
+		Notifier:      callResultNotifier, RecordingDir: voiceRecordingDirectory,
 		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, WebRTCPublicHost: cfg.Server.WebRTCPublicHost,
 		ICEServers:     cfg.Server.ICEServers,
 		RealtimeCodecs: availableRealtimeCodecs(audioTranscoder),
@@ -245,6 +246,10 @@ func main() {
 			return audioTranscoder.NewRealtimeCodec(codec, fmtp)
 		},
 		ResolveICCID: pool.CurrentICCIDForDevice,
+		AutoAnswer: phone.AutoAnswerConfig{
+			AudioPath: cfg.System.AutoAnswer.AudioFile,
+			Devices:   phoneAutoAnswerDevices(cfg.System.AutoAnswer.Devices),
+		},
 	})
 	if err != nil {
 		log.Fatalf("初始化电话媒体服务失败: %v", err)
@@ -340,6 +345,16 @@ func main() {
 	}
 
 	logger.Info("再见!")
+}
+
+func phoneAutoAnswerDevices(devices map[string]config.AutoAnswerDeviceConfig) map[string]phone.AutoAnswerDeviceConfig {
+	result := make(map[string]phone.AutoAnswerDeviceConfig, len(devices))
+	for deviceID, deviceConfig := range devices {
+		result[deviceID] = phone.AutoAnswerDeviceConfig{
+			Enabled: deviceConfig.Enabled, Delay: time.Duration(deviceConfig.DelaySeconds) * time.Second,
+		}
+	}
+	return result
 }
 
 func availableRealtimeCodecs(transcoder *audiotranscode.Transcoder) []string {

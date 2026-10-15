@@ -862,6 +862,80 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/phone:
+    get:
+      tags: [settings]
+      summary: 获取电话自动接听设置
+      responses:
+        '200':
+          description: 当前电话设置及录音可用状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneSettings'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+  /settings/phone/auto-answer/devices/{device_id}:
+    parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [settings]
+      summary: 更新指定设备的自动接听设置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAutoAnswerDeviceRequest'
+      responses:
+        '200':
+          description: 设置已持久化并应用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppliedResult'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '422':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/phone/auto-answer/audio:
+    post:
+      tags: [settings]
+      summary: 上传自动接听播放录音
+      description: 接受最大 16 MiB 的单声道 PCM16 WAV，采样率须为 8 kHz 或 16 kHz。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: 录音已校验、保存并应用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoAnswerSettings'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '422':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/disclaimer:
     get:
       tags: [settings]
@@ -4223,6 +4297,48 @@ components:
         openwrt_dynamic_interfaces:
           type: boolean
           description: 是否将拨号后的实际 Linux 数据接口动态映射到 OpenWrt netifd
+
+    AutoAnswerSettings:
+      type: object
+      required: [audio_ready, audio_name, devices]
+      properties:
+        audio_ready:
+          type: boolean
+        audio_name:
+          type: string
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutoAnswerDeviceSettings'
+
+    AutoAnswerDeviceSettings:
+      type: object
+      required: [device_id, enabled, delay_seconds]
+      properties:
+        device_id:
+          type: string
+        enabled:
+          type: boolean
+        delay_seconds:
+          type: integer
+          minimum: 1
+
+    PhoneSettings:
+      type: object
+      required: [auto_answer]
+      properties:
+        auto_answer:
+          $ref: '#/components/schemas/AutoAnswerSettings'
+
+    UpdateAutoAnswerDeviceRequest:
+      type: object
+      required: [enabled, delay_seconds]
+      properties:
+        enabled:
+          type: boolean
+        delay_seconds:
+          type: integer
+          minimum: 1
 
     DisclaimerStatus:
       type: object

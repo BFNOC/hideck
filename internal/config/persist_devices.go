@@ -146,8 +146,16 @@ func DeleteDeviceInFile(path string, deviceID string) error {
 			removeDeviceNode(devices, deviceID)
 		}
 		removeDeviceFromNotificationFilters(root, deviceID)
+		removeDeviceFromAutoAnswer(root, deviceID)
 		return nil
 	})
+}
+
+func removeDeviceFromAutoAnswer(root *yaml.Node, deviceID string) {
+	systemNode := getMapValue(root, "system")
+	autoAnswerNode := getMapValue(systemNode, "auto_answer")
+	devicesNode := getMapValue(autoAnswerNode, "devices")
+	deleteMapKey(devicesNode, deviceID)
 }
 
 func removeDeviceNode(devices *yaml.Node, deviceID string) {

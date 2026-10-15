@@ -28,6 +28,22 @@ export type SystemSettings = {
 	openwrt_dynamic_interfaces: boolean
 }
 
+export type AutoAnswerSettings = {
+  audio_ready: boolean
+  audio_name: string
+  devices: AutoAnswerDeviceSettings[]
+}
+
+export type AutoAnswerDeviceSettings = {
+  device_id: string
+  enabled: boolean
+  delay_seconds: number
+}
+
+export type PhoneSettings = {
+  auto_answer: AutoAnswerSettings
+}
+
 export type DisclaimerStatus = {
   accepted: boolean
   accepted_at: string | null
@@ -293,6 +309,26 @@ export const systemService = {
     return callService(async () => {
       await api.put('/settings/system', payload)
       return true
+    })
+  },
+  getPhoneSettings() {
+    return callService(async () => {
+      const res = await api.get<PhoneSettings>('/settings/phone')
+      return res.data
+    })
+  },
+  saveAutoAnswerDevice(deviceId: string, payload: Pick<AutoAnswerDeviceSettings, 'enabled' | 'delay_seconds'>) {
+    return callService(async () => {
+      await api.put(`/settings/phone/auto-answer/devices/${encodeURIComponent(deviceId)}`, payload)
+      return true
+    })
+  },
+  uploadAutoAnswerAudio(file: File) {
+    return callService(async () => {
+      const data = new FormData()
+      data.append('file', file)
+      const res = await api.post<AutoAnswerSettings>('/settings/phone/auto-answer/audio', data)
+      return res.data
     })
   },
   getPasswordStatus() {

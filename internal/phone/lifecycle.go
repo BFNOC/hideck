@@ -74,6 +74,7 @@ func (s *Service) handleIncoming(incoming voicehost.IncomingCall) {
 		if s.notifier != nil {
 			go s.notifier.NotifyIncomingCall(incoming.DeviceID, incoming.Caller, incoming.Callee)
 		}
+		s.scheduleAutoAnswer(call)
 	}
 	for _, event := range pending {
 		s.dispatchCallEvent(event)
@@ -288,6 +289,10 @@ func (s *Service) finishCall(event voicehost.CallEvent) {
 	call.record.DurationSeconds = callDurationSeconds(call.record, endedAt)
 	if call.disconnectTimer != nil {
 		call.disconnectTimer.Stop()
+	}
+	if call.autoAnswerTimer != nil {
+		call.autoAnswerTimer.Stop()
+		call.autoAnswerTimer = nil
 	}
 	if s.deviceCalls[call.view.DeviceID] == call.view.CallID {
 		delete(s.deviceCalls, call.view.DeviceID)

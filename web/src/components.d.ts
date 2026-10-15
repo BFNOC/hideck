@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AutoAnswerSettings: typeof import('./components/settings/AutoAnswerSettings.vue')['default']
     AutomaticTaskDetail: typeof import('./components/automation/AutomaticTaskDetail.vue')['default']
     AutomaticTaskDialog: typeof import('./components/AutomaticTaskDialog.vue')['default']
     AutomaticTaskList: typeof import('./components/automation/AutomaticTaskList.vue')['default']

@@ -95,10 +95,19 @@ func (s *Server) deleteManagedDeviceConfig(deviceID string) error {
 		return err
 	}
 	if s.fullCfg == nil {
+		if s.phone != nil {
+			s.phone.RemoveAutoAnswerDevice(deviceID)
+		}
 		return nil
 	}
 	filters := withoutNotificationDevice(s.fullCfg.NotificationDeviceFilters, deviceID)
 	s.fullCfg.NotificationDeviceFilters = filters
+	s.systemConfigMu.Lock()
+	delete(s.fullCfg.System.AutoAnswer.Devices, deviceID)
+	s.systemConfigMu.Unlock()
+	if s.phone != nil {
+		s.phone.RemoveAutoAnswerDevice(deviceID)
+	}
 	if s.notifyMgr != nil {
 		s.notifyMgr.UpdateDeviceFilters(filters)
 	}

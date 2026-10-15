@@ -13,6 +13,7 @@ import TelegramNotificationTab from '../components/settings/TelegramNotification
 import WeComBotNotificationTab from '../components/settings/WeComBotNotificationTab.vue'
 import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
 import FeishuNotificationTab from '../components/settings/FeishuNotificationTab.vue'
+import AutoAnswerSettings from '../components/settings/AutoAnswerSettings.vue'
 import { 
   Key24Regular, 
   Save24Regular,
@@ -629,6 +630,9 @@ onMounted(() => {
                 :disabled="loadingSystemSettings || savingSystemSettings"
                 @change="updateOpenWRTDynamicInterfaces"
               />
+            </div>
+            <div class="border-t border-[var(--ui-border)] pt-4">
+              <AutoAnswerSettings />
             </div>
          </div>
       </section>

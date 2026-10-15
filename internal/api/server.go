@@ -87,6 +87,7 @@ type Server struct {
 	proxyRepo               repo.ProxyInstanceRepository
 	proxySyncMu             sync.Mutex
 	notificationConfigMu    sync.Mutex
+	systemConfigMu          sync.RWMutex
 	weixinQRMu              sync.Mutex
 	wecomQRMu               sync.Mutex
 	qqQRMu                  sync.Mutex
@@ -360,6 +361,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PUT("/settings/notifications", s.handleUpdateNotificationSettings) // 更新通知设置
 		api.GET("/settings/system", s.handleGetSystemSettings)
 		api.PUT("/settings/system", s.handleUpdateSystemSettings)
+		api.GET("/settings/phone", s.handleGetPhoneSettings)
+		api.PUT("/settings/phone/auto-answer/devices/:device_id", s.handleUpdateAutoAnswerDevice)
+		api.POST("/settings/phone/auto-answer/audio", s.handleUploadAutoAnswerAudio)
 		api.GET("/settings/disclaimer", s.handleGetDisclaimerStatus)
 		api.PUT("/settings/disclaimer", s.handleAcceptDisclaimer)
 		api.GET("/settings/password", s.handleGetPasswordStatus)
