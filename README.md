@@ -41,6 +41,8 @@ Outgoing call/SMS quotas are per SIM and survive restarts: [limits and configura
 
 Modem carrier profiles: [MBN management, SIM policies and manual trial runs](docs/mbn.md).
 
+WebDAV backup and safe local cleanup: [archive SMS, calls and recordings](docs/webdav-archive.md).
+
 ## Quick start
 
 Docker (recommended). Needs Linux, curl, Docker Compose, host networking, and USB access. The image includes ADB, ALSA tools, AMR/MP3 libraries, and the embedded module-side voice runtime. The host still needs a USB audio driver; see [module voice prerequisites](DOCKERHUB.md#module-voice-dependencies).

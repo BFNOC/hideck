@@ -862,6 +862,120 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/archive:
+    get:
+      tags: [settings]
+      summary: 获取 WebDAV 归档设置和最近运行状态
+      description: 密码不会返回；password_set 只表示是否保存了密码。
+      responses:
+        '200':
+          description: 当前归档设置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveSettings'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+    put:
+      tags: [settings]
+      summary: 保存并热更新 WebDAV 归档设置
+      description: password 为空时保留现有密码；clear_password=true 时删除已保存密码。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveSettingsRequest'
+      responses:
+        '200':
+          description: 已保存并应用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveSettings'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/archive/test:
+    post:
+      tags: [settings]
+      summary: 使用表单中的 WebDAV 设置测试读写和删除权限
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveSettingsRequest'
+      responses:
+        '200':
+          description: 测试文件已写入并删除
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /archive/actions/run:
+    post:
+      tags: [settings]
+      summary: 立即执行一次增量归档
+      responses:
+        '200':
+          description: 归档完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  summary: { $ref: '#/components/schemas/ArchiveRunSummary' }
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /archive/cleanup/preview:
+    get:
+      tags: [settings]
+      summary: 预览已归档且超过保留期的本地数据
+      responses:
+        '200':
+          description: 可安全清理的数据统计
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveCleanupPreview'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /archive/cleanup:
+    post:
+      tags: [settings]
+      summary: 清理已归档且超过保留期的本地数据
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: 清理完成
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/phone:
     get:
       tags: [settings]
@@ -3741,6 +3855,60 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    ArchiveRunSummary:
+      type: object
+      required: [uploaded, skipped, bytes]
+      properties:
+        uploaded: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        bytes: { type: integer, format: int64, minimum: 0 }
+
+    ArchiveStatus:
+      type: object
+      required: [running, last_summary]
+      properties:
+        running: { type: boolean }
+        last_started_at: { type: string, format: date-time }
+        last_completed_at: { type: string, format: date-time }
+        last_error: { type: string }
+        last_summary: { $ref: '#/components/schemas/ArchiveRunSummary' }
+
+    ArchiveSettingsRequest:
+      type: object
+      required: [enabled, endpoint, username, base_path, interval_hours, retention_days, auto_cleanup, include_sms, include_calls, include_recordings]
+      properties:
+        enabled: { type: boolean }
+        endpoint: { type: string, format: uri }
+        username: { type: string }
+        password: { type: string, format: password, writeOnly: true }
+        clear_password: { type: boolean, default: false }
+        base_path: { type: string }
+        interval_hours: { type: integer, minimum: 1, maximum: 720 }
+        retention_days: { type: integer, minimum: 1, maximum: 3650 }
+        auto_cleanup: { type: boolean, default: false }
+        include_sms: { type: boolean }
+        include_calls: { type: boolean }
+        include_recordings: { type: boolean }
+
+    ArchiveSettings:
+      allOf:
+        - $ref: '#/components/schemas/ArchiveSettingsRequest'
+        - type: object
+          required: [password_set, status]
+          properties:
+            password_set: { type: boolean }
+            status: { $ref: '#/components/schemas/ArchiveStatus' }
+
+    ArchiveCleanupPreview:
+      type: object
+      required: [before, sms_count, call_count, recording_count, recording_bytes]
+      properties:
+        before: { type: string, format: date-time }
+        sms_count: { type: integer, minimum: 0 }
+        call_count: { type: integer, minimum: 0 }
+        recording_count: { type: integer, minimum: 0 }
+        recording_bytes: { type: integer, format: int64, minimum: 0 }
+
     PhoneDevice:
       type: object
       required: [id, name, iccid, voice]
