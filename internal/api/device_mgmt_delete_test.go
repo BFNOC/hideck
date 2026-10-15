@@ -107,6 +107,20 @@ notification_device_filters:
 	}
 }
 
+func TestWithoutNotificationDeviceKeepsSoleTargetRestrictive(t *testing.T) {
+	filters := withoutNotificationDevice(map[string][]string{
+		"bark":     {"wwan0"},
+		"telegram": {"wwan0", "wwan1"},
+	}, "wwan0")
+
+	if got := filters["bark"]; len(got) != 1 || got[0] != "wwan0" {
+		t.Fatalf("bark filter = %v, want inactive restrictive target [wwan0]", got)
+	}
+	if got := filters["telegram"]; len(got) != 1 || got[0] != "wwan1" {
+		t.Fatalf("telegram filter = %v, want [wwan1]", got)
+	}
+}
+
 func TestHandleDeviceMgmtOverviewLiteReturnsNotFoundAfterDelete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	path := writeDeviceMgmtLimitConfig(t, "devices: []\n")

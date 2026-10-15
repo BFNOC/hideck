@@ -38,8 +38,8 @@ notification_device_filters:
 	if got := filters["telegram"]; len(got) != 1 || got[0] != "wwan1" {
 		t.Fatalf("telegram filter = %v, want [wwan1]", got)
 	}
-	if _, exists := filters["bark"]; exists {
-		t.Fatalf("empty bark filter was not removed: %v", filters)
+	if got := filters["bark"]; len(got) != 1 || got[0] != "wwan0" {
+		t.Fatalf("bark filter = %v, want restrictive tombstone [wwan0]", got)
 	}
 	if err := DeleteDeviceInFile(path, "wwan0"); err != nil {
 		t.Fatalf("second DeleteDeviceInFile() error = %v", err)

@@ -169,19 +169,21 @@ func removeDeviceFromNotificationFilters(root *yaml.Node, deviceID string) {
 		if devices == nil || devices.Kind != yaml.SequenceNode {
 			continue
 		}
-		kept := devices.Content[:0]
+		kept := make([]*yaml.Node, 0, len(devices.Content))
+		removed := false
 		for _, entry := range devices.Content {
-			if entry == nil || strings.TrimSpace(entry.Value) != deviceID {
-				kept = append(kept, entry)
+			if entry != nil && strings.TrimSpace(entry.Value) == deviceID {
+				removed = true
+				continue
 			}
+			kept = append(kept, entry)
+		}
+		if !removed || len(kept) == 0 {
+			// A missing filter means "all devices". Keep the final, now inactive
+			// device ID so deleting a device cannot broaden notification access.
+			continue
 		}
 		devices.Content = kept
-		if len(devices.Content) == 0 {
-			filters.Content = append(filters.Content[:index], filters.Content[index+2:]...)
-		}
-	}
-	if len(filters.Content) == 0 {
-		deleteMapKey(root, "notification_device_filters")
 	}
 }
 

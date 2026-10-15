@@ -109,10 +109,21 @@ func withoutNotificationDevice(filters map[string][]string, deviceID string) map
 	deviceID = strings.TrimSpace(deviceID)
 	updated := make(map[string][]string)
 	for channel, devices := range filters {
+		removed := false
 		for _, candidate := range devices {
-			if candidate = strings.TrimSpace(candidate); candidate != "" && candidate != deviceID {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == deviceID {
+				removed = true
+				continue
+			}
+			if candidate != "" {
 				updated[channel] = append(updated[channel], candidate)
 			}
+		}
+		if removed && len(updated[channel]) == 0 {
+			// Preserve a restrictive target. Removing the channel key would mean
+			// "all devices" and could expose another device's SMS or call details.
+			updated[channel] = []string{deviceID}
 		}
 	}
 	return updated
