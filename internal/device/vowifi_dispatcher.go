@@ -13,16 +13,13 @@ type poolVoWiFiRuntimeDispatcher struct {
 	pool *Pool
 }
 
-func applyVoWiFiSMSMemoryPressure(set func(bool), persistErr error, retained vowifiSMSRecordResult) {
-	if set == nil {
+func reportVoWiFiSMSPersistence(result chan<- error, persistErr error) {
+	if result == nil {
 		return
 	}
-	if persistErr != nil {
-		set(true)
-		return
-	}
-	if retained.Stored || retained.Duplicate || retained.Suppressed {
-		set(false)
+	select {
+	case result <- persistErr:
+	default:
 	}
 }
 
@@ -54,9 +51,7 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 		if err == nil && !res.Suppressed {
 			res, err = recorder.recordReceived(v, receivedOn)
 		}
-		applyVoWiFiSMSMemoryPressure(func(full bool) {
-			d.pool.SetVoWiFiSMSMemoryFull(v.DevID, full)
-		}, err, res)
+		reportVoWiFiSMSPersistence(v.PersistenceResult, err)
 		if err != nil {
 			logger.Warn("VoWiFi 上层入库入站短信失败", "device", v.DevID, "sender", v.Sender, "err", err)
 		}

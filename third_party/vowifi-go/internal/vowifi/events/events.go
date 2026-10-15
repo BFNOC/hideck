@@ -29,6 +29,11 @@ type EventSMSReceived struct {
 	Incomplete         bool
 	ICCID              string
 	IMSI               string
+	// PersistenceResult lets the synchronous host dispatcher report whether
+	// the complete message reached durable storage. A nil result means the
+	// message is safe to acknowledge; a non-nil result is handled as a
+	// per-message temporary failure and must not poison later deliveries.
+	PersistenceResult chan<- error
 }
 
 // EventSMSSent is published when an SMS is sent.

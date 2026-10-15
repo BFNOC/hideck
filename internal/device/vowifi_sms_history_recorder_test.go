@@ -10,44 +10,24 @@ import (
 	"github.com/yibaiba/hideck/internal/db"
 )
 
-func TestApplyVoWiFiSMSMemoryPressure(t *testing.T) {
+func TestReportVoWiFiSMSPersistence(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		retained vowifiSMSRecordResult
-		want     *bool
+		name string
+		err  error
 	}{
-		{name: "persist error", err: errors.New("db down"), want: boolPtr(true)},
-		{name: "stored", retained: vowifiSMSRecordResult{Stored: true}, want: boolPtr(false)},
-		{name: "duplicate", retained: vowifiSMSRecordResult{Duplicate: true}, want: boolPtr(false)},
-		{name: "suppressed", retained: vowifiSMSRecordResult{Suppressed: true}, want: boolPtr(false)},
-		{name: "empty identity"},
+		{name: "success"},
+		{name: "persist error", err: errors.New("db down")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var (
-				set   *bool
-				calls int
-			)
-			applyVoWiFiSMSMemoryPressure(func(full bool) {
-				calls++
-				value := full
-				set = &value
-			}, test.err, test.retained)
-			if test.want == nil {
-				if calls != 0 {
-					t.Fatalf("unexpected set calls=%d full=%v", calls, set)
-				}
-				return
-			}
-			if calls != 1 || set == nil || *set != *test.want {
-				t.Fatalf("full=%v calls=%d, want %v", set, calls, *test.want)
+			result := make(chan error, 1)
+			reportVoWiFiSMSPersistence(result, test.err)
+			if got := <-result; !errors.Is(got, test.err) {
+				t.Fatalf("result=%v, want %v", got, test.err)
 			}
 		})
 	}
 }
-
-func boolPtr(v bool) *bool { return &v }
 
 func TestVoWiFiSMSHistoryRecorderPersistsSentSMS(t *testing.T) {
 	initDevicePhoneNumberTestDB(t)

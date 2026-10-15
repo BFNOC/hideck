@@ -38,6 +38,7 @@ type SMSReceived struct {
 	Incomplete         bool
 	ICCID              string
 	IMSI               string
+	PersistenceResult  chan<- error
 }
 
 // SMSSent is published when an SMS is sent.

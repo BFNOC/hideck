@@ -285,8 +285,9 @@ func (s *Service) finalizeInboundSMSData(
 			sendRPError: true, err: assembleErr, peerConn: message.peerConn,
 		})
 	}
+	var persistenceErr error
 	if shouldDispatch {
-		s.publishInboundSMSWithFragment(message, message.fragmentSessionID, false)
+		persistenceErr, _ = s.publishInboundSMSWithFragment(message, message.fragmentSessionID, false)
 	}
 	s.reportMTQueueBlocked(mtSMSIdentity(message))
 	fingerprint := buildMTSMSFingerprint(message, raw)
@@ -294,15 +295,21 @@ func (s *Service) finalizeInboundSMSData(
 		smsReceived: true,
 		response:    response,
 		afterReply: func() {
-			if fragmentKey != "" {
-				s.markFragmentAcked(fragmentKey, message.partNo)
-			}
 			if s.smsMemoryIsFull() {
 				s.rememberSMSMemoryDenied(raw)
 				s.sendRPReportWithRetry(s.rpReportForInbound(
 					raw, message, smscodec.BuildRPError(message.rpMR, smscodec.RPCauseMemoryCapacityExceeded),
 				))
 				return
+			}
+			if persistenceErr != nil {
+				s.sendRPReportWithRetry(s.rpReportForInbound(
+					raw, message, smscodec.BuildRPError(message.rpMR, smscodec.RPCauseTemporaryFailure),
+				))
+				return
+			}
+			if fragmentKey != "" {
+				s.markFragmentAcked(fragmentKey, message.partNo)
 			}
 			report := s.rpReportForInbound(raw, message, smscodec.BuildRPAck(message.rpMR))
 			report.Fingerprint = fingerprint
@@ -422,23 +429,31 @@ func (s *Service) handleInboundSMSProtocolFailure(failure inboundSMSProtocolFail
 }
 
 func (s *Service) publishInboundSMS(message inboundSMS) {
-	s.publishInboundSMSWithFragment(message, "", false)
+	_, _ = s.publishInboundSMSWithFragment(message, "", false)
 }
 
 func (s *Service) publishInboundSMSWithFragment(
 	message inboundSMS,
 	fragmentSessionKey string,
 	incomplete bool,
-) {
+) (error, bool) {
 	if message.timestamp.IsZero() {
 		message.timestamp = time.Now()
 	}
+	result := make(chan error, 1)
 	s.bus.Publish(&events.EventSMSReceived{
 		DevID: s.cfg.DeviceID, Sender: message.sender, TargetURI: message.targetURI,
 		Content: message.content, Time: message.timestamp,
 		FragmentSessionKey: strings.TrimSpace(fragmentSessionKey), Incomplete: incomplete,
 		ICCID: strings.TrimSpace(s.cfg.ICCID), IMSI: strings.TrimSpace(s.cfg.IMSI),
+		PersistenceResult: result,
 	})
+	select {
+	case err := <-result:
+		return err, true
+	default:
+		return nil, false
+	}
 }
 
 func (s *Service) rpReportForInbound(raw string, message inboundSMS, rpdu []byte) rpReportRequest {
