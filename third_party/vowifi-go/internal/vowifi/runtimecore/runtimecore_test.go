@@ -997,7 +997,7 @@ func TestCarrierPresetKeysReachSWUConfig(t *testing.T) {
 	if one := build("530", "01"); !one.WithholdDeviceIdentity {
 		t.Fatalf("One NZ SWu config = %+v", one)
 	}
-	if lebara := build("234", "87"); lebara.WithholdDeviceIdentity || lebara.KeepChildSAOnRekeyDecline {
+	if lebara := build("234", "87"); !lebara.WithholdDeviceIdentity || lebara.KeepChildSAOnRekeyDecline {
 		t.Fatalf("Lebara UK SWu config = %+v", lebara)
 	}
 }
