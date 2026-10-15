@@ -52,8 +52,10 @@ func TestDeviceActionsWaitForManagedDeviceMutation(t *testing.T) {
 		name   string
 		method string
 		body   string
+		params gin.Params
 		handle func(*Server, *gin.Context)
 	}{
+		{name: "refresh", method: http.MethodPost, handle: (*Server).handleDeviceMgmtRefreshInfo},
 		{name: "flight mode", method: http.MethodPut, body: `{"enabled":true}`, handle: (*Server).handleDeviceMgmtSetFlightMode},
 		{name: "reboot", method: http.MethodPost, handle: (*Server).handleDeviceMgmtReboot},
 		{name: "start network", method: http.MethodPost, handle: (*Server).handleDeviceMgmtStartNetwork},
@@ -62,6 +64,14 @@ func TestDeviceActionsWaitForManagedDeviceMutation(t *testing.T) {
 		{name: "esim disable", method: http.MethodPost, body: `{"iccid":"8901"}`, handle: (*Server).handleEsimDisableProfile},
 		{name: "esim download", method: http.MethodGet, handle: (*Server).handleEsimDownloadProfile},
 		{name: "esim delete", method: http.MethodDelete, handle: (*Server).handleEsimDeleteProfile},
+		{
+			name: "esim notification retry", method: http.MethodPost,
+			params: gin.Params{{Key: "sequence", Value: "1"}}, handle: (*Server).handleEsimRetryNotification,
+		},
+		{
+			name: "esim rename", method: http.MethodPatch, body: `{"name":"primary"}`,
+			params: gin.Params{{Key: "iccid", Value: "8901"}}, handle: (*Server).handleEsimRenameProfile,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -70,7 +80,7 @@ func TestDeviceActionsWaitForManagedDeviceMutation(t *testing.T) {
 			releaseMutation := pool.AcquireManagedDeviceMutation("dev-1")
 			recorder := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(recorder)
-			ctx.Params = gin.Params{{Key: "device_id", Value: "dev-1"}}
+			ctx.Params = append(gin.Params{{Key: "device_id", Value: "dev-1"}}, test.params...)
 			ctx.Request = httptest.NewRequest(test.method, "/devices/dev-1/action", strings.NewReader(test.body))
 			if test.body != "" {
 				ctx.Request.Header.Set("Content-Type", "application/json")

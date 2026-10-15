@@ -88,7 +88,13 @@ func newDeviceBackendSwitchService(pool *device.Pool, configPath string) *backen
 		discovery:  discovery,
 		workerIMEI: readBackendSwitchWorkerIMEI,
 		openAT:     openManualATSession,
-		persist:    config.UpdateDeviceInFile,
+		persist: func(path, deviceID string, desired config.DeviceConfig) error {
+			return config.UpdateDeviceInFileValidated(path, config.DeviceUpdateRequest{
+				DeviceID: deviceID,
+				Device:   desired,
+				Validate: managedDeviceListValidator(desired, deviceID, false),
+			})
+		},
 		loadConfig: config.GetDeviceByID,
 		configPath: configPath,
 	}

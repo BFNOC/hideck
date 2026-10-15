@@ -899,6 +899,16 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 // handleDeviceMgmtRefreshInfo 主动触发设备底层重新采集各种信息（SIM、信号等）
 func (s *Server) handleDeviceMgmtRefreshInfo(c *gin.Context) {
 	id := deviceIDParam(c)
+	if id == "" || s == nil || s.pool == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "设备参数无效"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
+	if s.pool.IsESIMSwitching(id) {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切换 SIM，暂不能刷新设备信息"})
+		return
+	}
 	worker := s.pool.GetWorker(id)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到或未运行"})
@@ -1421,83 +1431,87 @@ type deviceBindingConflict struct {
 	OtherID string
 }
 
-func detectDeviceBindingConflict(cfg config.DeviceConfig, excludeID string) *deviceBindingConflict {
-	return detectDeviceBindingConflictInList(cfg, excludeID, config.ListDevices())
+func (e *deviceBindingConflict) Error() string {
+	return fmt.Sprintf("设备资源冲突：%s=%s 已被设备 %s 使用", e.Field, e.Value, e.OtherID)
 }
 
+type deviceConfigConflictError struct{ message string }
+
+type deviceBindingKey struct {
+	field string
+	value string
+}
+
+func (e *deviceConfigConflictError) Error() string { return e.message }
+
 func detectDeviceBindingConflictInList(cfg config.DeviceConfig, excludeID string, devices []config.DeviceConfig) *deviceBindingConflict {
-	type key struct {
-		field string
-		value string
+	claimed := make(map[string]string)
+	for _, binding := range deviceBindingKeys(cfg) {
+		claimed[binding.field] = binding.value
 	}
-	keys := make([]key, 0, 7)
-	if v := strings.TrimSpace(cfg.ModemIMEI); v != "" {
-		keys = append(keys, key{field: "modem_imei", value: v})
-	}
-	if v := strings.TrimSpace(cfg.ControlDevice); v != "" {
-		keys = append(keys, key{field: "control_device", value: v})
-	}
-	if v := strings.TrimSpace(cfg.USBPath); v != "" {
-		keys = append(keys, key{field: "usb_path", value: v})
-	}
-	if v := strings.TrimSpace(cfg.Interface); v != "" {
-		keys = append(keys, key{field: "interface", value: v})
-	}
-	if v := strings.TrimSpace(cfg.ATPort); v != "" {
-		keys = append(keys, key{field: "at_port", value: v})
-	}
-	if v := strings.TrimSpace(cfg.PCSCReaderName); v != "" {
-		keys = append(keys, key{field: "pcsc_reader_name", value: v})
-	}
-	if v := strings.TrimSpace(cfg.PCSCUSBPath); v != "" {
-		keys = append(keys, key{field: "pcsc_usb_path", value: v})
-	}
-	if len(keys) == 0 {
+	if len(claimed) == 0 {
 		return nil
 	}
-
 	for _, existing := range devices {
 		existingID := strings.TrimSpace(existing.ID)
-		if existingID == "" {
+		if existingID == "" || existingID == strings.TrimSpace(excludeID) {
 			continue
 		}
-		if existingID == strings.TrimSpace(excludeID) {
-			continue
-		}
-		for _, k := range keys {
-			switch k.field {
-			case "modem_imei":
-				if strings.TrimSpace(existing.ModemIMEI) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "control_device":
-				if strings.TrimSpace(existing.ControlDevice) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "usb_path":
-				if strings.TrimSpace(existing.USBPath) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "interface":
-				if strings.TrimSpace(existing.Interface) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "at_port":
-				if strings.TrimSpace(existing.ATPort) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "pcsc_reader_name":
-				if strings.TrimSpace(existing.PCSCReaderName) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
-				}
-			case "pcsc_usb_path":
-				if strings.TrimSpace(existing.PCSCUSBPath) == k.value {
-					return &deviceBindingConflict{Field: k.field, Value: k.value, OtherID: existingID}
+		for _, binding := range deviceBindingKeys(existing) {
+			if claimed[binding.field] == binding.value {
+				return &deviceBindingConflict{
+					Field: binding.field, Value: binding.value, OtherID: existingID,
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func deviceBindingKeys(cfg config.DeviceConfig) []deviceBindingKey {
+	bindings := make([]deviceBindingKey, 0, 7)
+	appendBinding := func(field, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			bindings = append(bindings, deviceBindingKey{field: field, value: value})
+		}
+	}
+	appendBinding("modem_imei", config.NormalizeIMEI(cfg.ModemIMEI))
+	appendBinding("control_device", cfg.ControlDevice)
+	appendBinding("usb_path", cfg.USBPath)
+	appendBinding("interface", cfg.Interface)
+	appendBinding("at_port", cfg.ATPort)
+	appendBinding("pcsc_reader_name", cfg.PCSCReaderName)
+	appendBinding("pcsc_usb_path", cfg.PCSCUSBPath)
+	return bindings
+}
+
+func managedDeviceListValidator(
+	cfg config.DeviceConfig,
+	excludeID string,
+	enforceLimit bool,
+) config.DeviceListValidator {
+	return func(devices []config.DeviceConfig) error {
+		if conflict := detectDeviceBindingConflictInList(cfg, excludeID, devices); conflict != nil {
+			return conflict
+		}
+		if enforceLimit {
+			if err := validateFreeDeviceConfigLimit(devices); err != nil {
+				return &deviceConfigConflictError{message: err.Error()}
+			}
+		}
+		return nil
+	}
+}
+
+func writeManagedDevicePersistError(c *gin.Context, message string, err error) {
+	status := http.StatusInternalServerError
+	var bindingConflict *deviceBindingConflict
+	var configConflict *deviceConfigConflictError
+	if errors.As(err, &bindingConflict) || errors.As(err, &configConflict) {
+		status = http.StatusConflict
+	}
+	logger.Error(message, "err", err)
+	c.JSON(status, gin.H{"status": "error", "message": message + ": " + err.Error()})
 }
 
 func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
@@ -1539,14 +1553,6 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
-	if conflict := detectDeviceBindingConflict(newCfg, id); conflict != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"status":  "error",
-			"message": fmt.Sprintf("设备资源冲突：%s=%s 已被设备 %s 使用", conflict.Field, conflict.Value, conflict.OtherID),
-		})
-		return
-	}
-
 	oldCfg := *oldMD
 	// 策略跟卡走：设备保存只负责硬件/身份字段，不再触碰策略（策略经 PUT /cards/:iccid/policy 独立编辑）。
 	// DTO 仍会回传 network/vowifi/ip/apn，但 GET config 不投影这些字段（恒零），直接采信会把卡策略清空。
@@ -1585,9 +1591,12 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	}
 
 	requiresRestart := deviceConfigRequiresRestart(oldCfg, newCfg)
-	if err := config.UpdateDeviceInFile(s.configPath, newCfg.ID, newCfg); err != nil {
-		logger.Error("写入设备配置失败", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置失败: " + err.Error()})
+	if err := config.UpdateDeviceInFileValidated(s.configPath, config.DeviceUpdateRequest{
+		DeviceID: newCfg.ID,
+		Device:   newCfg,
+		Validate: managedDeviceListValidator(newCfg, id, false),
+	}); err != nil {
+		writeManagedDevicePersistError(c, "写入设备配置失败", err)
 		return
 	}
 
@@ -1726,17 +1735,6 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 			return
 		}
 	}
-	if conflict := detectDeviceBindingConflict(newCfg, ""); conflict != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"status":  "error",
-			"message": fmt.Sprintf("设备资源冲突：%s=%s 已被设备 %s 使用", conflict.Field, conflict.Value, conflict.OtherID),
-		})
-		return
-	}
-	if err := validateFreeDeviceConfigLimit(config.ListDevices()); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": err.Error()})
-		return
-	}
 	// MBIM 设备使用 MBIM DeviceCaps 探测 IMEI，非 MBIM 设备使用 QMI 探测
 	if strings.EqualFold(strings.TrimSpace(newCfg.DeviceBackend), pcsc.HardwareKind) {
 		newCfg.ModemIMEI = ""
@@ -1756,9 +1754,12 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 		newCfg = enrichedCfg
 	}
 
-	if err := config.AddDeviceInFile(s.configPath, newCfg); err != nil {
-		logger.Error("写入新设备配置失败", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置失败: " + err.Error()})
+	if err := config.AddDeviceInFileValidated(
+		s.configPath,
+		newCfg,
+		managedDeviceListValidator(newCfg, "", true),
+	); err != nil {
+		writeManagedDevicePersistError(c, "写入新设备配置失败", err)
 		return
 	}
 
@@ -2172,14 +2173,20 @@ func (s *Server) handleEsimListNotifications(c *gin.Context) {
 
 func (s *Server) handleEsimRetryNotification(c *gin.Context) {
 	id := deviceIDParam(c)
-	worker := s.pool.GetWorker(id)
-	if worker == nil || worker.EsimMgr == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
-		return
-	}
 	sequence, err := strconv.ParseInt(strings.TrimSpace(c.Param("sequence")), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的通知序号"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
+	if s.pool.IsESIMSwitching(id) {
+		c.JSON(http.StatusConflict, gin.H{"error": "设备正在切换 SIM，暂不能重试通知"})
+		return
+	}
+	worker := s.pool.GetWorker(id)
+	if worker == nil || worker.EsimMgr == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
 		return
 	}
 	err = esimNotificationRetryExec(worker.EsimMgr.RetryNotification, sequence, strings.TrimSpace(c.Query("aid_hex")))
@@ -2468,12 +2475,6 @@ func (s *Server) handleEsimDownloadProfile(c *gin.Context) {
 func (s *Server) handleEsimRenameProfile(c *gin.Context) {
 	id := deviceIDParam(c)
 	iccid := c.Param("iccid")
-	worker := s.pool.GetWorker(id)
-	if worker == nil || worker.EsimMgr == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
-		return
-	}
-
 	var req struct {
 		Name   string `json:"name"`
 		AIDHex string `json:"aid_hex"`
@@ -2490,6 +2491,17 @@ func (s *Server) handleEsimRenameProfile(c *gin.Context) {
 	}
 	if len([]byte(req.Name)) > 64 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "profile 名称不能超过 64 字节"})
+		return
+	}
+	releaseMutation := s.pool.AcquireManagedDeviceMutation(id)
+	defer releaseMutation()
+	if s.pool.IsESIMSwitching(id) {
+		c.JSON(http.StatusConflict, gin.H{"error": "设备正在切换 SIM，暂不能修改 Profile 名称"})
+		return
+	}
+	worker := s.pool.GetWorker(id)
+	if worker == nil || worker.EsimMgr == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
 		return
 	}
 
