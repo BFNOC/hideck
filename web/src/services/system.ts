@@ -63,6 +63,7 @@ export type ArchiveSettingsPayload = Omit<ArchiveSettings, 'password_set' | 'sta
 }
 
 export type ArchiveCleanupPreview = {
+	token: string
   before: string
   sms_count: number
   call_count: number
@@ -383,9 +384,12 @@ export const systemService = {
       return res.data
     })
   },
-  cleanupArchive() {
+  cleanupArchive(previewToken: string) {
     return callService(async () => {
-      const res = await api.post<{ status: string; cleaned: ArchiveCleanupPreview }>('/archive/cleanup', { confirm: true })
+      const res = await api.post<{ status: string; cleaned: ArchiveCleanupPreview }>('/archive/cleanup', {
+        confirm: true,
+        preview_token: previewToken,
+      })
       return res.data.cleaned
     })
   },

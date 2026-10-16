@@ -124,18 +124,22 @@ func (manager *Manager) RunNow(ctx context.Context) (RunSummary, error) {
 }
 
 func (manager *Manager) PreviewCleanup(ctx context.Context) (CleanupPreview, error) {
-	config := manager.Config()
+	config, err := manager.beginExclusive()
+	if err != nil {
+		return CleanupPreview{}, err
+	}
+	defer manager.finishCleanup()
 	service := manager.newCleanupService()
 	return service.PreviewCleanup(ctx, config.ContentSettings())
 }
 
-func (manager *Manager) Cleanup(ctx context.Context) (CleanupPreview, error) {
+func (manager *Manager) Cleanup(ctx context.Context, expectedToken string) (CleanupPreview, error) {
 	config, err := manager.beginExclusive()
 	if err != nil {
 		return CleanupPreview{}, err
 	}
 	service := manager.newCleanupService()
-	preview, cleanupErr := service.Cleanup(ctx, config.ContentSettings())
+	preview, cleanupErr := service.Cleanup(ctx, config.ContentSettings(), expectedToken)
 	manager.finishCleanup()
 	return preview, cleanupErr
 }
@@ -212,7 +216,11 @@ func (manager *Manager) runScheduled(ctx context.Context) {
 	if !config.AutoCleanup {
 		return
 	}
-	if _, err := manager.Cleanup(ctx); err != nil {
+	preview, err := manager.PreviewCleanup(ctx)
+	if err == nil {
+		_, err = manager.Cleanup(ctx, preview.Token)
+	}
+	if err != nil {
 		logger.Warn("WebDAV 归档后的本地清理失败", "err", err, "uploaded", summary.Uploaded)
 	}
 }

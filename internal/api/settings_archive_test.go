@@ -52,7 +52,7 @@ func TestArchiveSettingsRoutesMaskAndPreservePassword(t *testing.T) {
 func TestArchiveActionRoutesExposeFailuresAndRequireCleanupConfirmation(t *testing.T) {
 	manager := &archiveManagerStub{
 		config: validArchiveRuntimeConfig(), runErr: webdavarchive.ErrRunInProgress,
-		preview: webdavarchive.CleanupPreview{SMSCount: 2, CallCount: 1},
+		preview: webdavarchive.CleanupPreview{Token: "preview-1", SMSCount: 2, CallCount: 1},
 	}
 	router := archiveTestRouter(&Server{archive: manager})
 	runResponse := performArchiveRequest(t, router, http.MethodPost, "/api/archive/actions/run", "{}")
@@ -67,6 +67,19 @@ func TestArchiveActionRoutesExposeFailuresAndRequireCleanupConfirmation(t *testi
 	if cleanupResponse.Code != http.StatusBadRequest || manager.cleanupCalls != 0 {
 		t.Fatalf("cleanup status=%d calls=%d", cleanupResponse.Code, manager.cleanupCalls)
 	}
+	cleanupResponse = performArchiveRequest(t, router, http.MethodPost, "/api/archive/cleanup", `{"confirm":true}`)
+	if cleanupResponse.Code != http.StatusBadRequest || manager.cleanupCalls != 0 {
+		t.Fatalf("tokenless cleanup status=%d calls=%d", cleanupResponse.Code, manager.cleanupCalls)
+	}
+	cleanupResponse = performArchiveRequest(t, router, http.MethodPost, "/api/archive/cleanup", `{"confirm":true,"preview_token":"preview-1"}`)
+	if cleanupResponse.Code != http.StatusOK || manager.cleanupCalls != 1 || manager.cleanupToken != "preview-1" {
+		t.Fatalf("cleanup status=%d calls=%d token=%q", cleanupResponse.Code, manager.cleanupCalls, manager.cleanupToken)
+	}
+	manager.cleanupErr = webdavarchive.ErrCleanupPreviewChanged
+	cleanupResponse = performArchiveRequest(t, router, http.MethodPost, "/api/archive/cleanup", `{"confirm":true,"preview_token":"preview-1"}`)
+	if cleanupResponse.Code != http.StatusConflict || manager.cleanupCalls != 2 {
+		t.Fatalf("stale cleanup status=%d calls=%d", cleanupResponse.Code, manager.cleanupCalls)
+	}
 }
 
 type archiveManagerStub struct {
@@ -75,6 +88,8 @@ type archiveManagerStub struct {
 	runErr       error
 	preview      webdavarchive.CleanupPreview
 	cleanupCalls int
+	cleanupToken string
+	cleanupErr   error
 }
 
 func (stub *archiveManagerStub) Config() webdavarchive.RuntimeConfig { return stub.config }
@@ -90,9 +105,10 @@ func (stub *archiveManagerStub) RunNow(context.Context) (webdavarchive.RunSummar
 func (stub *archiveManagerStub) PreviewCleanup(context.Context) (webdavarchive.CleanupPreview, error) {
 	return stub.preview, nil
 }
-func (stub *archiveManagerStub) Cleanup(context.Context) (webdavarchive.CleanupPreview, error) {
+func (stub *archiveManagerStub) Cleanup(_ context.Context, token string) (webdavarchive.CleanupPreview, error) {
 	stub.cleanupCalls++
-	return stub.preview, nil
+	stub.cleanupToken = token
+	return stub.preview, stub.cleanupErr
 }
 func (stub *archiveManagerStub) Stop(context.Context) error { return nil }
 

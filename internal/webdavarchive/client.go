@@ -74,7 +74,13 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}
 	return &Client{
 		baseURL: endpoint, username: strings.TrimSpace(config.Username), password: config.Password,
-		basePath: basePath, http: &http.Client{Timeout: timeout},
+		basePath: basePath,
+		http: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 

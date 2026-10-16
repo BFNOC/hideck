@@ -963,9 +963,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [confirm]
+              required: [confirm, preview_token]
               properties:
                 confirm: { type: boolean, enum: [true] }
+                preview_token:
+                  type: string
+                  minLength: 1
+                  description: 清理预览返回的令牌；数据变化后令牌失效
       responses:
         '200':
           description: 清理完成
@@ -3901,8 +3905,11 @@ components:
 
     ArchiveCleanupPreview:
       type: object
-      required: [before, sms_count, call_count, recording_count, recording_bytes]
+      required: [token, before, sms_count, call_count, recording_count, recording_bytes]
       properties:
+        token:
+          type: string
+          description: 确认清理时必须原样提交的预览令牌
         before: { type: string, format: date-time }
         sms_count: { type: integer, minimum: 0 }
         call_count: { type: integer, minimum: 0 }

@@ -88,7 +88,11 @@ func TestCleanupDoesNotReplaceLastArchiveStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := manager.Status()
-	if _, err := manager.Cleanup(context.Background()); err != nil {
+	preview, err := manager.PreviewCleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Cleanup(context.Background(), preview.Token); err != nil {
 		t.Fatal(err)
 	}
 	after := manager.Status()

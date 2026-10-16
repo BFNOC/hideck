@@ -142,7 +142,7 @@ type archiveManager interface {
 	Probe(context.Context, webdavarchive.RuntimeConfig) error
 	RunNow(context.Context) (webdavarchive.RunSummary, error)
 	PreviewCleanup(context.Context) (webdavarchive.CleanupPreview, error)
-	Cleanup(context.Context) (webdavarchive.CleanupPreview, error)
+	Cleanup(context.Context, string) (webdavarchive.CleanupPreview, error)
 	Stop(context.Context) error
 }
 

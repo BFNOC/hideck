@@ -85,3 +85,30 @@ func TestClientRejectsUnsafePathsAndRedactsPassword(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestClientDoesNotTreatRedirectedPutAsSuccess(t *testing.T) {
+	redirectTargetCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/target" {
+			redirectTargetCalled = true
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+		if request.Method == "MKCOL" {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		http.Redirect(writer, request, "/target", http.StatusFound)
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{Endpoint: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Put(context.Background(), Upload{RemotePath: "message.json", Data: []byte("{}")}); err == nil {
+		t.Fatal("redirected PUT reported success")
+	}
+	if redirectTargetCalled {
+		t.Fatal("WebDAV client followed redirect")
+	}
+}

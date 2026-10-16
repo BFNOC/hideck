@@ -7,6 +7,7 @@ import (
 )
 
 var ErrRunInProgress = errors.New("WebDAV 归档任务正在运行")
+var ErrCleanupPreviewChanged = errors.New("本地数据已发生变化，请重新预览后再清理")
 
 const (
 	KindSMS       = "sms"
@@ -86,8 +87,10 @@ type Object struct {
 }
 
 type DeleteRequest struct {
-	SMSIDs  []uint
-	CallIDs []uint64
+	SMSIDs        []uint
+	CallIDs       []uint64
+	SMSChecksums  map[uint]string
+	CallChecksums map[uint64]string
 }
 
 type Store interface {
@@ -123,12 +126,16 @@ type Status struct {
 }
 
 type CleanupPreview struct {
-	Before          time.Time `json:"before"`
-	SMSCount        int       `json:"sms_count"`
-	CallCount       int       `json:"call_count"`
-	RecordingCount  int       `json:"recording_count"`
-	RecordingBytes  int64     `json:"recording_bytes"`
-	EligibleSMSIDs  []uint    `json:"-"`
-	EligibleCallIDs []uint64  `json:"-"`
-	RecordingFiles  []string  `json:"-"`
+	Token              string            `json:"token"`
+	Before             time.Time         `json:"before"`
+	SMSCount           int               `json:"sms_count"`
+	CallCount          int               `json:"call_count"`
+	RecordingCount     int               `json:"recording_count"`
+	RecordingBytes     int64             `json:"recording_bytes"`
+	EligibleSMSIDs     []uint            `json:"-"`
+	EligibleCallIDs    []uint64          `json:"-"`
+	RecordingFiles     []string          `json:"-"`
+	SMSChecksums       map[uint]string   `json:"-"`
+	CallChecksums      map[uint64]string `json:"-"`
+	RecordingChecksums map[string]string `json:"-"`
 }

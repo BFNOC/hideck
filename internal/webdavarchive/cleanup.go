@@ -2,6 +2,7 @@ package webdavarchive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -13,7 +14,16 @@ func (service *Service) PreviewCleanup(ctx context.Context, settings Settings) (
 	if settings.RetentionDays <= 0 {
 		return CleanupPreview{}, fmt.Errorf("本地保留天数必须大于 0")
 	}
-	preview := CleanupPreview{Before: service.now().AddDate(0, 0, -settings.RetentionDays).UTC()}
+	if settings.IncludeCalls || settings.IncludeRecordings {
+		if err := recoverStagedRecordings(ctx, service.store, service.recordingDir); err != nil {
+			return CleanupPreview{}, err
+		}
+	}
+	preview := CleanupPreview{
+		Before:       service.now().AddDate(0, 0, -settings.RetentionDays).UTC(),
+		SMSChecksums: make(map[uint]string), CallChecksums: make(map[uint64]string),
+		RecordingChecksums: make(map[string]string),
+	}
 	if settings.IncludeSMS {
 		if err := service.collectCleanupSMS(ctx, &preview); err != nil {
 			return CleanupPreview{}, err
@@ -24,22 +34,32 @@ func (service *Service) PreviewCleanup(ctx context.Context, settings Settings) (
 			return CleanupPreview{}, err
 		}
 	}
+	preview.Token = cleanupPreviewToken(preview)
 	return preview, nil
 }
 
-func (service *Service) Cleanup(ctx context.Context, settings Settings) (CleanupPreview, error) {
+func (service *Service) Cleanup(ctx context.Context, settings Settings, expectedToken string) (CleanupPreview, error) {
 	preview, err := service.PreviewCleanup(ctx, settings)
 	if err != nil {
 		return CleanupPreview{}, err
 	}
-	for _, path := range preview.RecordingFiles {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return preview, fmt.Errorf("删除已归档录音 %q 失败: %w", path, err)
-		}
+	if expectedToken == "" || expectedToken != preview.Token {
+		return preview, ErrCleanupPreviewChanged
 	}
-	request := DeleteRequest{SMSIDs: preview.EligibleSMSIDs, CallIDs: preview.EligibleCallIDs}
+	staged, err := stageRecordingFiles(preview.RecordingFiles, preview.RecordingChecksums)
+	if err != nil {
+		return preview, err
+	}
+	request := DeleteRequest{
+		SMSIDs: preview.EligibleSMSIDs, CallIDs: preview.EligibleCallIDs,
+		SMSChecksums: preview.SMSChecksums, CallChecksums: preview.CallChecksums,
+	}
 	if err := service.store.DeleteRecords(ctx, request); err != nil {
-		return preview, fmt.Errorf("删除已归档本地记录失败: %w", err)
+		restoreErr := restoreStagedRecordings(staged)
+		return preview, errors.Join(fmt.Errorf("删除已归档本地记录失败: %w", err), restoreErr)
+	}
+	if err := discardStagedRecordings(staged); err != nil {
+		return preview, err
 	}
 	return preview, nil
 }
@@ -64,6 +84,7 @@ func (service *Service) collectCleanupSMS(ctx context.Context, preview *CleanupP
 		}
 		if matches {
 			preview.EligibleSMSIDs = append(preview.EligibleSMSIDs, row.ID)
+			preview.SMSChecksums[row.ID] = item.object.Checksum
 			preview.SMSCount++
 		}
 	}
@@ -81,16 +102,17 @@ func (service *Service) collectCleanupCalls(ctx context.Context, settings Settin
 		if !endedBefore(row, preview.Before) {
 			continue
 		}
-		files, bytes, safe, err := service.cleanupRecording(ctx, settings, row)
+		files, bytes, checksum, safe, err := service.cleanupRecording(ctx, settings, row)
 		if err != nil {
 			return err
 		}
-		callEligible, err := service.cleanupCallEligible(ctx, settings, row, safe)
+		callChecksum, callEligible, err := service.cleanupCallEligible(ctx, settings, row, safe)
 		if err != nil {
 			return err
 		}
 		if callEligible {
 			preview.EligibleCallIDs = append(preview.EligibleCallIDs, row.ID)
+			preview.CallChecksums[row.ID] = callChecksum
 			preview.CallCount++
 		}
 		if _, protected := protectedRecordings[strings.TrimSpace(row.RecordingName)]; protected {
@@ -102,6 +124,7 @@ func (service *Service) collectCleanupCalls(ctx context.Context, settings Settin
 			}
 			seenRecordings[path] = struct{}{}
 			preview.RecordingFiles = append(preview.RecordingFiles, path)
+			preview.RecordingChecksums[path] = checksum
 			preview.RecordingCount++
 			preview.RecordingBytes += bytes
 		}
@@ -114,18 +137,18 @@ func (service *Service) cleanupCallEligible(
 	settings Settings,
 	row CallRecord,
 	recordingSafe bool,
-) (bool, error) {
+) (string, bool, error) {
 	if !settings.IncludeCalls {
-		return false, nil
+		return "", false, nil
 	}
-	archived, err := service.callArchived(ctx, row)
+	object, archived, err := service.callArchived(ctx, row)
 	if err != nil || !archived {
-		return false, err
+		return "", false, err
 	}
 	if strings.TrimSpace(row.RecordingName) == "" {
-		return true, nil
+		return object.Checksum, true, nil
 	}
-	return recordingSafe, nil
+	return object.Checksum, recordingSafe, nil
 }
 
 func currentRecordingNames(rows []CallRecord, cutoff time.Time) map[string]struct{} {
@@ -139,41 +162,46 @@ func currentRecordingNames(rows []CallRecord, cutoff time.Time) map[string]struc
 	return result
 }
 
-func (service *Service) callArchived(ctx context.Context, row CallRecord) (bool, error) {
+func (service *Service) callArchived(ctx context.Context, row CallRecord) (Object, bool, error) {
 	data, err := marshalArchiveJSON(row)
 	if err != nil {
-		return false, err
+		return Object{}, false, err
 	}
 	item := newDataItem(KindCall, strconv.FormatUint(row.ID, 10), row.StartedAt, data)
-	return service.objectMatches(ctx, item.object)
+	matches, err := service.objectMatches(ctx, item.object)
+	return item.object, matches, err
 }
 
-func (service *Service) cleanupRecording(ctx context.Context, settings Settings, row CallRecord) ([]string, int64, bool, error) {
+func (service *Service) cleanupRecording(
+	ctx context.Context,
+	settings Settings,
+	row CallRecord,
+) ([]string, int64, string, bool, error) {
 	name := strings.TrimSpace(row.RecordingName)
 	if name == "" {
-		return nil, 0, true, nil
+		return nil, 0, "", true, nil
 	}
 	if !settings.IncludeRecordings {
-		return nil, 0, false, nil
+		return nil, 0, "", false, nil
 	}
 	path, err := safeRecordingPath(service.recordingDir, name)
 	if err != nil {
-		return nil, 0, false, nil
+		return nil, 0, "", false, nil
 	}
 	checksum, size, err := hashFile(path)
 	if os.IsNotExist(err) {
 		_, found, findErr := service.store.FindObject(ctx, KindRecording, name)
-		return nil, 0, found, findErr
+		return nil, 0, "", found, findErr
 	}
 	if err != nil {
-		return nil, 0, false, nil
+		return nil, 0, "", false, nil
 	}
 	object := Object{Kind: KindRecording, LocalKey: name, Checksum: checksum}
 	matches, err := service.objectMatches(ctx, object)
 	if err != nil || !matches {
-		return nil, 0, false, err
+		return nil, 0, "", false, err
 	}
-	return []string{path}, size, true, nil
+	return []string{path}, size, checksum, true, nil
 }
 
 func (service *Service) objectMatches(ctx context.Context, expected Object) (bool, error) {

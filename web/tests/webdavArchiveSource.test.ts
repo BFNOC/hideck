@@ -20,7 +20,9 @@ test('archive cleanup requires preview and explicit confirmation', () => {
   assert.match(component, /previewArchiveCleanup\(\)/)
   assert.match(component, /cleanupPreview/)
   assert.match(component, /ElMessageBox\.confirm/)
-  assert.match(service, /post<\{ status: string; cleaned: ArchiveCleanupPreview \}>\('\/archive\/cleanup', \{ confirm: true \}\)/)
+  assert.match(service, /cleanupArchive\(previewToken: string\)/)
+  assert.match(service, /preview_token: previewToken/)
+  assert.match(component, /:disabled="busy \|\| hasUnsavedChanges"/)
 })
 
 test('archive settings remain responsive and touch safe', () => {

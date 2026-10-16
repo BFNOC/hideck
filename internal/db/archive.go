@@ -60,27 +60,31 @@ func UpsertArchiveObject(ctx context.Context, database *gorm.DB, object ArchiveO
 
 func DeleteArchivedRecords(ctx context.Context, database *gorm.DB, request ArchiveDeleteRequest) error {
 	return database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		scopes, err := archiveSMSThreadScopes(tx, request.SMSIDs)
-		if err != nil {
+		return DeleteArchivedRecordsTx(tx, request)
+	})
+}
+
+func DeleteArchivedRecordsTx(tx *gorm.DB, request ArchiveDeleteRequest) error {
+	scopes, err := archiveSMSThreadScopes(tx, request.SMSIDs)
+	if err != nil {
+		return err
+	}
+	if len(request.SMSIDs) > 0 {
+		if err := tx.Where("id IN ?", request.SMSIDs).Delete(&SMS{}).Error; err != nil {
 			return err
 		}
-		if len(request.SMSIDs) > 0 {
-			if err := tx.Where("id IN ?", request.SMSIDs).Delete(&SMS{}).Error; err != nil {
-				return err
-			}
+	}
+	if len(request.CallIDs) > 0 {
+		if err := tx.Where("id IN ?", request.CallIDs).Delete(&VoiceCallRecord{}).Error; err != nil {
+			return err
 		}
-		if len(request.CallIDs) > 0 {
-			if err := tx.Where("id IN ?", request.CallIDs).Delete(&VoiceCallRecord{}).Error; err != nil {
-				return err
-			}
+	}
+	for _, scope := range scopes {
+		if _, err := rebuildSMSContactTx(tx, scope.iccid, scope.peer); err != nil {
+			return err
 		}
-		for _, scope := range scopes {
-			if _, err := rebuildSMSContactTx(tx, scope.iccid, scope.peer); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 type archiveSMSThreadScope struct {

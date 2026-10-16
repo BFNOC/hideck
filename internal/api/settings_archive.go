@@ -131,13 +131,14 @@ func (s *Server) handleArchiveCleanup(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Confirm bool `json:"confirm"`
+		Confirm      bool   `json:"confirm"`
+		PreviewToken string `json:"preview_token"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "清理前必须明确确认"})
+	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm || strings.TrimSpace(request.PreviewToken) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "清理前必须先预览并明确确认"})
 		return
 	}
-	preview, err := s.archive.Cleanup(c.Request.Context())
+	preview, err := s.archive.Cleanup(c.Request.Context(), strings.TrimSpace(request.PreviewToken))
 	if err != nil {
 		archiveActionError(c, err)
 		return
@@ -186,6 +187,9 @@ func archiveFileConfig(runtime webdavarchive.RuntimeConfig) config.ArchiveConfig
 func archiveActionError(c *gin.Context, err error) {
 	status := http.StatusBadGateway
 	if errors.Is(err, webdavarchive.ErrRunInProgress) {
+		status = http.StatusConflict
+	}
+	if errors.Is(err, webdavarchive.ErrCleanupPreviewChanged) {
 		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"status": "error", "message": err.Error()})

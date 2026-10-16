@@ -40,7 +40,7 @@ const previewing = ref(false)
 const cleaning = ref(false)
 const savedSnapshot = ref('')
 
-const busy = computed(() => saving.value || testing.value || running.value || cleaning.value || status.value.running)
+const busy = computed(() => saving.value || testing.value || running.value || previewing.value || cleaning.value || status.value.running)
 const contentSelected = computed(() => form.include_sms || form.include_calls || form.include_recordings)
 const hasUnsavedChanges = computed(() => savedSnapshot.value !== serializeForm())
 
@@ -143,9 +143,10 @@ async function confirmCleanup() {
     return
   }
   cleaning.value = true
-  const result = await systemService.cleanupArchive()
+  const result = await systemService.cleanupArchive(preview.token)
   cleaning.value = false
   if (!result.ok) {
+    cleanupPreview.value = null
     ElMessage.error(result.error.message || '清理失败')
     return
   }
@@ -267,7 +268,14 @@ onMounted(loadSettings)
               <div><dt>录音</dt><dd>{{ cleanupPreview.recording_count }}</dd></div>
               <div><dt>录音空间</dt><dd>{{ formatBytes(cleanupPreview.recording_bytes) }}</dd></div>
             </dl>
-            <el-button type="danger" plain class="mt-4 !min-h-11 w-full" :loading="cleaning" @click="confirmCleanup">
+            <el-button
+              type="danger"
+              plain
+              class="mt-4 !min-h-11 w-full"
+              :loading="cleaning"
+              :disabled="busy || hasUnsavedChanges"
+              @click="confirmCleanup"
+            >
               <el-icon><Delete20Regular /></el-icon>确认清理
             </el-button>
           </div>

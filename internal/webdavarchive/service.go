@@ -168,15 +168,19 @@ func (service *Service) archiveItem(ctx context.Context, item archiveItem, summa
 }
 
 func newDataItem(kind, localKey string, sourceTime time.Time, data []byte) archiveItem {
-	checksum := sha256.Sum256(data)
 	return archiveItem{
 		object: Object{
-			Kind: kind, LocalKey: localKey, Checksum: hex.EncodeToString(checksum[:]),
+			Kind: kind, LocalKey: localKey, Checksum: checksumBytes(data),
 			RemotePath: datedRemotePath(kind, sourceTime, kind+"-"+localKey+".json"),
 			SizeBytes:  int64(len(data)), SourceTime: sourceTime.UTC(),
 		},
 		data: data, contentType: "application/json; charset=utf-8",
 	}
+}
+
+func checksumBytes(data []byte) string {
+	checksum := sha256.Sum256(data)
+	return hex.EncodeToString(checksum[:])
 }
 
 func (service *Service) recordingItem(call CallRecord) (archiveItem, error) {
