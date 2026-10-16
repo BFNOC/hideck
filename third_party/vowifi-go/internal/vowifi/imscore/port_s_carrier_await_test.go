@@ -29,28 +29,147 @@ func TestCarrierPresetsAwaitPortSWithoutPriorReconnect(t *testing.T) {
 	}
 }
 
-func TestOneNZBusyPortSResetSchedulesRecovery(t *testing.T) {
-	service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
-	closeIdleTestPortS(t, service, syscall.ECONNRESET, time.Minute)
-	service.handleProtectedServerPushClosed()
-	if stopTestPortSWatch(service) == nil {
-		t.Fatal("reset of a busy port-s awaited the peer instead of scheduling recovery")
+func TestOneNZPortSResetAwaitsAtAnyIdle(t *testing.T) {
+	for _, idle := range []time.Duration{time.Minute, 13 * time.Minute, 20 * time.Minute} {
+		t.Run(idle.String(), func(t *testing.T) {
+			service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
+			closeIdleTestPortS(t, service, syscall.ECONNRESET, idle)
+			service.handleProtectedServerPushClosed()
+			if stopTestPortSWatch(service) != nil {
+				t.Fatal("One NZ reset scheduled a REGISTER instead of awaiting the peer")
+			}
+			if got := service.SMSReadiness(); !got.Ready {
+				t.Fatalf("readiness = %+v, want ready while awaiting the peer", got)
+			}
+		})
+	}
+}
+
+func TestOtherPresetsRecoverPeerResetAfterPeerReconnect(t *testing.T) {
+	for _, preset := range []string{"", globePHCarrierPresetID, vodafoneUKCarrierPresetID} {
+		t.Run(preset, func(t *testing.T) {
+			service := newCarrierAwaitTestService(t, preset)
+			service.portSOnDemandObserved.Store(true)
+			closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
+			service.handleProtectedServerPushClosed()
+			if stopTestPortSWatch(service) == nil {
+				t.Fatal("peer reset awaited the peer outside the One NZ preset")
+			}
+		})
 	}
 }
 
 func TestCarrierAwaitBacksOffWhenRegisterDoesNotRestorePortS(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first", true: "after-peer-reconnect"}[observed], func(t *testing.T) {
+			service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
+			service.portSOnDemandObserved.Store(observed)
+			closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
+			service.handleProtectedServerPushClosed()
+			service.completePortSRecovery(nil, true)
+			if !service.portSRecoveryAwaitingFlow.Load() {
+				t.Fatal("periodic REGISTER did not start port-s validation")
+			}
+			fireTestPortSWatch(t, service)
+			if _, waiting := service.portSRecoveryDeadline(time.Now()); !waiting {
+				t.Fatal("port-s still missing after REGISTER did not enter backoff")
+			}
+			// The backoff ends in a REGISTER, not in another open-ended wait.
+			service.clearPortSRecoveryDeadline()
+			fireTestPortSWatch(t, service)
+			if !service.portSRecoveryPending.Load() {
+				t.Fatal("expired backoff kept waiting instead of sending REGISTER")
+			}
+			stopTestPortSWatch(service)
+		})
+	}
+}
+
+// Replays the One NZ sequence seen on 10-16: a reset after 13 minutes idle,
+// a periodic REGISTER while port-s is down, then the peer's own reconnect.
+func TestOneNZFieldResetCycle(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first", true: "after-peer-reconnect"}[observed], func(t *testing.T) {
+			runOneNZFieldResetCycle(t, observed)
+		})
+	}
+}
+
+func runOneNZFieldResetCycle(t *testing.T, observed bool) {
+	service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
+	service.portSOnDemandObserved.Store(observed)
+	closeIdleTestPortS(t, service, syscall.ECONNRESET, 13*time.Minute)
+	service.handleProtectedServerPushClosed()
+	if stopTestPortSWatch(service) != nil {
+		t.Fatal("first reset scheduled a REGISTER")
+	}
+	service.completePortSRecovery(nil, true)
+	fireTestPortSWatch(t, service)
+	if !service.portSMissingAfterRegister.Load() {
+		t.Fatal("missing port-s after REGISTER was not recorded")
+	}
+	client, peer := net.Pipe()
+	t.Cleanup(func() { client.Close(); peer.Close() })
+	if !service.trackProtectedConnection(client) {
+		t.Fatal("track reopened port-s")
+	}
+	if service.portSMissingAfterRegister.Load() {
+		t.Fatal("peer reconnect left the REGISTER failure in place")
+	}
+	service.portSWatchMu.Lock()
+	failures := service.portSBackoff.failures
+	service.portSWatchMu.Unlock()
+	if failures != 0 {
+		t.Fatalf("peer reconnect left %d backoff failures in place", failures)
+	}
+	service.recordPortSClosed(client, syscall.ECONNRESET, time.Now())
+	service.untrackProtectedConnection(client)
+	service.handleProtectedServerPushClosed()
+	if stopTestPortSWatch(service) != nil {
+		t.Fatal("next reset scheduled a REGISTER")
+	}
+}
+
+func TestPortSReopenDuringBackoffDoesNotLeaveRegisterFailure(t *testing.T) {
 	service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
 	closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
-	service.handleProtectedServerPushClosed()
-	service.completePortSRecovery(nil, true)
-	if !service.portSRecoveryAwaitingFlow.Load() {
-		t.Fatal("periodic REGISTER did not start port-s validation")
+	seen := service.capturePortSSession().generation
+	// The peer reconnects after the watch saw no connection but before it
+	// recorded the failure.
+	client, peer := net.Pipe()
+	t.Cleanup(func() { client.Close(); peer.Close() })
+	if !service.trackProtectedPortSConnection(client, time.Now()) {
+		t.Fatal("track reopened port-s")
 	}
-	fireTestPortSWatch(t, service)
-	if _, waiting := service.portSRecoveryDeadline(time.Now()); !waiting {
-		t.Fatal("port-s still missing after REGISTER did not enter backoff")
-	}
+	service.backoffMissingPortSAfterRegister(seen)
 	stopTestPortSWatch(service)
+	if service.portSMissingAfterRegister.Load() {
+		t.Fatal("stale watch marked the reopened port-s as missing after REGISTER")
+	}
+}
+
+func TestOneNZPeerReconnectKeepsRetryAfterFloor(t *testing.T) {
+	service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
+	service.portSOnDemandObserved.Store(true)
+	closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
+	service.handleProtectedServerPushClosed()
+	floor := time.Now().Add(10 * time.Minute)
+	service.portSWatchMu.Lock()
+	service.portSBackoff = portSRecoveryBackoff{
+		registrar: service.currentPortSRecoveryRegistrar(), failures: 3, retryAt: floor,
+	}
+	service.portSWatchMu.Unlock()
+	client, peer := net.Pipe()
+	t.Cleanup(func() { client.Close(); peer.Close() })
+	if !service.trackProtectedConnection(client) {
+		t.Fatal("track reopened port-s")
+	}
+	service.portSWatchMu.Lock()
+	backoff := service.portSBackoff
+	service.portSWatchMu.Unlock()
+	if backoff.failures != 0 || !backoff.retryAt.Equal(floor) {
+		t.Fatalf("backoff after peer reconnect = %+v, want failures reset and Retry-After floor kept", backoff)
+	}
 }
 
 func newCarrierAwaitTestService(t *testing.T, preset string) *Service {

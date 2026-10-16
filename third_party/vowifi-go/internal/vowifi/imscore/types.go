@@ -195,6 +195,7 @@ type Service struct {
 	portSRecoveryPending      atomic.Bool
 	portSRecoveryAwaitingFlow atomic.Bool
 	portSOnDemandObserved     atomic.Bool
+	portSMissingAfterRegister atomic.Bool
 	portSWatchMu              sync.Mutex
 	portSWatchTimer           *time.Timer
 	portSWatchGeneration      uint64

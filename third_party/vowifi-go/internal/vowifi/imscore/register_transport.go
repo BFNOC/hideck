@@ -408,9 +408,10 @@ func (s *Service) portSReconnectWatchFired(generation uint64, registrar string) 
 		s.protectedConnMu.Unlock()
 		return
 	}
+	portSGeneration := s.capturePortSSession().generation
 	s.protectedConnMu.Unlock()
 	if s.portSRecoveryAwaitingFlow.Swap(false) {
-		s.backoffMissingPortSAfterRegister()
+		s.backoffMissingPortSAfterRegister(portSGeneration)
 		return
 	}
 	if retryAt, waiting := s.portSRecoveryDeadline(time.Now()); waiting {
@@ -429,7 +430,9 @@ func (s *Service) portSReconnectWatchFired(generation uint64, registrar string) 
 
 // A historical peer reconnect is a compatibility hint for clean EOF, not a
 // guarantee that a reset or timed-out downlink can recover without REGISTER.
-// One NZ resets idle port-s flows and reopens them after the next periodic REGISTER.
+// One NZ resets port-s on its own cycle and reopens it minutes later or when
+// it has a request to deliver; the idle time before the reset drifts (17-19
+// minutes on 10-15, 12.5-14.9 minutes on 10-16), so it is not a signal.
 // Globe PH closes port-s minutes after REGISTER and reopens it to deliver.
 func (s *Service) canAwaitOnDemandPortS() bool {
 	if s == nil {
@@ -440,38 +443,40 @@ func (s *Service) canAwaitOnDemandPortS() bool {
 		preset = strings.TrimSpace(s.cfg.CarrierPresetID)
 	}
 	observed := s.portSOnDemandObserved.Load()
-	session := s.capturePortSSession()
-	switch session.lastCloseKind {
+	switch s.capturePortSSession().lastCloseKind {
 	case portSCloseEOF:
 		return observed || preset == globePHCarrierPresetID
 	case portSClosePeerReset:
-		return preset == oneNZCarrierPresetID && portSIdleBeforeClose(session) >= oneNZPortSIdleReset
+		return preset == oneNZCarrierPresetID
 	}
 	return false
 }
 
-// A carrier preset only skips the immediate REGISTER. Port-s still missing
-// after a successful REGISTER backs off like any other carrier.
+// A carrier preset only skips the REGISTER right after the close. Port-s
+// still missing after a successful REGISTER backs off like any other carrier,
+// and a reset that REGISTER has not restored keeps following that backoff.
+// A historical peer reconnect only keeps a clean EOF waiting.
 func (s *Service) awaitPortSAfterRegister() bool {
-	if s.portSRecoveryAwaitingFlow.Load() && !s.portSOnDemandObserved.Load() {
+	if s.capturePortSSession().lastCloseKind == portSClosePeerReset {
+		if s.portSRecoveryAwaitingFlow.Load() || s.portSMissingAfterRegister.Load() {
+			return false
+		}
+	} else if s.portSRecoveryAwaitingFlow.Load() && !s.portSOnDemandObserved.Load() {
 		return false
 	}
 	return s.canAwaitOnDemandPortS()
 }
 
-func portSIdleBeforeClose(session portSSessionSnapshot) time.Duration {
-	last := session.openedAt
-	if session.lastInboundAt.After(last) {
-		last = session.lastInboundAt
+func portSClosedFor(session portSSessionSnapshot) time.Duration {
+	if session.closedAt.IsZero() || session.openedAt.Before(session.closedAt) {
+		return 0
 	}
-	return session.closedAt.Sub(last)
+	return session.openedAt.Sub(session.closedAt)
 }
 
 const (
 	oneNZCarrierPresetID   = "one_nz_53001"
 	globePHCarrierPresetID = "globe_ph_51502"
-	// One NZ resets port-s after about 19 minutes without inbound traffic.
-	oneNZPortSIdleReset = 15 * time.Minute
 )
 
 func (s *Service) consumePortSReconnectWatch(generation uint64, registrar string) bool {
@@ -554,16 +559,28 @@ func (s *Service) recordOnDemandPortSReconnect() {
 	}
 	timeout := s.clearPortSTimeoutRecovery()
 	awaitingFlow := s.portSRecoveryAwaitingFlow.Swap(false)
+	session := s.capturePortSSession()
 	if awaitingFlow || timeout.validationFailed {
 		s.portSReconnectWaiting.Store(false)
 		s.resetPortSRecoveryBackoff()
-		logging.Info("IMS port-s reopened after successful REGISTER", "device", s.DeviceID())
+		logging.Info("IMS port-s reopened after successful REGISTER", "device", s.DeviceID(),
+			"close_kind", session.lastCloseKind, "closed_for", portSClosedFor(session))
 		return
 	}
 	if s.portSRecoveryPending.Load() || s.registrationInProgress() {
 		return
 	}
-	if !s.portSReconnectWaiting.CompareAndSwap(true, false) || s.portSOnDemandObserved.Swap(true) {
+	if !s.portSReconnectWaiting.CompareAndSwap(true, false) {
+		return
+	}
+	if s.portSOnDemandObserved.Swap(true) {
+		if session.lastCloseKind == portSClosePeerReset && s.canAwaitOnDemandPortS() {
+			// The peer's own reconnect restarts a One NZ backoff, so failures
+			// do not accumulate across reset cycles.
+			s.resetPortSRecoveryFailures()
+		}
+		logging.Info("IMS peer reopened port-s while awaiting it", "device", s.DeviceID(),
+			"close_kind", session.lastCloseKind, "closed_for", portSClosedFor(session))
 		return
 	}
 	s.clearPortSResetRecovery(s.currentPortSRecoveryRegistrar())
@@ -595,6 +612,7 @@ func (s *Service) resetPortSRecoveryKnowledge() {
 	s.portSRecoveryPending.Store(false)
 	s.portSRecoveryAwaitingFlow.Store(false)
 	s.portSOnDemandObserved.Store(false)
+	s.portSMissingAfterRegister.Store(false)
 	s.clearPortSResetRecovery("")
 	s.clearPortSTimeoutRecovery()
 }
@@ -644,6 +662,7 @@ func (s *Service) trackProtectedPortSConnection(conn net.Conn, now time.Time) bo
 }
 
 func (s *Service) finishProtectedConnectionTracking(readinessChanged bool) {
+	s.portSMissingAfterRegister.Store(false)
 	s.confirmCurrentRegistrarDownlinkHealthy()
 	s.signalDownlinkValidation()
 	s.cancelPortSReconnectWatch()

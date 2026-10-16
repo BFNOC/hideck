@@ -84,6 +84,17 @@ func (s *Service) resetPortSRecoveryBackoff() {
 	s.portSBackoff = portSRecoveryBackoff{}
 }
 
+// resetPortSRecoveryFailures restarts the backoff sequence but keeps retryAt,
+// which may hold a server Retry-After floor.
+func (s *Service) resetPortSRecoveryFailures() {
+	if s == nil {
+		return
+	}
+	s.portSWatchMu.Lock()
+	s.portSBackoff.failures = 0
+	s.portSWatchMu.Unlock()
+}
+
 func (s *Service) clearPortSRecoveryDeadline() {
 	if s == nil {
 		return
@@ -93,8 +104,14 @@ func (s *Service) clearPortSRecoveryDeadline() {
 	s.portSWatchMu.Unlock()
 }
 
-func (s *Service) backoffMissingPortSAfterRegister() {
+// generation is the port-s generation the caller saw with no connection open.
+func (s *Service) backoffMissingPortSAfterRegister(generation uint64) {
 	backoff := s.recordPortSRecoveryFailure(errPortSNotReopenedAfterRegister, time.Now())
+	s.portSMissingAfterRegister.Store(true)
+	// A reconnect after the caller's check may already have cleared the flag.
+	if s.capturePortSSession().generation != generation {
+		s.portSMissingAfterRegister.Store(false)
+	}
 	if s.armPortSTimeoutFailover() {
 		logging.WarnRate("ims-ports-validation-failover-"+s.DeviceID(), 30*time.Second,
 			"IMS port-s REGISTER recovery did not restore downlink; schedule P-CSCF replacement after backoff",
