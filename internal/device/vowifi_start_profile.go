@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
-func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity.Profile, error) {
+func (p *Pool) buildVoWiFiStartProfile(ctx context.Context, worker *Worker, traceID string) (identity.Profile, error) {
 	if worker == nil {
 		return identity.Profile{}, fmt.Errorf("worker_nil")
 	}
@@ -20,9 +21,9 @@ func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity
 		return identity.Profile{}, fmt.Errorf("backend_not_available")
 	}
 
-	liveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	liveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	owner, releaseOwnership, err := p.lockVoWiFiStartOwnership(worker)
+	owner, releaseOwnership, err := p.lockVoWiFiStartOwnership(ctx, worker, traceID)
 	if err != nil {
 		return identity.Profile{}, err
 	}
@@ -63,9 +64,11 @@ func (p *Pool) buildVoWiFiStartProfile(worker *Worker, traceID string) (identity
 	}), nil
 }
 
-func (p *Pool) lockVoWiFiStartOwnership(worker *Worker) (policyOwner, func(), error) {
+func (p *Pool) lockVoWiFiStartOwnership(ctx context.Context, worker *Worker, traceID string) (policyOwner, func(), error) {
 	transition := p.policyTransitionFor(worker.ID)
-	transition.Lock()
+	if err := lockTransitionForVoWiFiStart(ctx, worker.ID, traceID, transition); err != nil {
+		return policyOwner{}, nil, err
+	}
 	if p.GetWorker(worker.ID) != worker {
 		transition.Unlock()
 		return policyOwner{}, nil, fmt.Errorf("VoWiFi 启动设备已被移除或替换")
@@ -76,6 +79,34 @@ func (p *Pool) lockVoWiFiStartOwnership(worker *Worker) (policyOwner, func(), er
 		return policyOwner{}, nil, fmt.Errorf("VoWiFi 启动设备或 SIM 状态已失效: %w", err)
 	}
 	return owner, transition.Unlock, nil
+}
+
+var errVoWiFiStartSuperseded = errors.New("VoWiFi 启动等待卡策略锁期间已被停用或抢占")
+
+// lockTransitionForVoWiFiStart gives up when the start is cancelled while it
+// waits. Card policy projection and eSIM switching hold this lock while they
+// stop software IMS and wait for the running start to drain; a plain Lock here
+// deadlocked both. Disable and a preempting lifecycle
+// command both cancel the start's context before they wait.
+// Polls every 20ms; a lock with a wake channel would avoid it if this shows up in profiles.
+func lockTransitionForVoWiFiStart(ctx context.Context, deviceID, traceID string, transition *policyTransition) error {
+	waitStart := time.Now()
+	for {
+		if err := ctx.Err(); err != nil {
+			logger.Warn("VoWiFi 启动等待卡策略锁时被取消，放弃本次启动",
+				"trace_id", traceID, "device", deviceID, "waited", time.Since(waitStart).Round(time.Millisecond).String(), "err", err)
+			return fmt.Errorf("%w: %w", errVoWiFiStartSuperseded, err)
+		}
+		if transition.TryLock() {
+			// A cancel that lands while the lock is taken must not run the start.
+			if ctx.Err() == nil {
+				return nil
+			}
+			transition.Unlock()
+			continue
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func readVoWiFiStartIdentity(ctx context.Context, worker *Worker) (string, string, error) {
@@ -229,5 +260,5 @@ func newVoWiFiSIMReadyStartupState(deviceID, dataplaneMode, networkMode string, 
 }
 
 func (p *Pool) BuildVoWiFiStartProfile(worker *Worker) (identity.Profile, error) {
-	return p.buildVoWiFiStartProfile(worker, "")
+	return p.buildVoWiFiStartProfile(context.Background(), worker, "")
 }
