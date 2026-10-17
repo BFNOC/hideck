@@ -56,6 +56,11 @@ func (p *Pool) buildVoWiFiStartProfile(ctx context.Context, worker *Worker, trac
 		}
 		persistIdentity = heldErr == nil && !held
 	}
+	// Before the SMSC read and every later step: a drifted card waits here on
+	// both the WiFi and cellular start paths.
+	if err := checkMultiIMSIDrift(worker.ID, iccid, imsi, traceID, time.Now()); err != nil {
+		return identity.Profile{}, err
+	}
 
 	status := worker.ProjectDeviceStatus()
 	mcc, mnc, plmnSource := resolveVoWiFiProfileMCCMNC(liveCtx, worker, status, imsi, traceID)

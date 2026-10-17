@@ -213,7 +213,8 @@ func (p *Pool) prepareVoWiFiStartContext(ctx context.Context, deviceID, traceID,
 
 	startProfile, errProfile := p.buildVoWiFiStartProfile(ctx, w, traceID)
 	if errProfile != nil {
-		if errors.Is(errProfile, errVoWiFiStartSuperseded) {
+		if errors.Is(errProfile, errVoWiFiStartSuperseded) || errors.Is(errProfile, ErrMultiIMSIDrift) {
+			// Both cancellation and drift already have a specific diagnostic.
 			return startCtx, errProfile
 		}
 		logger.Error("构建 VoWiFi 启动画像失败", "trace_id", traceID, "device", deviceID, "err", errProfile)
@@ -408,7 +409,8 @@ func (p *Pool) prepareCellularStartContext(
 
 	startProfile, errProfile := p.buildVoWiFiStartProfile(ctx, w, traceID)
 	if errProfile != nil {
-		if errors.Is(errProfile, errVoWiFiStartSuperseded) {
+		if errors.Is(errProfile, errVoWiFiStartSuperseded) || errors.Is(errProfile, ErrMultiIMSIDrift) {
+			// Both cancellation and drift already have a specific diagnostic.
 			return startCtx, errProfile
 		}
 		logger.Error("蜂窝模式构建启动画像失败", "trace_id", traceID, "device", deviceID, "err", errProfile)
