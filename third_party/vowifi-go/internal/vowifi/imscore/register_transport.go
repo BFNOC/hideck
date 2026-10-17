@@ -434,6 +434,9 @@ func (s *Service) portSReconnectWatchFired(generation uint64, registrar string) 
 // it has a request to deliver; the idle time before the reset drifts (17-19
 // minutes on 10-15, 12.5-14.9 minutes on 10-16), so it is not a signal.
 // Globe PH closes port-s minutes after REGISTER and reopens it to deliver.
+// DITO PH sends FIN on port-s after about 180s idle (lifetimes 3m00-3m58 on
+// 10-17); the REGISTER after each close hit a protected port conflict every
+// 3.5 minutes, about 400 times a day.
 func (s *Service) canAwaitOnDemandPortS() bool {
 	if s == nil {
 		return false
@@ -445,7 +448,7 @@ func (s *Service) canAwaitOnDemandPortS() bool {
 	observed := s.portSOnDemandObserved.Load()
 	switch s.capturePortSSession().lastCloseKind {
 	case portSCloseEOF:
-		return observed || preset == globePHCarrierPresetID
+		return observed || preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID
 	case portSClosePeerReset:
 		return preset == oneNZCarrierPresetID
 	}
@@ -477,6 +480,7 @@ func portSClosedFor(session portSSessionSnapshot) time.Duration {
 const (
 	oneNZCarrierPresetID   = "one_nz_53001"
 	globePHCarrierPresetID = "globe_ph_51502"
+	ditoPHCarrierPresetID  = "dito_51566"
 )
 
 func (s *Service) consumePortSReconnectWatch(generation uint64, registrar string) bool {
@@ -587,7 +591,8 @@ func (s *Service) recordOnDemandPortSReconnect() {
 	s.resetPortSRecoveryBackoff()
 	logging.Info("IMS peer-initiated port-s reconnect observed",
 		"device", s.DeviceID(),
-		"reason", "peer reopened port-s without a successful REGISTER")
+		"reason", "peer reopened port-s without a successful REGISTER",
+		"close_kind", session.lastCloseKind, "closed_for", portSClosedFor(session))
 }
 
 func (s *Service) registrationInProgress() bool {
