@@ -464,7 +464,8 @@ func (s *Service) awaitPortSAfterRegister() bool {
 		if s.portSRecoveryAwaitingFlow.Load() || s.portSMissingAfterRegister.Load() {
 			return false
 		}
-	} else if s.portSRecoveryAwaitingFlow.Load() && !s.portSOnDemandObserved.Load() {
+	} else if (s.portSRecoveryAwaitingFlow.Load() || s.portSMissingAfterRegister.Load()) &&
+		!s.portSOnDemandObserved.Load() {
 		return false
 	}
 	return s.canAwaitOnDemandPortS()

@@ -60,11 +60,21 @@ func TestOtherPresetsRecoverPeerResetAfterPeerReconnect(t *testing.T) {
 }
 
 func TestCarrierAwaitBacksOffWhenRegisterDoesNotRestorePortS(t *testing.T) {
-	for _, observed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "first", true: "after-peer-reconnect"}[observed], func(t *testing.T) {
-			service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
-			service.portSOnDemandObserved.Store(observed)
-			closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
+	for _, tc := range []struct {
+		name     string
+		preset   string
+		closeErr error
+		observed bool
+	}{
+		{"one-nz/first", oneNZCarrierPresetID, syscall.ECONNRESET, false},
+		{"one-nz/after-peer-reconnect", oneNZCarrierPresetID, syscall.ECONNRESET, true},
+		{"globe-eof/first", globePHCarrierPresetID, io.EOF, false},
+		{"dito-eof/first", ditoPHCarrierPresetID, io.EOF, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := newCarrierAwaitTestService(t, tc.preset)
+			service.portSOnDemandObserved.Store(tc.observed)
+			closeIdleTestPortS(t, service, tc.closeErr, 20*time.Minute)
 			service.handleProtectedServerPushClosed()
 			service.completePortSRecovery(nil, true)
 			if !service.portSRecoveryAwaitingFlow.Load() {
