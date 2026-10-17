@@ -9,6 +9,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
+	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/modem"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
@@ -21,6 +22,15 @@ func (p *Pool) buildVoWiFiStartProfile(ctx context.Context, worker *Worker, trac
 		return identity.Profile{}, fmt.Errorf("backend_not_available")
 	}
 
+	// Persisting also reads the modem (MSISDN, no deadline); do it after the
+	// ownership lock is released. The start itself, and a Disable queued behind
+	// it, still wait for that read.
+	persistIdentity := false
+	defer func() {
+		if persistIdentity {
+			p.PersistIdentityState(worker)
+		}
+	}()
 	owner, releaseOwnership, err := p.lockVoWiFiStartOwnership(ctx, worker, traceID)
 	if err != nil {
 		return identity.Profile{}, err
@@ -31,6 +41,20 @@ func (p *Pool) buildVoWiFiStartProfile(ctx context.Context, worker *Worker, trac
 	iccid, imsi, err := readVoWiFiStartIdentity(liveCtx, worker)
 	if err != nil {
 		return identity.Profile{}, err
+	}
+	persistIdentity, err = syncVoWiFiStartIdentity(worker, iccid, imsi, traceID)
+	if err != nil {
+		return identity.Profile{}, err
+	}
+	if !persistIdentity && db.DB != nil {
+		// The cache can already match the card while the database does not: an
+		// earlier write failed, or a status refresh updated only the cache after
+		// a drift wait recorded the roaming IMSI.
+		held, heldErr := db.SIMCardHoldsIMSI(iccid, imsi)
+		if heldErr != nil {
+			logger.Warn("查询卡的当前 IMSI 失败", "trace_id", traceID, "device", worker.ID, "err", heldErr)
+		}
+		persistIdentity = heldErr == nil && !held
 	}
 
 	status := worker.ProjectDeviceStatus()
@@ -132,6 +156,37 @@ func readVoWiFiStartIdentity(ctx context.Context, worker *Worker) (string, strin
 	return validateVoWiFiStartIdentity(iccid, imsi)
 }
 
+// syncVoWiFiStartIdentity makes the profile and the worker cache share the identity
+// read under the start ownership lock; it reports whether the caller must persist
+// it. Without this a multi-IMSI SIM could register IMS with one IMSI while
+// sim_cards still holds the other, and inbound SMS were rejected as a conflict.
+func syncVoWiFiStartIdentity(worker *Worker, iccid, imsi, traceID string) (bool, error) {
+	worker.cacheMu.Lock()
+	cachedICCID := strings.TrimSpace(worker.state.Identity.ICCID)
+	cachedIMSI := strings.TrimSpace(worker.state.Identity.IMSI)
+	if cachedICCID != "" && normalizeSIMIdentityForCompare(cachedICCID) != normalizeSIMIdentityForCompare(iccid) {
+		worker.cacheMu.Unlock()
+		logger.Warn("VoWiFi 启动实时 ICCID 与缓存不一致，放弃本次启动",
+			"trace_id", traceID, "device", worker.ID)
+		return false, fmt.Errorf("VoWiFi 启动期间 SIM 已更换")
+	}
+	// An empty cache is filled by the identity refresh; writing the ICCID here
+	// would invalidate the policy owner captured for this start.
+	if cachedICCID == "" || cachedIMSI == imsi {
+		worker.cacheMu.Unlock()
+		return false, nil
+	}
+	worker.state.Identity.IMSI = imsi
+	// Home MCC/MNC were derived from the old IMSI.
+	worker.state.Identity.NativeMCC = ""
+	worker.state.Identity.NativeMNC = ""
+	worker.cacheMu.Unlock()
+	logger.Warn("VoWiFi 启动实时 IMSI 与缓存不一致，按实时值更新",
+		"trace_id", traceID, "device", worker.ID,
+		"cached_imsi", maskIMSIPrefix(cachedIMSI), "live_imsi", maskIMSIPrefix(imsi))
+	return true, nil
+}
+
 func validateVoWiFiStartIdentity(iccid, imsi string) (string, string, error) {
 	imsi = strings.TrimSpace(imsi)
 	if imsi == "" {
@@ -210,6 +265,15 @@ func resolveVoWiFiProfileMCCMNC(ctx context.Context, worker *Worker, status mode
 		if liveMCC, liveMNC, err := worker.Backend.GetNativeMCCMNC(ctx); err == nil {
 			liveMCC = strings.TrimSpace(liveMCC)
 			liveMNC = strings.TrimSpace(liveMNC)
+			// The backend derives MCC/MNC from its snapshot IMSI, which can lag a
+			// multi-IMSI SIM; re-parse the live IMSI instead of trusting it.
+			if liveMCC != "" && liveMNC != "" && imsi != "" && !strings.HasPrefix(imsi, liveMCC+liveMNC) {
+				parsedMCC, parsedMNC, _, _, parseErr := modem.HomeMCCMNCFromIMSIAndEFAD(imsi, nil)
+				logger.Warn("VoWiFi 启动 SIM 归属 MCC/MNC 与实时 IMSI 不一致，按实时 IMSI 重算",
+					"trace_id", traceID, "device", worker.ID,
+					"backend_plmn", liveMCC+liveMNC, "live_imsi", maskIMSIPrefix(imsi), "err", parseErr)
+				liveMCC, liveMNC = parsedMCC, parsedMNC
+			}
 			if liveMCC != "" && liveMNC != "" {
 				cacheVoWiFiProfileMCCMNC(worker, liveMCC, liveMNC)
 				return liveMCC, liveMNC, "sim_home"
