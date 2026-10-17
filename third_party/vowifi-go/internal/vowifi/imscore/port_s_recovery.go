@@ -85,7 +85,7 @@ func (s *Service) resetPortSRecoveryBackoff() {
 }
 
 // resetPortSRecoveryFailures restarts the backoff sequence but keeps retryAt,
-// which may hold a server Retry-After floor.
+// so a pending Retry-After deadline still holds until the next failure resets it.
 func (s *Service) resetPortSRecoveryFailures() {
 	if s == nil {
 		return
@@ -106,11 +106,18 @@ func (s *Service) clearPortSRecoveryDeadline() {
 
 // generation is the port-s generation the caller saw with no connection open.
 func (s *Service) backoffMissingPortSAfterRegister(generation uint64) {
+	if s.capturePortSSession().generation != generation {
+		// The peer reopened port-s after the caller's check; nothing failed.
+		return
+	}
 	backoff := s.recordPortSRecoveryFailure(errPortSNotReopenedAfterRegister, time.Now())
 	s.portSMissingAfterRegister.Store(true)
-	// A reconnect after the caller's check may already have cleared the flag.
+	// A reconnect between the two checks may already have reset the backoff;
+	// drop the failure just recorded so it does not lengthen the next one.
 	if s.capturePortSSession().generation != generation {
 		s.portSMissingAfterRegister.Store(false)
+		s.resetPortSRecoveryBackoff()
+		return
 	}
 	if s.armPortSTimeoutFailover() {
 		logging.WarnRate("ims-ports-validation-failover-"+s.DeviceID(), 30*time.Second,

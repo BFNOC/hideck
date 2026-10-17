@@ -120,7 +120,7 @@ func runOneNZFieldResetCycle(t *testing.T, observed bool) {
 	}
 	client, peer := net.Pipe()
 	t.Cleanup(func() { client.Close(); peer.Close() })
-	if !service.trackProtectedConnection(client) {
+	if !service.trackProtectedPortSConnection(client, time.Now()) {
 		t.Fatal("track reopened port-s")
 	}
 	if service.portSMissingAfterRegister.Load() {
@@ -152,9 +152,44 @@ func TestPortSReopenDuringBackoffDoesNotLeaveRegisterFailure(t *testing.T) {
 		t.Fatal("track reopened port-s")
 	}
 	service.backoffMissingPortSAfterRegister(seen)
-	stopTestPortSWatch(service)
+	if stopTestPortSWatch(service) != nil {
+		t.Fatal("stale watch scheduled a REGISTER")
+	}
 	if service.portSMissingAfterRegister.Load() {
 		t.Fatal("stale watch marked the reopened port-s as missing after REGISTER")
+	}
+	service.portSWatchMu.Lock()
+	backoff := service.portSBackoff
+	service.portSWatchMu.Unlock()
+	if backoff.failures != 0 || !backoff.retryAt.IsZero() {
+		t.Fatalf("stale watch recorded backoff %+v", backoff)
+	}
+}
+
+func TestPortSReopenWhileRecordingBackoffDropsTheFailure(t *testing.T) {
+	service := newCarrierAwaitTestService(t, oneNZCarrierPresetID)
+	closeIdleTestPortS(t, service, syscall.ECONNRESET, 20*time.Minute)
+	seen := service.capturePortSSession().generation
+	// The peer reconnects after the first generation check, while the failure
+	// is being recorded.
+	service.portSRecoveryJitter = func(upper time.Duration) time.Duration {
+		service.portSSessionMu.Lock()
+		service.portSSession.generation++
+		service.portSSessionMu.Unlock()
+		return upper / 2
+	}
+	service.backoffMissingPortSAfterRegister(seen)
+	if stopTestPortSWatch(service) != nil {
+		t.Fatal("stale failure scheduled a REGISTER")
+	}
+	service.portSWatchMu.Lock()
+	backoff := service.portSBackoff
+	service.portSWatchMu.Unlock()
+	if backoff.failures != 0 || !backoff.retryAt.IsZero() {
+		t.Fatalf("stale failure left backoff %+v", backoff)
+	}
+	if service.portSMissingAfterRegister.Load() {
+		t.Fatal("stale failure marked port-s missing after REGISTER")
 	}
 }
 
@@ -171,7 +206,7 @@ func TestOneNZPeerReconnectKeepsRetryAfterFloor(t *testing.T) {
 	service.portSWatchMu.Unlock()
 	client, peer := net.Pipe()
 	t.Cleanup(func() { client.Close(); peer.Close() })
-	if !service.trackProtectedConnection(client) {
+	if !service.trackProtectedPortSConnection(client, time.Now()) {
 		t.Fatal("track reopened port-s")
 	}
 	service.portSWatchMu.Lock()
@@ -200,7 +235,7 @@ func closeIdleTestPortS(t *testing.T, service *Service, err error, idle time.Dur
 	t.Cleanup(func() { client.Close(); peer.Close() })
 	now := time.Now()
 	service.recordPortSOpened(client, now.Add(-idle))
-	if !service.trackProtectedConnection(client) {
+	if !service.trackProtectedPortSConnection(client, time.Now()) {
 		t.Fatal("track port-s")
 	}
 	service.recordPortSClosed(client, err, now)
