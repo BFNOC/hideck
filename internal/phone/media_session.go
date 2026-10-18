@@ -44,6 +44,9 @@ type MediaSession struct {
 	fromIMS          atomic.Uint64
 	toIMS            atomic.Uint64
 	lost             atomic.Uint64
+	imsRejected      atomic.Uint64
+	imsLate          atomic.Uint64
+	imsRestarts      atomic.Uint64
 	browserPackets   atomic.Uint64
 	browserRejected  atomic.Uint64
 	browserPeak      atomic.Uint64
@@ -211,7 +214,7 @@ func (s *MediaSession) Close() error {
 	}
 	var result error
 	s.closeOnce.Do(func() {
-		logger.Info("网页音频转发统计", "media_id", s.ID, "browser_packets", s.browserPackets.Load(), "browser_rejected", s.browserRejected.Load(), "browser_peak", s.browserPeak.Load(), "to_modem", s.toIMS.Load(), "from_modem", s.fromIMS.Load(), "lost", s.lost.Load())
+		logger.Info("网页音频转发统计", "media_id", s.ID, "browser_packets", s.browserPackets.Load(), "browser_rejected", s.browserRejected.Load(), "browser_peak", s.browserPeak.Load(), "to_modem", s.toIMS.Load(), "from_modem", s.fromIMS.Load(), "modem_rejected", s.imsRejected.Load(), "modem_late", s.imsLate.Load(), "modem_restarts", s.imsRestarts.Load(), "lost", s.lost.Load())
 		s.stopSilentRTP()
 		s.mu.Lock()
 		codec := s.realtimeCodec
