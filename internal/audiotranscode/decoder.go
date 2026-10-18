@@ -47,6 +47,8 @@ func (t *Transcoder) decodeInput(ctx context.Context, inputPath string) ([]int16
 		})
 	case ".wav":
 		return decodePCM16WAV(data)
+	case ".mp3":
+		return decodeMP3(data)
 	case ".evs":
 		decoder, err := t.recordingDecoder("AMR-WB")
 		if err != nil {
