@@ -11,6 +11,7 @@ const testAnswerSDP = "v=0\r\n" +
 	"a=candidate:1 1 udp 2130706431 192.168.3.30 7580 typ host\r\n" +
 	"a=candidate:2 1 udp 2130706430 172.23.0.1 7580 typ host\r\n" +
 	"a=candidate:3 1 udp 2130706429 240e:399:ea2:a970:566d:26cd:f684:8185 7580 typ host\r\n" +
+	"a=candidate:4 1 udp 2130706428 10.44.0.2 7580 typ host\r\n" +
 	"a=end-of-candidates\r\n"
 
 func TestPruneAnswerCandidates(t *testing.T) {
@@ -36,6 +37,12 @@ func TestPruneAnswerCandidates(t *testing.T) {
 		_, kept := pruneAnswerCandidates(testAnswerSDP, []string{"192.168.3.30", "240e:399:ea2:a970:566d:26cd:f684:8185"})
 		if kept != 2 {
 			t.Fatalf("kept=%d", kept)
+		}
+	})
+	t.Run("VPN 接口地址是实际访问地址时保留", func(t *testing.T) {
+		sdp, kept := pruneAnswerCandidates(testAnswerSDP, []string{"10.44.0.2"})
+		if kept != 1 || !strings.Contains(sdp, "10.44.0.2") {
+			t.Fatalf("kept=%d sdp=%s", kept, sdp)
 		}
 	})
 	t.Run("访问地址不在候选内时保留原始候选", func(t *testing.T) {
