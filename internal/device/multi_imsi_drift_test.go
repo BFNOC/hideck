@@ -1,6 +1,7 @@
 package device
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestBuildVoWiFiStartProfileRefusesADriftedCard(t *testing.T) {
 	w := &Worker{ID: "dito", Backend: b}
 	registerVoWiFiProfileWorkerForTest(p, w)
 
-	if _, err := p.buildVoWiFiStartProfile(w, "trace-drift"); !errors.Is(err, ErrMultiIMSIDrift) {
+	if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-drift"); !errors.Is(err, ErrMultiIMSIDrift) {
 		t.Fatalf("buildVoWiFiStartProfile() err=%v, want ErrMultiIMSIDrift", err)
 	}
 }
@@ -147,7 +148,7 @@ func TestBuildVoWiFiStartProfileKeepsWaitingAfterRecordingTheRoamingIMSI(t *test
 	w.cacheMu.Unlock()
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		if _, err := p.buildVoWiFiStartProfile(w, "trace-drift"); !errors.Is(err, ErrMultiIMSIDrift) {
+		if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-drift"); !errors.Is(err, ErrMultiIMSIDrift) {
 			t.Fatalf("attempt %d on the roaming IMSI: err=%v, want ErrMultiIMSIDrift", attempt, err)
 		}
 	}
@@ -156,7 +157,7 @@ func TestBuildVoWiFiStartProfileKeepsWaitingAfterRecordingTheRoamingIMSI(t *test
 	}
 
 	b.liveIMSI = home
-	if _, err := p.buildVoWiFiStartProfile(w, "trace-home"); err != nil {
+	if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-home"); err != nil {
 		t.Fatalf("back on the home IMSI: err=%v", err)
 	}
 	if known, err := db.IMSIKnownForICCID(iccid, home); err != nil || !known {

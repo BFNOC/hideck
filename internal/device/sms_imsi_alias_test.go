@@ -103,7 +103,7 @@ func TestBuildVoWiFiStartProfileRecordsAnIMSIMissingFromHistory(t *testing.T) {
 	w.state.Identity.IMEI = "861234567890123"
 	w.cacheMu.Unlock()
 
-	if _, err := p.buildVoWiFiStartProfile(w, "trace-record"); err != nil {
+	if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-record"); err != nil {
 		t.Fatalf("buildVoWiFiStartProfile() err=%v", err)
 	}
 	known, err := db.IMSIKnownForICCID(iccid, imsi)
@@ -140,7 +140,7 @@ func TestBuildVoWiFiStartProfileRewritesARoamingIMSILeftInSIMCards(t *testing.T)
 	w.state.Identity.IMEI = "861234567890123"
 	w.cacheMu.Unlock()
 
-	if _, err := p.buildVoWiFiStartProfile(w, "trace-rewrite"); err != nil {
+	if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-rewrite"); err != nil {
 		t.Fatalf("buildVoWiFiStartProfile() err=%v", err)
 	}
 	held, err := db.SIMCardHoldsIMSI(iccid, home)
@@ -174,7 +174,7 @@ func TestBuildVoWiFiStartProfileSkipsPersistWhenSIMCardsMatches(t *testing.T) {
 	w.state.Identity.IMEI = "861234567890123"
 	w.cacheMu.Unlock()
 
-	if _, err := p.buildVoWiFiStartProfile(w, "trace-skip"); err != nil {
+	if _, err := p.buildVoWiFiStartProfile(context.Background(), w, "trace-skip"); err != nil {
 		t.Fatalf("buildVoWiFiStartProfile() err=%v", err)
 	}
 	// PersistIdentityState would record the worker IMEI on the card.
