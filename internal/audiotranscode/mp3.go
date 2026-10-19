@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/hajimehoshi/go-mp3"
 )
@@ -16,6 +17,10 @@ import (
 // go-mp3 固定输出 16-bit 小端立体声，所以这里顺带混单声道。提示音最终由 8 kHz
 // 的模组声卡播放，在解码阶段一次降到 8 kHz，避免播放路径再插一层重采样。
 func decodeMP3(data []byte) ([]int16, int, error) {
+	return decodeMP3Within(data, 0)
+}
+
+func decodeMP3Within(data []byte, maxDuration time.Duration) ([]int16, int, error) {
 	decoder, err := mp3.NewDecoder(bytes.NewReader(data))
 	if err != nil {
 		// go-mp3 只覆盖 MPEG-1/2。8/11/12 kHz 的语音 MP3 属于 MPEG-2.5，直接给出
@@ -26,7 +31,12 @@ func decodeMP3(data []byte) ([]int16, int, error) {
 		return nil, 0, fmt.Errorf("invalid MP3 audio: %w", err)
 	}
 	rate := decoder.SampleRate()
-	raw, err := io.ReadAll(decoder)
+	if rate <= 0 {
+		return nil, 0, errors.New("MP3 audio sample rate is unknown")
+	}
+	var decoded io.Reader = decoder
+	maxFrames := durationSampleLimit(maxDuration, rate)
+	raw, err := readDecodedMP3(decoded, maxFrames)
 	if err != nil {
 		return nil, 0, fmt.Errorf("decode MP3 audio: %w", err)
 	}
@@ -40,9 +50,6 @@ func decodeMP3(data []byte) ([]int16, int, error) {
 		right := int32(int16(binary.LittleEndian.Uint16(raw[index*4+2:])))
 		mono[index] = int16((left + right) / 2)
 	}
-	if rate <= 0 {
-		return nil, 0, errors.New("MP3 audio sample rate is unknown")
-	}
 	if rate != 8000 {
 		mono = resampleMono(mono, rate, 8000)
 	}
@@ -50,6 +57,17 @@ func decodeMP3(data []byte) ([]int16, int, error) {
 		return nil, 0, errors.New("MP3 audio has no valid PCM data")
 	}
 	return mono, 8000, nil
+}
+
+func readDecodedMP3(decoded io.Reader, maxFrames int) ([]byte, error) {
+	if maxFrames > 0 {
+		maxInt := int(^uint(0) >> 1)
+		if maxFrames > maxInt/4 {
+			return nil, errors.New("MP3 duration limit is too large")
+		}
+		decoded = io.LimitReader(decoded, int64(maxFrames*4))
+	}
+	return io.ReadAll(decoded)
 }
 
 // resampleMono 用箱式平均把单声道 PCM 重采样到目标采样率。降采样时逐段平均相当于
@@ -94,12 +112,12 @@ func EncodePCM16WAV(pcm []int16, sampleRate int) ([]byte, error) {
 	copy(buffer[8:12], "WAVE")
 	copy(buffer[12:16], "fmt ")
 	binary.LittleEndian.PutUint32(buffer[16:20], 16)
-	binary.LittleEndian.PutUint16(buffer[20:22], 1)   // PCM
-	binary.LittleEndian.PutUint16(buffer[22:24], 1)   // 单声道
+	binary.LittleEndian.PutUint16(buffer[20:22], 1) // PCM
+	binary.LittleEndian.PutUint16(buffer[22:24], 1) // 单声道
 	binary.LittleEndian.PutUint32(buffer[24:28], uint32(sampleRate))
 	binary.LittleEndian.PutUint32(buffer[28:32], uint32(sampleRate*2))
-	binary.LittleEndian.PutUint16(buffer[32:34], 2)   // 每帧字节数
-	binary.LittleEndian.PutUint16(buffer[34:36], 16)  // 位深
+	binary.LittleEndian.PutUint16(buffer[32:34], 2)  // 每帧字节数
+	binary.LittleEndian.PutUint16(buffer[34:36], 16) // 位深
 	copy(buffer[36:40], "data")
 	binary.LittleEndian.PutUint32(buffer[40:44], uint32(dataSize))
 	for index, sample := range pcm {

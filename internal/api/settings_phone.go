@@ -203,7 +203,7 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 		s.respondAutoAnswerUploadError(c, err)
 		return
 	}
-	// 所有来源统一转换：混单声道、采样率归一到 8/16 kHz、超过 30 秒截断。走同一条
+	// 所有来源统一转换：混单声道、采样率归一到 8 kHz、超过 30 秒截断。走同一条
 	// 路径也让 44.1 kHz 立体声 WAV 这类"能解码但不符合播放要求"的文件可用。
 	convertedPath := temporaryPath + ".wav"
 	if err := s.phone.ConvertAutoAnswerAudio(temporaryPath, convertedPath); err != nil {

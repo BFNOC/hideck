@@ -216,7 +216,7 @@ func (t *Transcoder) ToPCM16WAVWithin(ctx context.Context, inputPath, outputPath
 		ctx = context.Background()
 	}
 	cleaned := strings.TrimSpace(inputPath)
-	pcm, sampleRate, err := t.decodeForPrompt(ctx, cleaned)
+	pcm, sampleRate, err := t.decodeForPrompt(ctx, cleaned, maxDuration)
 	if err != nil {
 		return err
 	}
@@ -243,13 +243,34 @@ func (t *Transcoder) ToPCM16WAVWithin(ctx context.Context, inputPath, outputPath
 
 // decodeForPrompt 按扩展名解码提示音来源。WAV 走宽松解析（允许立体声与任意采样率），
 // 其余格式沿用录音解码链。
-func (t *Transcoder) decodeForPrompt(ctx context.Context, path string) ([]int16, int, error) {
-	if strings.ToLower(filepath.Ext(path)) != ".wav" {
-		return t.decodeInput(ctx, path)
+func (t *Transcoder) decodeForPrompt(ctx context.Context, path string, maxDuration time.Duration) ([]int16, int, error) {
+	extension := strings.ToLower(filepath.Ext(path))
+	if extension == ".amr" || extension == ".amr-wb" || extension == ".mp3" {
+		return t.decodeInputWithin(ctx, path, maxDuration)
+	}
+	if extension != ".wav" {
+		return nil, 0, fmt.Errorf("unsupported prompt audio format %q", extension)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read source audio: %w", err)
 	}
-	return decodeWAVFlexible(data)
+	return decodeWAVFlexibleWithin(data, maxDuration)
+}
+
+func durationSampleLimit(duration time.Duration, sampleRate int) int {
+	if duration <= 0 || sampleRate <= 0 {
+		return 0
+	}
+	maxInt := int(^uint(0) >> 1)
+	seconds := int64(duration / time.Second)
+	if seconds > int64(maxInt/sampleRate) {
+		return maxInt
+	}
+	whole := int(seconds) * sampleRate
+	fraction := int((int64(duration%time.Second) * int64(sampleRate)) / int64(time.Second))
+	if fraction > maxInt-whole {
+		return maxInt
+	}
+	return whole + fraction
 }

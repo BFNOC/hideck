@@ -3,6 +3,7 @@ package audiotranscode
 import (
 	"encoding/binary"
 	"errors"
+	"time"
 )
 
 // decodeWAVFlexible 解析常见的 WAV 变体（16-bit PCM、单声道或立体声、任意采样率）
@@ -11,6 +12,10 @@ import (
 // 自动应答提示音允许用户直接上传手机录音，这类文件通常是 44.1 kHz 立体声，比
 // 录音转码用的严格格式（8 kHz 单声道）宽得多，因此这里单独做一层宽松解析。
 func decodeWAVFlexible(data []byte) ([]int16, int, error) {
+	return decodeWAVFlexibleWithin(data, 0)
+}
+
+func decodeWAVFlexibleWithin(data []byte, maxDuration time.Duration) ([]int16, int, error) {
 	if len(data) < 12 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
 		return nil, 0, errors.New("invalid WAV audio header")
 	}
@@ -22,11 +27,12 @@ func decodeWAVFlexible(data []byte) ([]int16, int, error) {
 		pcmBytes      []byte
 	)
 	for offset := 12; offset+8 <= len(data); {
-		size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-		start, end := offset+8, offset+8+size
-		if end > len(data) {
+		size := uint64(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		start, end := offset+8, len(data)
+		if size <= uint64(len(data)-start) {
+			end = start + int(size)
+		} else {
 			// 部分编辑器写出的 WAV 头长度与实际数据不一致，按实际长度截断即可。
-			end = len(data)
 		}
 		switch string(data[offset : offset+4]) {
 		case "fmt ":
@@ -40,10 +46,10 @@ func decodeWAVFlexible(data []byte) ([]int16, int, error) {
 		case "data":
 			pcmBytes = data[start:end]
 		}
-		if size <= 0 {
+		if size == 0 {
 			break
 		}
-		offset = end + size%2
+		offset = end + int(size%2)
 	}
 	if audioFormat != 1 {
 		return nil, 0, errors.New("WAV audio must be uncompressed PCM")
@@ -62,6 +68,9 @@ func decodeWAVFlexible(data []byte) ([]int16, int, error) {
 		return nil, 0, errors.New("WAV audio has no valid PCM data")
 	}
 	frames := len(pcmBytes) / bytesPerFrame
+	if limit := durationSampleLimit(maxDuration, sampleRate); limit > 0 && frames > limit {
+		frames = limit
+	}
 	mono := make([]int16, frames)
 	for index := 0; index < frames; index++ {
 		base := index * bytesPerFrame

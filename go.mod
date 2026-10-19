@@ -18,6 +18,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/iniwex5/qqbot v1.0.1
 	github.com/iniwex5/quectel-qmi-go v0.6.0
 	github.com/iniwex5/vowifi-go v1.1.2
@@ -74,7 +75,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/pprof v0.0.0-20231101202521-4ca4178f5c7a // indirect
-	github.com/hajimehoshi/go-mp3 v0.3.4 // indirect
 	github.com/hhrutter/tiff v1.0.6 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
 	github.com/iniwex5/netlink v1.3.3 // indirect

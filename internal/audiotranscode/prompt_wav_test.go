@@ -1,6 +1,7 @@
 package audiotranscode
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"os"
@@ -159,6 +160,56 @@ func TestToPCM16WAVTruncatesToThirtySeconds(t *testing.T) {
 	if len(pcm) != 8000*30 {
 		t.Fatalf("sample count = %d, want %d", len(pcm), 8000*30)
 	}
+}
+
+func TestPromptDecodersStopAtDurationLimit(t *testing.T) {
+	t.Run("WAV allocation is limited before conversion", func(t *testing.T) {
+		pcm, rate, err := decodeWAVFlexibleWithin(
+			buildTestWAV(8000, 1, make([]int16, 8000*40)), 30*time.Second,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rate != 8000 || len(pcm) != 8000*30 {
+			t.Fatalf("rate=%d samples=%d", rate, len(pcm))
+		}
+	})
+
+	t.Run("decoded MP3 bytes are bounded before PCM allocation", func(t *testing.T) {
+		raw, err := readDecodedMP3(bytes.NewReader(make([]byte, 4096)), 160)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) != 160*4 {
+			t.Fatalf("decoded bytes=%d want=%d", len(raw), 160*4)
+		}
+	})
+
+	t.Run("AMR frame decoding stops at sample limit", func(t *testing.T) {
+		framesDecoded := 0
+		decoder := &amrDecoderAPI{
+			init: func() uintptr { return 1 },
+			decode: func(_ uintptr, _ []byte, pcm []int16, _ int) {
+				framesDecoded++
+				for index := range pcm {
+					pcm[index] = 1
+				}
+			},
+			close: func(uintptr) {},
+		}
+		frame := append([]byte{0x04}, make([]byte, amrNBFrameBytes[0])...)
+		data := append([]byte("#!AMR\n"), bytes.Repeat(frame, 10)...)
+		pcm, rate, err := decodeAMR(context.Background(), amrDecodeConfig{
+			decoder: decoder, data: data, frameSizes: amrNBFrameBytes[:],
+			magic: "#!AMR\n", samplesPerFrame: 160, sampleRate: 8000, maxSamples: 240,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rate != 8000 || len(pcm) != 240 || framesDecoded != 2 {
+			t.Fatalf("rate=%d samples=%d decoded_frames=%d", rate, len(pcm), framesDecoded)
+		}
+	})
 }
 
 func TestToPCM16WAVDownsamples16kTo8k(t *testing.T) {
