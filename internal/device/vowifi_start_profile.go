@@ -21,13 +21,13 @@ func (p *Pool) buildVoWiFiStartProfile(ctx context.Context, worker *Worker, trac
 		return identity.Profile{}, fmt.Errorf("backend_not_available")
 	}
 
-	liveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	owner, releaseOwnership, err := p.lockVoWiFiStartOwnership(ctx, worker, traceID)
 	if err != nil {
 		return identity.Profile{}, err
 	}
 	defer releaseOwnership()
+	liveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	iccid, imsi, err := readVoWiFiStartIdentity(liveCtx, worker)
 	if err != nil {
 		return identity.Profile{}, err
