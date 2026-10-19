@@ -138,7 +138,12 @@ func (b *PCMBridge) Close() error {
 func (b *PCMBridge) downlink() {
 	defer b.workers.Done()
 	arrivals := make(chan pcmRTPArrival, pcmJitterMaxFrames*2)
-	go b.readDownlink(arrivals)
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		b.readDownlink(arrivals)
+	}()
+	defer func() { <-readerDone }()
 	ticker := time.NewTicker(pcmuFrameDuration)
 	defer ticker.Stop()
 	buffer := newAdaptivePCMBuffer()
