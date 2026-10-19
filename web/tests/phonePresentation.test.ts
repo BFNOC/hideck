@@ -7,6 +7,7 @@ const phoneCSS = await readFile(new URL('../src/styles/phone.css', import.meta.u
 const phoneStore = await readFile(new URL('../src/stores/phone.ts', import.meta.url), 'utf8')
 const dialPad = await readFile(new URL('../src/components/PhoneDialPad.vue', import.meta.url), 'utf8')
 const callBar = await readFile(new URL('../src/components/PhoneCallBar.vue', import.meta.url), 'utf8')
+const callHistory = await readFile(new URL('../src/components/PhoneCallHistory.vue', import.meta.url), 'utf8')
 const contactsPanel = await readFile(new URL('../src/components/PhoneContactsPanel.vue', import.meta.url), 'utf8')
 const contactsDrawer = await readFile(new URL('../src/components/PhoneContactsDrawer.vue', import.meta.url), 'utf8')
 const contactImporter = await readFile(new URL('../src/composables/useContactImport.ts', import.meta.url), 'utf8')
@@ -124,6 +125,15 @@ test('hangup feedback stays pending until the real call-ended event arrives', ()
   assert.match(phoneView, /已发送挂断请求/)
   assert.match(callBar, /phoneCallStatusLabel\(call, callEnding\)/)
   assert.match(callBar, /正在挂断电话/)
+})
+
+test('call history exposes recording failures and releases obsolete blob URLs', () => {
+  assert.match(callHistory, /phoneErrorMessage\(error, '录音加载失败'\)/)
+  assert.match(callHistory, /recordingErrors\[record\.id\]/)
+  assert.match(callHistory, /URL\.revokeObjectURL\(url\)/)
+  assert.match(callHistory, /current\?\.recording_name !== name/)
+  assert.match(callHistory, /watch\(\(\) => props\.records, syncRecordingState/)
+  assert.match(callHistory, /<audio[\s\S]*controls[\s\S]*preload="none"/)
 })
 
 test('phone device picker uses the themed select without changing availability rules', () => {

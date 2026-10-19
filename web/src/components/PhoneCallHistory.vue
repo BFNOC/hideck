@@ -12,7 +12,7 @@ import type { PhoneRecord } from '../services/phone'
 import { usePhoneStore } from '../stores/phone'
 import { usePhoneIdentity } from '../composables/usePhoneIdentity'
 import { phoneContactsService } from '../services/phone-contacts'
-import { formatCallTime, formatRecordDuration, phoneRecordStatusLabel } from '../utils/phone'
+import { formatCallTime, formatRecordDuration, phoneErrorMessage, phoneRecordStatusLabel } from '../utils/phone'
 
 const props = defineProps<{ records: PhoneRecord[] }>()
 const identities = usePhoneIdentity()
@@ -55,10 +55,17 @@ async function saveContact(record: PhoneRecord) {
 // Authorization 头，所以 src 仍是 blob：滚动到可见时才异步换取，避免一次拉上百
 // 条录音。
 const recordingSources = ref<Record<number, string>>({})
-const loadingRecordings = new Set<number>()
+const recordingErrors = ref<Record<number, string>>({})
+const loadingRecordings = new Map<number, string>()
+const recordingNames = new Map<number, string>()
+const recordingErrorNames = new Map<number, string>()
 const audioElements = new Map<number, HTMLAudioElement>()
 const redialing = ref(false)
 let observer: IntersectionObserver | null = null
+
+function withoutRecord<T>(values: Record<number, T>, id: number): Record<number, T> {
+  return Object.fromEntries(Object.entries(values).filter(([key]) => Number(key) !== id)) as Record<number, T>
+}
 
 function statusIcon(record: PhoneRecord) {
   if (record.status === 'missed' || record.status === 'rejected' || record.status === 'busy' || record.status === 'failed') {
@@ -80,22 +87,64 @@ function redial(record: PhoneRecord) {
 }
 
 async function ensureRecording(record: PhoneRecord) {
-  if (!record.recording_name) return
-  if (recordingSources.value[record.id] || loadingRecordings.has(record.id)) return
-  loadingRecordings.add(record.id)
+  const name = String(record.recording_name || '').trim()
+  if (!name) return
+  if (recordingSources.value[record.id] && recordingNames.get(record.id) === name) return
+  if (loadingRecordings.get(record.id) === name) return
+  loadingRecordings.set(record.id, name)
+  recordingErrors.value = withoutRecord(recordingErrors.value, record.id)
+  recordingErrorNames.delete(record.id)
   try {
-    const url = await phone.recordingURL(record.recording_name)
+    const url = await phone.recordingURL(name)
+    const current = props.records.find((item) => item.id === record.id)
+    if (loadingRecordings.get(record.id) !== name || current?.recording_name !== name) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    releaseRecording(record.id)
+    recordingNames.set(record.id, name)
     recordingSources.value = { ...recordingSources.value, [record.id]: url }
-  } catch {
-    // 交给原生控件显示加载失败，不额外弹窗打断列表浏览
+  } catch (error) {
+    if (loadingRecordings.get(record.id) === name) {
+      recordingErrors.value = {
+        ...recordingErrors.value,
+        [record.id]: phoneErrorMessage(error, '录音加载失败')
+      }
+      recordingErrorNames.set(record.id, name)
+    }
   } finally {
-    loadingRecordings.delete(record.id)
+    if (loadingRecordings.get(record.id) === name) loadingRecordings.delete(record.id)
   }
+}
+
+function releaseRecording(id: number) {
+  const url = recordingSources.value[id]
+  if (url) URL.revokeObjectURL(url)
+  recordingSources.value = withoutRecord(recordingSources.value, id)
+  recordingNames.delete(id)
+}
+
+function syncRecordingState() {
+  const current = new Map(props.records.map((record) => [record.id, String(record.recording_name || '').trim()]))
+  for (const [id, name] of recordingNames) {
+    if (current.get(id) !== name) releaseRecording(id)
+  }
+  const errors = Object.fromEntries(Object.entries(recordingErrors.value).filter(([value]) => {
+    const id = Number(value)
+    return current.get(id) === recordingErrorNames.get(id)
+  }))
+  recordingErrors.value = errors
+  for (const id of recordingErrorNames.keys()) {
+    if (current.get(id) !== recordingErrorNames.get(id)) recordingErrorNames.delete(id)
+  }
+  observeRecordings()
 }
 
 function registerAudio(record: PhoneRecord, element: unknown) {
   const audio = element as HTMLAudioElement | null
   if (!audio) {
+    const previous = audioElements.get(record.id)
+    if (previous) observer?.unobserve(previous)
     audioElements.delete(record.id)
     return
   }
@@ -126,13 +175,17 @@ onMounted(() => {
   observeRecordings()
 })
 
-watch(() => props.records, observeRecordings)
+watch(() => props.records, syncRecordingState, { flush: 'post' })
 
 onUnmounted(() => {
   observer?.disconnect()
   observer = null
   for (const url of Object.values(recordingSources.value)) URL.revokeObjectURL(url)
   recordingSources.value = {}
+  recordingErrors.value = {}
+  recordingNames.clear()
+  recordingErrorNames.clear()
+  loadingRecordings.clear()
   audioElements.clear()
 })
 </script>
@@ -163,6 +216,7 @@ onUnmounted(() => {
           </div>
           <p v-if="identities.subtitleFor(record.peer, record.device_id)" class="history-attribution">{{ identities.subtitleFor(record.peer, record.device_id) }}</p>
           <p v-if="record.recording_error" class="recording-error">录音失败：{{ record.recording_error }}</p>
+          <p v-else-if="recordingErrors[record.id]" class="recording-error">{{ recordingErrors[record.id] }}</p>
           <audio
             v-if="record.recording_name"
             :ref="(el) => registerAudio(record, el)"
