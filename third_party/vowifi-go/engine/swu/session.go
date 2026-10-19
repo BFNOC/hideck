@@ -303,43 +303,44 @@ type Session struct {
 	ikeSAInitResponse         []byte
 
 	// --- data plane ---
-	innerEndpointMu   sync.RWMutex
-	innerEndpoint     *userspaceInnerPacketEndpoint
-	dataPlaneHandleMu sync.RWMutex
-	tun               TUN
-	net               NetTools
-	networkTxn        *driver.NetTxn
-	legacyNetwork     *legacyNetTxn
-	kernelDataPlane   kernelDataPlane
-	xfrmManagerNew    func() xfrmManager
-	espOutboundSA     *ipsec.SecurityAssociation
-	espInboundSA      *ipsec.SecurityAssociation
-	espInboundSAs     map[uint32]*ipsec.SecurityAssociation
-	ChildSAIn         *ipsec.SecurityAssociation
-	ChildSAOut        *ipsec.SecurityAssociation
-	ChildSAsIn        map[uint32]*ipsec.SecurityAssociation
-	retiredChildSAs   map[uint32]uint32
-	espLocalSPI       uint32
-	espRemoteSPI      uint32
-	childNi           []byte
-	childNr           []byte
-	childDH           *crypto.DiffieHellman
-	childDHSecret     []byte
-	childTSi          *ikev2.EncryptedPayloadTS
-	childTSr          *ikev2.EncryptedPayloadTS
-	espCipher         uint16
-	espInteg          uint16
-	espESN            bool
-	espKey            []byte
-	espIntegKey       []byte
-	innerIP           net.IP // inner IP assigned by the ePDG (CP payload)
-	innerIPv6         net.IP
-	innerPrefix       int
-	innerIPv6Prefix   int
-	dnsServers        []net.IP
-	pcscfServers      []net.IP
-	remoteIP          net.IP // ePDG outer address
-	remotePort        int
+	innerEndpointMu         sync.RWMutex
+	innerEndpoint           *userspaceInnerPacketEndpoint
+	dataPlaneHandleMu       sync.RWMutex
+	tun                     TUN
+	net                     NetTools
+	networkTxn              *driver.NetTxn
+	legacyNetwork           *legacyNetTxn
+	kernelDataPlane         kernelDataPlane
+	xfrmManagerNew          func() xfrmManager
+	espOutboundSA           *ipsec.SecurityAssociation
+	espInboundSA            *ipsec.SecurityAssociation
+	espInboundSAs           map[uint32]*ipsec.SecurityAssociation
+	ChildSAIn               *ipsec.SecurityAssociation
+	ChildSAOut              *ipsec.SecurityAssociation
+	ChildSAsIn              map[uint32]*ipsec.SecurityAssociation
+	retiredChildSAs         map[uint32]uint32
+	espLocalSPI             uint32
+	espRemoteSPI            uint32
+	childNi                 []byte
+	childNr                 []byte
+	childDH                 *crypto.DiffieHellman
+	childDHSecret           []byte
+	lastCreateChildSAAnswer *createChildSAAnswer
+	childTSi                *ikev2.EncryptedPayloadTS
+	childTSr                *ikev2.EncryptedPayloadTS
+	espCipher               uint16
+	espInteg                uint16
+	espESN                  bool
+	espKey                  []byte
+	espIntegKey             []byte
+	innerIP                 net.IP // inner IP assigned by the ePDG (CP payload)
+	innerIPv6               net.IP
+	innerPrefix             int
+	innerIPv6Prefix         int
+	dnsServers              []net.IP
+	pcscfServers            []net.IP
+	remoteIP                net.IP // ePDG outer address
+	remotePort              int
 
 	// --- lifecycle ---
 	ctx             context.Context

@@ -643,3 +643,157 @@ func respondToOldIKESADelete(t *testing.T, session *Session, transport *testIKET
 	encoded, _ := session.encryptAndWrap(deleteResponse)
 	transport.ike <- encoded
 }
+
+func peerChildRekeyRequest(t *testing.T, session *Session, proposals []*ikev2.Proposal) *ikev2.IKEPacket {
+	t.Helper()
+	currentTSi, currentTSr := session.currentChildSelectors()
+	raw, err := session.encryptAndWrap(&ikev2.IKEPacket{
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
+		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA, MessageID: 11,
+		Payloads: []ikev2.Payload{
+			&ikev2.EncryptedPayloadNotify{
+				ProtocolID: ikev2.ProtoESP, SPISize: 4,
+				NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(session.espRemoteSPI),
+			},
+			&ikev2.EncryptedPayloadSA{Proposals: proposals},
+			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x83}, 32)},
+			retypeTrafficSelectorPayload(currentTSr, ikev2.PayloadTSi),
+			retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr),
+		},
+	})
+	if err != nil {
+		t.Fatalf("encrypt peer rekey: %v", err)
+	}
+	decoded, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatalf("decode peer rekey: %v", err)
+	}
+	return decoded
+}
+
+func sentPeerResponsePayloads(t *testing.T, session *Session, transport *testIKETransport) []ikev2.Payload {
+	t.Helper()
+	packet, err := ikev2.DecodePacket(receiveFragmentPacket(t, transport.sentIKE))
+	if err != nil {
+		t.Fatalf("decode peer rekey response: %v", err)
+	}
+	payloads, err := session.decryptAndParse(packet)
+	if err != nil {
+		t.Fatalf("decrypt peer rekey response: %v", err)
+	}
+	return payloads
+}
+
+func unsupportedESPProposal(number uint8, spi uint32) *ikev2.Proposal {
+	proposal := ikev2.NewProposal(number, ikev2.ProtoESP, spiBytes(spi))
+	proposal.AddTransform(ikev2.TransformTypeEncr, 3, 0) // 3DES
+	proposal.AddTransform(ikev2.TransformTypeInteg, 1, 0)
+	proposal.AddTransform(ikev2.TransformTypeESN, 0, 0)
+	return proposal
+}
+
+// RFC 7296 2.7: the responder picks one suite from a multi-proposal offer and
+// echoes the chosen proposal number (3.3.1).
+func TestPeerChildSARekeySelectsMatchingProposalFromMultipleOffers(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	const peerSPI = uint32(0xb1c2d3e4)
+	current := buildESPProposalsForSession(session, peerSPI)[0]
+	current.ProposalNum = 2
+	current.AddTransform(ikev2.TransformTypeEncr, 3, 0) // extra ENCR alternative
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, peerSPI), current})
+	if err := session.handlePeerChildSARekey(request); err != nil {
+		t.Fatalf("handlePeerChildSARekey: %v", err)
+	}
+	if session.espRemoteSPI != peerSPI {
+		t.Fatalf("peer SPI = %08x", session.espRemoteSPI)
+	}
+	for _, payload := range sentPeerResponsePayloads(t, session, transport) {
+		if sa, ok := payload.(*ikev2.EncryptedPayloadSA); ok {
+			if len(sa.Proposals) != 1 || sa.Proposals[0].ProposalNum != 2 {
+				t.Fatalf("response SA = %#v, want single proposal #2", sa.Proposals)
+			}
+			return
+		}
+	}
+	t.Fatal("peer rekey response carried no SA")
+}
+
+func TestPeerChildSARekeyWithNoAcceptableProposalKeepsSA(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	oldRemoteSPI := session.espRemoteSPI
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, 0xb1c2d3e4)})
+	if err := session.handlePeerChildSARekey(request); err != nil {
+		t.Fatalf("unacceptable peer rekey ended the SA: %v", err)
+	}
+	if session.espRemoteSPI != oldRemoteSPI {
+		t.Fatal("unacceptable peer rekey replaced the CHILD_SA")
+	}
+	payloads := sentPeerResponsePayloads(t, session, transport)
+	notify, ok := payloads[0].(*ikev2.EncryptedPayloadNotify)
+	if len(payloads) != 1 || !ok || notify.NotifyType != ikev2.NO_PROPOSAL_CHOSEN {
+		t.Fatalf("response = %#v, want NO_PROPOSAL_CHOSEN", payloads)
+	}
+}
+
+func TestPeerRekeyOfUnknownChildSAAnswersChildSANotFound(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	oldRemoteSPI := session.espRemoteSPI
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, 0xb1c2d3e4)})
+	payloads, err := session.decryptAndParse(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range payloads {
+		if notify, ok := payload.(*ikev2.EncryptedPayloadNotify); ok && notify.NotifyType == ikev2.NotifyTypeRekeySA {
+			notify.SPI = spiBytes(oldRemoteSPI + 1)
+		}
+	}
+	if err := session.handlePeerChildSARekeyPayloads(request, payloads); err != nil {
+		t.Fatalf("rekey of unknown CHILD_SA ended the session: %v", err)
+	}
+	if session.espRemoteSPI != oldRemoteSPI {
+		t.Fatal("rekey of unknown CHILD_SA replaced the CHILD_SA")
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	notify, ok := response[0].(*ikev2.EncryptedPayloadNotify)
+	if len(response) != 1 || !ok || notify.NotifyType != ikev2.CHILD_SA_NOT_FOUND {
+		t.Fatalf("response = %#v, want CHILD_SA_NOT_FOUND", response)
+	}
+	// RFC 7296 2.25: the notify names the SA from the REKEY_SA notification.
+	if notify.ProtocolID != ikev2.ProtoESP || !bytes.Equal(notify.SPI, spiBytes(oldRemoteSPI+1)) {
+		t.Fatalf("CHILD_SA_NOT_FOUND protocol %d spi %x, want ESP %x", notify.ProtocolID, notify.SPI, spiBytes(oldRemoteSPI+1))
+	}
+}
+
+func TestPeerRekeyKEGroupMismatchAnswersInvalidKEPayload(t *testing.T) {
+	session, transport := newEstablishedControlSession(t)
+	defer stopControlTestSession(session)
+	session.controlMu.Lock()
+	session.controlRunning = false
+	session.controlMu.Unlock()
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{unsupportedESPProposal(1, 0xb1c2d3e4)})
+	payloads := []ikev2.Payload{&ikev2.EncryptedPayloadKE{DHGroup: 19, KEData: make([]byte, 64)}}
+	if _, ok, err := session.checkPeerRekeyKE(request, payloads, 14); ok || err != nil {
+		t.Fatalf("checkPeerRekeyKE ok=%v err=%v, want an INVALID_KE_PAYLOAD answer", ok, err)
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	notify, ok := response[0].(*ikev2.EncryptedPayloadNotify)
+	if len(response) != 1 || !ok || notify.NotifyType != ikev2.INVALID_KE_PAYLOAD || !bytes.Equal(notify.NotifyData, []byte{0, 14}) {
+		t.Fatalf("response = %#v, want INVALID_KE_PAYLOAD naming group 14", response)
+	}
+	if kept, ok, err := session.checkPeerRekeyKE(request, payloads, 0); !ok || err != nil || len(kept) != 0 {
+		t.Fatalf("no-PFS KE handling kept=%v ok=%v err=%v", kept, ok, err)
+	}
+}
