@@ -4,11 +4,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
-	"github.com/iniwex5/vowifi-go/engine/logger"
 	"go.uber.org/zap"
 )
 
@@ -24,29 +24,26 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	if handled, err := s.answerRetransmittedCreateChildSA(packetIKEHeader(packet)); handled {
 		return err
 	}
-	if notify, err := s.validatePeerRekeyNotify(payloads); err != nil {
+	// After validation: a REKEY_SA naming the answered SA adopts it first.
+	notify, refused := s.validatePeerRekeyNotify(payloads)
+	s.logUnusedPeerRekey("peer sent another CREATE_CHILD_SA")
+	if refused != nil {
 		// RFC 7296 2.25.1 and 1.3: refuse with a notify and keep the session.
 		s.Logger.Warn("peer CHILD_SA request not accepted; answered with notify",
-			zap.Uint16("notify", notify.NotifyType), zap.Error(err), zap.String("offer", createChildSAOffer(payloads)))
+			zap.Uint16("notify", notify.NotifyType), zap.Error(refused), zap.String("offer", createChildSAOffer(payloads)))
 		return s.sendEstablishedIKEResponse(packet, []ikev2.Payload{notify})
 	}
-	esn := ikev2.AlgorithmType(0)
-	if s.espESN {
-		esn = 1
-	}
-	want := map[ikev2.TransformType]ikev2.AlgorithmType{
-		ikev2.TransformTypeEncr: ikev2.AlgorithmType(s.espCipher),
-		ikev2.TransformTypeDH:   ikev2.AlgorithmType(s.currentChildDHGroup()),
-		ikev2.TransformTypeESN:  esn,
-	}
-	if s.espInteg != 0 {
-		want[ikev2.TransformTypeInteg] = ikev2.AlgorithmType(s.espInteg)
-	}
-	payloads, proposalNum, ok := narrowPeerRekeyOffer(payloads, ikev2.ProtoESP, want, s.espEncKeyBits)
+	offer := payloads
+	group := s.currentChildDHGroup()
+	narrowed, proposalNum, ok := narrowPeerRekeyOffer(payloads, ikev2.ProtoESP, s.peerRekeyWant(group), s.espEncKeyBits)
+	// RFC 7296 2.8: a rekeyed CHILD_SA keeps the current algorithms, so only a
+	// proposal for the current suite is accepted. A rekey that adds PFS to a
+	// CHILD_SA without it is refused and the current SA stays.
 	if !ok {
-		return s.rejectPeerRekeyOffer(packet, payloads, errors.New("no proposal matches the current CHILD_SA suite"))
+		reason := fmt.Sprintf("no proposal matches the current CHILD_SA suite %s", s.childSuiteDescription())
+		return s.rejectPeerRekeyOffer(packet, offer, errors.New(reason))
 	}
-	payloads, ok, err := s.checkPeerRekeyKE(packet, payloads, s.currentChildDHGroup())
+	payloads, ok, err := s.checkPeerRekeyKE(packet, narrowed, group)
 	if !ok || err != nil {
 		return err
 	}
@@ -55,17 +52,43 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	peerTSr := retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr)
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
-		dhGroup: s.currentChildDHGroup(), esn: s.espESN, tsi: peerTSi, tsr: peerTSr,
+		dhGroup: group, esn: s.espESN, tsi: peerTSi, tsr: peerTSr,
 		requireSA: true, requireNonce: true,
 	})
 	if err != nil {
-		return s.rejectPeerRekeyOffer(packet, payloads, err)
+		return s.rejectPeerRekeyOffer(packet, offer, err)
 	}
 	if !selectorsContainAnyIP(selection.tsr, configuredInnerIPs(s)) {
-		return s.rejectPeerRekeyOffer(packet, payloads,
+		return s.rejectPeerRekeyOffer(packet, offer,
 			errors.New("peer CHILD_SA TSr does not contain an assigned inner address"))
 	}
-	return s.answerPeerChildSARekey(packet, payloads, selection, proposalNum)
+	return s.answerPeerChildSARekey(packet, offer, payloads, selection, proposalNum)
+}
+
+func (s *Session) peerRekeyWant(group uint16) map[ikev2.TransformType]ikev2.AlgorithmType {
+	esn := ikev2.AlgorithmType(0)
+	if s.espESN {
+		esn = 1
+	}
+	want := map[ikev2.TransformType]ikev2.AlgorithmType{
+		ikev2.TransformTypeEncr: ikev2.AlgorithmType(s.espCipher),
+		ikev2.TransformTypeDH:   ikev2.AlgorithmType(group),
+		ikev2.TransformTypeESN:  esn,
+	}
+	if s.espInteg != 0 {
+		want[ikev2.TransformTypeInteg] = ikev2.AlgorithmType(s.espInteg)
+	}
+	return want
+}
+
+// childSuiteDescription uses the createChildSAOffer notation (type=id/bits).
+func (s *Session) childSuiteDescription() string {
+	esn := 0
+	if s.espESN {
+		esn = 1
+	}
+	return fmt.Sprintf("1=%d/%d,3=%d,4=%d,5=%d",
+		s.espCipher, s.espEncKeyBits, s.espInteg, s.currentChildDHGroup(), esn)
 }
 
 // narrowPeerRekeyOffer implements the responder side of RFC 7296 2.7: from a
@@ -201,7 +224,7 @@ func (s *Session) checkPeerRekeyKE(
 		break
 	}
 	s.Logger.Warn("peer rekey KE does not use the selected D-H group; answered INVALID_KE_PAYLOAD",
-		zap.Uint16("selected", group), zap.Uint16("ke", got))
+		zap.Uint16("selected", group), zap.Uint16("ke", got), zap.String("ke_payloads", describeKEPayloads(payloads)))
 	return payloads, false, s.sendEstablishedIKEResponse(packet, []ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.INVALID_KE_PAYLOAD, NotifyData: []byte{byte(group >> 8), byte(group)}},
 	})
@@ -209,6 +232,7 @@ func (s *Session) checkPeerRekeyKE(
 
 func (s *Session) answerPeerChildSARekey(
 	packet *ikev2.IKEPacket,
+	offer []ikev2.Payload,
 	payloads []ikev2.Payload,
 	selection *childSASelection,
 	proposalNum uint8,
@@ -219,7 +243,9 @@ func (s *Session) answerPeerChildSARekey(
 	}
 	dh, sharedSecret, err := preparePeerChildRekeyDH(payloads, selection.dhGroup)
 	if err != nil {
-		return err
+		// A bad KE is the peer's problem: refuse it and keep the SA.
+		return s.rejectPeerRekeyOffer(packet, offer,
+			fmt.Errorf("peer CHILD_SA KE unusable (%s): %w", describeKEPayloads(payloads), err))
 	}
 	runtime, err := s.prepareChildSARuntime(childSARuntimeSpec{
 		localSPI: localSPI, remoteSPI: selection.remoteSPI,
@@ -251,19 +277,35 @@ func (s *Session) answerPeerChildSARekey(
 		})
 	}
 	response = append(response, cloneTrafficSelectorPayload(selection.tsi), cloneTrafficSelectorPayload(selection.tsr))
+	s.childSAMu.RLock()
+	oldLocalSPI, oldRemoteSPI := s.espLocalSPI, s.espRemoteSPI
+	s.childSAMu.RUnlock()
+	trigger := "immediate"
+	if s.defersPeerChildRekeySwitch() {
+		if s.currentKernelDataPlane() == nil {
+			return s.answerPeerChildSARekeyDeferred(packet, response, &pendingPeerChildRekey{
+				runtime: runtime, oldLocalSPI: oldLocalSPI, oldRemoteSPI: oldRemoteSPI,
+				msgID: packetIKEHeader(packet).MessageID, dhGroup: selection.dhGroup,
+				response: createChildSAOffer(response),
+			})
+		}
+		// ponytail: XFRM Rekey switches both directions at once, so the kernel
+		// plane still sends on the new SA right away. Split Rekey into an
+		// inbound install and an outbound switch to defer it there too.
+		trigger = "kernel data plane"
+	}
 	if err := s.sendEstablishedIKEResponse(packet, response); err != nil {
 		wipeChildSARuntime(runtime)
 		return err
 	}
-	s.childSAMu.RLock()
-	oldLocalSPI, oldRemoteSPI := s.espLocalSPI, s.espRemoteSPI
-	s.childSAMu.RUnlock()
 	if err := s.activateChildSARuntime(runtime); err != nil {
 		return err
 	}
-	logger.Info("peer CHILD_SA rekey installed",
+	s.Logger.Info("peer CHILD_SA rekey installed",
 		zap.Uint32("old_local_spi", oldLocalSPI), zap.Uint32("old_remote_spi", oldRemoteSPI),
-		zap.Uint32("new_local_spi", runtime.localSPI), zap.Uint32("new_remote_spi", runtime.remoteSPI))
+		zap.Uint32("new_local_spi", runtime.localSPI), zap.Uint32("new_remote_spi", runtime.remoteSPI),
+		zap.Uint16("dh_group", selection.dhGroup), zap.String("trigger", trigger),
+		zap.String("response", createChildSAOffer(response)))
 	s.markChildRekeyComplete()
 	s.recordRetiredChildSA(oldRemoteSPI, oldLocalSPI)
 	return nil
@@ -291,6 +333,26 @@ func preparePeerChildRekeyDH(
 	return dh, secret, nil
 }
 
+// describeKEPayloads lists every KE as group/length, or "none".
+func describeKEPayloads(payloads []ikev2.Payload) string {
+	parts := []string{}
+	for _, payload := range payloads {
+		if payload == nil || payload.Type() != ikev2.PayloadKE {
+			continue
+		}
+		group, data, err := parseKEPayload(payload)
+		if err != nil {
+			parts = append(parts, "invalid: "+err.Error())
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d/%d", group, len(data)))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ",")
+}
+
 func retypeTrafficSelectorPayload(payload *ikev2.EncryptedPayloadTS, payloadType ikev2.PayloadType) *ikev2.EncryptedPayloadTS {
 	cloned := cloneTrafficSelectorPayload(payload)
 	if cloned != nil {
@@ -313,6 +375,14 @@ func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) (*ikev2.Encr
 		}
 		got := binary.BigEndian.Uint32(notify.SPI)
 		if got == expectedSPI {
+			return nil, nil
+		}
+		if pending := s.currentPendingPeerRekey(); pending != nil && got == pending.runtime.remoteSPI {
+			// Rekeying the SA we answered shows the peer installed it (RFC 7296 2.8).
+			s.adoptPendingPeerRekey("peer rekeyed the answered SA", pending.runtime.localSPI)
+		}
+		// Read again: the data path may have adopted the answered SA meanwhile.
+		if s.currentChildRemoteSPI() == got {
 			return nil, nil
 		}
 		if s.retiredChildRemoteSPI(got) {
@@ -378,6 +448,12 @@ func (s *Session) answerRetransmittedCreateChildSA(header *ikev2.IKEHeader) (boo
 	return false, nil
 }
 
+func (s *Session) currentChildRemoteSPI() uint32 {
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
+	return s.espRemoteSPI
+}
+
 func (s *Session) retiredChildRemoteSPI(spi uint32) bool {
 	s.childSAMu.RLock()
 	defer s.childSAMu.RUnlock()
@@ -426,6 +502,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 		if deletion.ProtocolID != ikev2.ProtoESP {
 			continue
 		}
+		responseSPIs = append(responseSPIs, s.resolvePendingPeerRekeyDelete(deletion.SPIs)...)
 		activeChildDelete = activeChildDelete || s.deleteContainsCurrentChildSA(deletion.SPIs)
 		responseSPIs = append(responseSPIs, s.retireDeletedChildSAs(deletion.SPIs)...)
 	}
@@ -441,6 +518,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 	}
 	s.handleRuntimeRedirect(redirectAddress)
 	if ikeDelete {
+		s.logUnusedPeerRekey("peer deleted the IKE_SA")
 		if retiredIKE {
 			return s.completeRetiredIKESADelete(context, packet, retiredResponse)
 		}

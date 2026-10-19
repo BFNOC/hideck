@@ -104,6 +104,7 @@ type Config struct {
 	DeviceIdentityIMEI        string
 	WithholdDeviceIdentity    bool // keep DEVICE_IDENTITY out of the first IKE_AUTH
 	KeepChildSAOnRekeyDecline bool // keep the CHILD_SA when its rekey gets NO_ADDITIONAL_SAS
+	DeferPeerChildRekeySwitch bool // after answering a peer CHILD_SA rekey, send on the old SA until the peer uses the new one
 	IKEIdentityMode           string
 	AKAChallengeMode          string
 	AKAIdentityMode           string
@@ -325,6 +326,8 @@ type Session struct {
 	childNr                 []byte
 	childDH                 *crypto.DiffieHellman
 	childDHSecret           []byte
+	pendingPeerRekey        *pendingPeerChildRekey
+	pendingRekeySPI         atomic.Uint32 // inbound SPI of pendingPeerRekey for the data path
 	lastCreateChildSAAnswer *createChildSAAnswer
 	childTSi                *ikev2.EncryptedPayloadTS
 	childTSr                *ikev2.EncryptedPayloadTS

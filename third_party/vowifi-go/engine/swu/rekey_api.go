@@ -28,7 +28,7 @@ func (s *Session) RekeyIKESA() error {
 func (s *Session) RekeyChildSA() error {
 	s.rekeyMu.Lock()
 	defer s.rekeyMu.Unlock()
-	if s.childRekeyInCooldown() {
+	if s.childRekeyInCooldown() || s.deferLocalRekeyForPeerAnswer() {
 		return nil
 	}
 	err := s.performChildSARekey(s.ctx)
