@@ -31,3 +31,17 @@ func TestIsALSAXrunUnwrapsPathError(t *testing.T) {
 		}
 	}
 }
+
+func TestPCMStatisticsAreScopedToOnePCM(t *testing.T) {
+	first := &alsaPCM{}
+	second := &alsaPCM{}
+	first.xrun.Add(2)
+	first.recovered.Add(1)
+
+	if got := first.pcmDiagnostics(); got != (pcmDiagnostics{XRUN: 2, Recovered: 1}) {
+		t.Fatalf("first diagnostics = %+v", got)
+	}
+	if got := second.pcmDiagnostics(); got != (pcmDiagnostics{}) {
+		t.Fatalf("second diagnostics leaked another call: %+v", got)
+	}
+}

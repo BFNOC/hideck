@@ -28,6 +28,24 @@ type PCMPort interface {
 	Close() error
 }
 
+type pcmDiagnostics struct {
+	XRUN        uint64
+	Recovered   uint64
+	Unrecovered uint64
+}
+
+type pcmDiagnosticsProvider interface {
+	pcmDiagnostics() pcmDiagnostics
+}
+
+func diagnosticsForPCM(pcm PCMPort) pcmDiagnostics {
+	provider, ok := pcm.(pcmDiagnosticsProvider)
+	if !ok {
+		return pcmDiagnostics{}
+	}
+	return provider.pcmDiagnostics()
+}
+
 type PCMBridge struct {
 	conn       net.PacketConn
 	remoteMu   sync.Mutex
@@ -89,13 +107,14 @@ func (b *PCMBridge) Close() error {
 			_ = b.pcm.Close()
 		}
 		b.workers.Wait()
+		diagnostics := diagnosticsForPCM(b.pcm)
 		// 挂断即打模组侧统计：toPCM/overflow 才是"音频是否真的进了模组"的
 		// 证据，phone 包的 to_modem 只是回环 UDP 写成功计数，不等于送达模组。
 		logger.Info("VoLTE 模组音频统计",
 			"to_modem", b.toPCM.Load(), "from_modem", b.fromPCM.Load(),
 			"silent", b.silent.Load(), "lost", b.lost.Load(), "overflow", b.overflow.Load(),
-			"alsa_xrun", alsaPlayXRUN.Load(), "alsa_recovered", alsaPlayRecovered.Load(),
-			"alsa_unrecovered", alsaPlayUnrecovered.Load())
+			"alsa_xrun", diagnostics.XRUN, "alsa_recovered", diagnostics.Recovered,
+			"alsa_unrecovered", diagnostics.Unrecovered)
 	})
 	return err
 }
@@ -140,10 +159,11 @@ func (b *PCMBridge) downlink() {
 			if !overflowLogged || time.Since(lastOverflowLog) >= 5*time.Second {
 				overflowLogged = true
 				lastOverflowLog = time.Now()
+				diagnostics := diagnosticsForPCM(b.pcm)
 				logger.Warn("VoLTE 上行音频写入模组失败",
 					"to_modem", b.toPCM.Load(), "overflow", b.overflow.Load(),
-					"alsa_xrun", alsaPlayXRUN.Load(), "alsa_recovered", alsaPlayRecovered.Load(),
-					"alsa_unrecovered", alsaPlayUnrecovered.Load(), "err", err)
+					"alsa_xrun", diagnostics.XRUN, "alsa_recovered", diagnostics.Recovered,
+					"alsa_unrecovered", diagnostics.Unrecovered, "err", err)
 			}
 			continue
 		}

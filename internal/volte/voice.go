@@ -310,6 +310,9 @@ func (c *Controller) AnswerIncomingCall(ctx context.Context, request voicehost.A
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// 模组重启后 QPCMV 路由会丢失；来电与外呼必须在改变
+	// QMI 通话状态前重新连接 USB 语音路由。
+	c.armVoicePCM(request.DeviceID)
 	if err := c.host.VOICEAnswer(ctx, request.DeviceID, call.QMI); err != nil {
 		return voicehost.AnswerResult{}, err
 	}

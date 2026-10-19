@@ -75,6 +75,28 @@ func TestBeginCallRearmsVoicePCM(t *testing.T) {
 	}
 }
 
+func TestAnswerIncomingCallRearmsVoicePCM(t *testing.T) {
+	host := newFakeModem()
+	host.Audio = "hw:3,0"
+	ctl := NewControllerWithBackup(host, t.TempDir())
+	if err := ctl.Enable(context.Background(), "wwan1"); err != nil {
+		t.Fatal(err)
+	}
+	ctl.storeCall("wwan1", nativeCall{
+		ID: "incoming-1", QMI: 7, Direction: "inbound", State: "ringing",
+	})
+	before := countFakeCommands(host, qpcmvCommand)
+
+	if _, err := ctl.AnswerIncomingCall(context.Background(), voicehost.AnswerRequest{
+		DeviceID: "wwan1", CallID: "incoming-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countFakeCommands(host, qpcmvCommand); got != before+1 {
+		t.Fatalf("接听前应补发一次 QPCMV：before=%d after=%d", before, got)
+	}
+}
+
 // TestArmVoicePCMSkipsWithoutModemSoundCard 没有模组声卡时不应盲发 AT，
 // 否则每次拨号都会多一条注定失败的指令。
 func TestArmVoicePCMSkipsWithoutModemSoundCard(t *testing.T) {

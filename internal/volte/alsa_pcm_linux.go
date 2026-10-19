@@ -33,23 +33,18 @@ const (
 // 就是 200ms 级别的缓冲经验值。
 const alsaPlayBufferFrames = 8
 
-// alsaPlayXRUN / alsaPlayRecovered / alsaPlayUnrecovered 供
-// PCMBridge 带进日志，避免"模组侧静音但无人知晓"。
-var (
-	alsaPlayXRUN         atomic.Uint64
-	alsaPlayRecovered    atomic.Uint64
-	alsaPlayUnrecovered  atomic.Uint64
-)
-
 type alsaStream struct {
 	f *os.File
 }
 
 type alsaPCM struct {
-	device string
-	play   alsaStream
-	capt   alsaStream
-	mu     sync.Mutex
+	device      string
+	play        alsaStream
+	capt        alsaStream
+	mu          sync.Mutex
+	xrun        atomic.Uint64
+	recovered   atomic.Uint64
+	unrecovered atomic.Uint64
 }
 
 func openALSAPCM(device string) (PCMPort, error) {
@@ -59,7 +54,9 @@ func openALSAPCM(device string) (PCMPort, error) {
 	}
 	// 先激活再打开正式流：模组冷启动（重启/USB 重新枚举）后 USB 等时端点
 	// 停在 idle，此时直接实时写会从第二帧起全部 -EPIPE，上行全程静默。
-	activatePlaybackEndpoint(device)
+	if err := activatePlaybackEndpoint(device); err != nil {
+		return nil, fmt.Errorf("volte: activate playback endpoint: %w", err)
+	}
 	play, err := openALSAStream(fmt.Sprintf("/dev/snd/pcmC%dD%dp", card, pcmDev), true)
 	if err != nil {
 		return nil, err
@@ -137,11 +134,10 @@ const alsaPlayWarmupAttempts = 2
 // 剩首帧一次）。差别在 aplay 还会设置 sw_params（start_threshold 等）并在
 // 退出时 hw_free —— 这些细节不值得在业务代码里对着内核协议猜，直接复用
 // 模组直拨路线已经在用的那条命令。
-func activatePlaybackEndpoint(device string) {
+func activatePlaybackEndpoint(device string) error {
 	aplay, err := exec.LookPath("aplay")
 	if err != nil {
-		logger.Warn("VoLTE 声卡端点激活跳过：未找到 aplay", "device", device)
-		return
+		return errors.New("未找到 aplay，无法激活 VoLTE 声卡端点")
 	}
 	start := time.Now()
 	var lastErr error
@@ -151,7 +147,7 @@ func activatePlaybackEndpoint(device string) {
 		if err == nil {
 			logger.Info("VoLTE 声卡端点已激活", "device", device,
 				"attempt", attempt, "ms", time.Since(start).Milliseconds())
-			return
+			return nil
 		}
 		lastErr, lastOut = err, out
 		if attempt < alsaPlayWarmupAttempts {
@@ -159,8 +155,7 @@ func activatePlaybackEndpoint(device string) {
 			time.Sleep(150 * time.Millisecond)
 		}
 	}
-	logger.Warn("VoLTE 声卡端点激活失败，本次通话可能没有上行",
-		"device", device, "err", lastErr, "out", lastOut)
+	return fmt.Errorf("端点激活失败: %w (output: %s)", lastErr, lastOut)
 }
 
 func runPlaybackWarmup(aplay, device string) (error, string) {
@@ -214,26 +209,37 @@ func (p *alsaPCM) WriteFrame(samples []int16) error {
 		_, err := play.Write(buf)
 		if err == nil {
 			if attempt > 0 {
-				alsaPlayRecovered.Add(1)
+				p.recovered.Add(1)
 			}
 			return nil
 		}
 		if attempt > 0 || !isALSAXrun(err) {
-			alsaPlayUnrecovered.Add(1)
+			p.unrecovered.Add(1)
 			return err
 		}
-		alsaPlayXRUN.Add(1)
+		p.xrun.Add(1)
 		if ioctl(play, alsaIoctlDrop, nil) != nil || ioctl(play, alsaIoctlPrepare, nil) != nil {
-			alsaPlayUnrecovered.Add(1)
+			p.unrecovered.Add(1)
 			return err
 		}
 		// 补一帧静音，避免恢复瞬间缓冲仍空、下一帧再次欠载。
 		// 注意：这里只算"恢复动作发起成功"，recovered 统一由下面重写
 		// 成功时计数，否则一次恢复会被算成两次。
 		if _, perr := play.Write(make([]byte, pcmuFrameSamples*2)); perr != nil {
-			alsaPlayUnrecovered.Add(1)
+			p.unrecovered.Add(1)
 			return err
 		}
+	}
+}
+
+func (p *alsaPCM) pcmDiagnostics() pcmDiagnostics {
+	if p == nil {
+		return pcmDiagnostics{}
+	}
+	return pcmDiagnostics{
+		XRUN:        p.xrun.Load(),
+		Recovered:   p.recovered.Load(),
+		Unrecovered: p.unrecovered.Load(),
 	}
 }
 
