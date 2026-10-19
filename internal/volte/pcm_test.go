@@ -29,7 +29,7 @@ func (m *memPCM) WriteFrame(frame []int16) error {
 	defer m.mu.Unlock()
 	cp := append([]int16(nil), frame...)
 	m.written = append(m.written, cp)
-	if len(m.written) > pcmJitterDepth {
+	if len(m.written) > pcmJitterMaxFrames {
 		return errorsNew("overflow")
 	}
 	return nil
@@ -45,6 +45,15 @@ func (m *memPCM) writtenCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.written)
+}
+
+func (m *memPCM) lastWritten() []int16 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.written) == 0 {
+		return nil
+	}
+	return append([]int16(nil), m.written[len(m.written)-1]...)
 }
 
 func (m *memPCM) isClosed() bool {
@@ -113,6 +122,25 @@ func TestPCMBridgeCloseReleases(t *testing.T) {
 	}
 	if !pcm.isClosed() {
 		t.Fatal("pcm not closed")
+	}
+}
+
+func TestPCMBridgeConcealsMissingDownlinkWithSilence(t *testing.T) {
+	pcm := &memPCM{}
+	bridge := &PCMBridge{pcm: pcm}
+	bridge.playDownlink(nil, pcmPlayoutGap, &pcmWriteLogState{})
+
+	frame := pcm.lastWritten()
+	if len(frame) != pcmuFrameSamples {
+		t.Fatalf("concealment frame length=%d, want %d", len(frame), pcmuFrameSamples)
+	}
+	for index, sample := range frame {
+		if sample != 0 {
+			t.Fatalf("concealment sample %d=%d, want silence", index, sample)
+		}
+	}
+	if bridge.lost.Load() != 1 || bridge.toPCM.Load() != 0 {
+		t.Fatalf("lost=%d to_pcm=%d, want 1/0", bridge.lost.Load(), bridge.toPCM.Load())
 	}
 }
 

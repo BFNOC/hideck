@@ -1,7 +1,6 @@
 package volte
 
 import (
-	"encoding/binary"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,14 +11,11 @@ import (
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
-var firstPacketOnce atomic.Bool
-
 const (
 	pcmuPayloadType   = 0
 	pcmuClockRate     = 8000
 	pcmuFrameSamples  = 160
 	pcmuFrameDuration = 20 * time.Millisecond
-	pcmJitterDepth    = 5
 )
 
 type PCMPort interface {
@@ -62,6 +58,19 @@ type PCMBridge struct {
 	silent     atomic.Uint64
 	lost       atomic.Uint64
 	overflow   atomic.Uint64
+	jitterMu   sync.Mutex
+	jitter     pcmJitterDiagnostics
+}
+
+type pcmRTPArrival struct {
+	packet   *rtp.Packet
+	remote   net.Addr
+	received time.Time
+}
+
+type pcmWriteLogState struct {
+	overflowLogged bool
+	lastOverflow   time.Time
 }
 
 func NewPCMBridge(conn net.PacketConn, remote net.Addr, pcm PCMPort, listenOnly bool) *PCMBridge {
@@ -108,28 +117,54 @@ func (b *PCMBridge) Close() error {
 		}
 		b.workers.Wait()
 		diagnostics := diagnosticsForPCM(b.pcm)
+		jitter := b.jitterStats()
 		// 挂断即打模组侧统计：toPCM/overflow 才是"音频是否真的进了模组"的
 		// 证据，phone 包的 to_modem 只是回环 UDP 写成功计数，不等于送达模组。
 		logger.Info("VoLTE 模组音频统计",
 			"to_modem", b.toPCM.Load(), "from_modem", b.fromPCM.Load(),
 			"silent", b.silent.Load(), "lost", b.lost.Load(), "overflow", b.overflow.Load(),
 			"alsa_xrun", diagnostics.XRUN, "alsa_recovered", diagnostics.Recovered,
-			"alsa_unrecovered", diagnostics.Unrecovered)
+			"alsa_unrecovered", diagnostics.Unrecovered,
+			"jitter_target_ms", jitter.TargetFrames*uint64(pcmuFrameDuration/time.Millisecond),
+			"jitter_max_depth", jitter.MaxDepth,
+			"jitter_us", jitter.JitterMicros, "jitter_received", jitter.Received,
+			"jitter_late", jitter.Late, "jitter_duplicate", jitter.Duplicate,
+			"jitter_concealed", jitter.Concealed, "jitter_trimmed", jitter.Trimmed,
+			"jitter_rebuffers", jitter.Rebuffers, "jitter_restarts", jitter.Restarts)
 	})
 	return err
 }
 
 func (b *PCMBridge) downlink() {
 	defer b.workers.Done()
-	buf := make([]byte, 2048)
-	var overflowLogged bool
-	var lastOverflowLog time.Time
+	arrivals := make(chan pcmRTPArrival, pcmJitterMaxFrames*2)
+	go b.readDownlink(arrivals)
+	ticker := time.NewTicker(pcmuFrameDuration)
+	defer ticker.Stop()
+	buffer := newAdaptivePCMBuffer()
+	defer func() { b.setJitterStats(buffer.stats()) }()
+	writeState := &pcmWriteLogState{}
 	for {
 		select {
 		case <-b.closed:
 			return
-		default:
+		case arrival, ok := <-arrivals:
+			if !ok {
+				return
+			}
+			b.setRemote(arrival.remote)
+			buffer.push(arrival.packet, arrival.received)
+		case <-ticker.C:
+			packet, kind := buffer.pop()
+			b.playDownlink(packet, kind, writeState)
 		}
+	}
+}
+
+func (b *PCMBridge) readDownlink(destination chan<- pcmRTPArrival) {
+	defer close(destination)
+	buf := make([]byte, 2048)
+	for {
 		if b.conn == nil {
 			return
 		}
@@ -141,34 +176,64 @@ func (b *PCMBridge) downlink() {
 			}
 			return
 		}
-		if addr != nil {
-			b.setRemote(addr)
-		}
-		payload, ok := rtpPCMUPayload(buf[:n])
+		packet, ok := parsePCMURTP(buf[:n])
 		if !ok {
 			b.lost.Add(1)
 			continue
 		}
-		pcm := phone.DecodePCMU(payload)
-		if b.pcm == nil {
-			continue
+		arrival := pcmRTPArrival{packet: packet, remote: addr, received: time.Now()}
+		select {
+		case destination <- arrival:
+		case <-b.closed:
+			return
+		default:
+			b.lost.Add(1)
 		}
-		if err := b.pcm.WriteFrame(pcm); err != nil {
-			b.overflow.Add(1)
-			// 首次失败就报警，之后每 5s 最多一条，附带模组侧真实计数。
-			if !overflowLogged || time.Since(lastOverflowLog) >= 5*time.Second {
-				overflowLogged = true
-				lastOverflowLog = time.Now()
-				diagnostics := diagnosticsForPCM(b.pcm)
-				logger.Warn("VoLTE 上行音频写入模组失败",
-					"to_modem", b.toPCM.Load(), "overflow", b.overflow.Load(),
-					"alsa_xrun", diagnostics.XRUN, "alsa_recovered", diagnostics.Recovered,
-					"alsa_unrecovered", diagnostics.Unrecovered, "err", err)
-			}
-			continue
-		}
+	}
+}
+
+func (b *PCMBridge) playDownlink(packet *rtp.Packet, kind pcmPlayoutKind, state *pcmWriteLogState) {
+	if kind == pcmPlayoutWaiting || b.pcm == nil {
+		return
+	}
+	samples := make([]int16, pcmuFrameSamples)
+	if packet != nil {
+		copy(samples, phone.DecodePCMU(packet.Payload))
+	} else if kind == pcmPlayoutGap {
+		b.lost.Add(1)
+	}
+	if err := b.pcm.WriteFrame(samples); err != nil {
+		b.reportPCMWriteFailure(err, state)
+		return
+	}
+	if kind == pcmPlayoutAudio {
 		b.toPCM.Add(1)
 	}
+}
+
+func (b *PCMBridge) reportPCMWriteFailure(err error, state *pcmWriteLogState) {
+	b.overflow.Add(1)
+	if state.overflowLogged && time.Since(state.lastOverflow) < 5*time.Second {
+		return
+	}
+	state.overflowLogged, state.lastOverflow = true, time.Now()
+	diagnostics := diagnosticsForPCM(b.pcm)
+	logger.Warn("VoLTE 上行音频写入模组失败",
+		"to_modem", b.toPCM.Load(), "overflow", b.overflow.Load(),
+		"alsa_xrun", diagnostics.XRUN, "alsa_recovered", diagnostics.Recovered,
+		"alsa_unrecovered", diagnostics.Unrecovered, "err", err)
+}
+
+func (b *PCMBridge) setJitterStats(stats pcmJitterDiagnostics) {
+	b.jitterMu.Lock()
+	b.jitter = stats
+	b.jitterMu.Unlock()
+}
+
+func (b *PCMBridge) jitterStats() pcmJitterDiagnostics {
+	b.jitterMu.Lock()
+	defer b.jitterMu.Unlock()
+	return b.jitter
 }
 
 func (b *PCMBridge) uplink() {
@@ -205,35 +270,4 @@ func (b *PCMBridge) uplink() {
 			}
 		}
 	}
-}
-
-// rtpPCMUPayload 取出 PCMU 载荷。必须走完整 RTP 解析：Chrome 的音频包带
-// 头扩展（X 位，通常是 ssrc-audio-level / abs-send-time），早期手写版只跳过
-// 12 字节固定头，把 8 字节扩展当成 µ-law 音频送进模组——每 20ms 一簇满幅
-// 毛刺，对方听到的"电流声"就是它；而录音取的是已解析的 payload，所以录音
-// 永远干净，把排查方向一直带偏。padding（P 位）同理必须剥掉。
-func rtpPCMUPayload(pkt []byte) ([]byte, bool) {
-	var packet rtp.Packet
-	if err := packet.Unmarshal(pkt); err != nil {
-		return nil, false
-	}
-	if packet.PayloadType != pcmuPayloadType || len(packet.Payload) == 0 {
-		return nil, false
-	}
-	if firstPacketOnce.CompareAndSwap(false, true) {
-		logger.Info("VoLTE 收到首个 RTP 包", "总长度", len(pkt), "载荷长度", len(packet.Payload),
-			"扩展", len(packet.Extensions) > 0, "填充", packet.Padding)
-	}
-	return packet.Payload, true
-}
-
-func encodePCMURTP(seq uint16, ts uint32, payload []byte) []byte {
-	pkt := make([]byte, 12+len(payload))
-	pkt[0] = 0x80
-	pkt[1] = pcmuPayloadType
-	binary.BigEndian.PutUint16(pkt[2:], seq)
-	binary.BigEndian.PutUint32(pkt[4:], ts)
-	binary.BigEndian.PutUint32(pkt[8:], 0x48444543)
-	copy(pkt[12:], payload)
-	return pkt
 }

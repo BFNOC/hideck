@@ -66,3 +66,17 @@ func TestRTPPCMUPayloadStripsPadding(t *testing.T) {
 		t.Fatalf("payload = %d samples, want %d (padding leaked into audio)", len(got), pcmuFrameSamples)
 	}
 }
+
+func TestParsePCMURTPOwnsPayloadStorage(t *testing.T) {
+	payload := make([]byte, pcmuFrameSamples)
+	payload[0] = 0x7f
+	raw := buildRTP(t, false, false, payload)
+	packet, ok := parsePCMURTP(raw)
+	if !ok {
+		t.Fatal("packet rejected")
+	}
+	raw[12] = 0xff
+	if packet.Payload[0] != 0x7f {
+		t.Fatalf("buffered payload changed with reused input: %#x", packet.Payload[0])
+	}
+}
