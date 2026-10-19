@@ -166,6 +166,25 @@ test('does not resurrect a call ended while an active snapshot was in flight', a
   })
 })
 
+test('does not resurrect an ended call that was never present in this tab', async () => {
+  const pending = deferred<PhoneCall[]>()
+  await withRefreshServices(() => pending.promise, async () => {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    const unseen = call('other-tab', { call_id: 'unseen-call', status: 'ringing', read_only: true })
+    const refresh = store.refresh()
+    store.handleEvent({
+      id: 1,
+      type: 'call_ended',
+      call: { ...unseen, status: 'completed' },
+      time: '2026-08-13T12:01:00Z'
+    })
+    pending.resolve([unseen])
+    await refresh
+    assert.equal(store.calls.length, 0)
+  })
+})
+
 test('toggleHold keeps mute local and only talks to IMS hold APIs', async () => {
   const originalHold = phoneService.hold
   const originalResume = phoneService.resume

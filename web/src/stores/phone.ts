@@ -349,8 +349,9 @@ export const usePhoneStore = defineStore('phone', {
 
     removeCall(callId: string) {
       const calls = this.calls.filter((call) => call.call_id !== callId)
-      if (calls.length === this.calls.length) return
-      this.calls = calls
+      if (calls.length !== this.calls.length) this.calls = calls
+      // An end/removal observation is a state barrier even when this tab never saw
+      // the call. Otherwise an older in-flight active snapshot can resurrect it.
       this.callsRevision += 1
     },
 

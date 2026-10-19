@@ -218,18 +218,27 @@ func (p *alsaPCM) WriteFrame(samples []int16) error {
 			return err
 		}
 		p.xrun.Add(1)
-		if ioctl(play, alsaIoctlDrop, nil) != nil || ioctl(play, alsaIoctlPrepare, nil) != nil {
+		if dropErr := ioctl(play, alsaIoctlDrop, nil); dropErr != nil {
 			p.unrecovered.Add(1)
-			return err
+			return alsaRecoveryError("DROP", dropErr, err)
+		}
+		if prepareErr := ioctl(play, alsaIoctlPrepare, nil); prepareErr != nil {
+			p.unrecovered.Add(1)
+			return alsaRecoveryError("PREPARE", prepareErr, err)
 		}
 		// 补一帧静音，避免恢复瞬间缓冲仍空、下一帧再次欠载。
 		// 注意：这里只算"恢复动作发起成功"，recovered 统一由下面重写
 		// 成功时计数，否则一次恢复会被算成两次。
 		if _, perr := play.Write(make([]byte, pcmuFrameSamples*2)); perr != nil {
 			p.unrecovered.Add(1)
-			return err
+			return alsaRecoveryError("silence write", perr, err)
 		}
 	}
+}
+
+func alsaRecoveryError(operation string, recoveryErr, initialErr error) error {
+	return fmt.Errorf("volte: recover ALSA XRUN during %s: %w (initial write: %v)",
+		operation, recoveryErr, initialErr)
 }
 
 func (p *alsaPCM) pcmDiagnostics() pcmDiagnostics {

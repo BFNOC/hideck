@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -43,5 +44,18 @@ func TestPCMStatisticsAreScopedToOnePCM(t *testing.T) {
 	}
 	if got := second.pcmDiagnostics(); got != (pcmDiagnostics{}) {
 		t.Fatalf("second diagnostics leaked another call: %+v", got)
+	}
+}
+
+func TestALSARecoveryErrorExposesActualFailure(t *testing.T) {
+	initialErr := &os.PathError{Op: "write", Path: "/dev/snd/pcmC3D0p", Err: unix.EPIPE}
+	recoveryErr := unix.ENODEV
+	err := alsaRecoveryError("PREPARE", recoveryErr, initialErr)
+
+	if !errors.Is(err, recoveryErr) {
+		t.Fatalf("recovery error is not exposed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "PREPARE") || !strings.Contains(err.Error(), "broken pipe") {
+		t.Fatalf("recovery error lost operation or initial failure: %v", err)
 	}
 }
