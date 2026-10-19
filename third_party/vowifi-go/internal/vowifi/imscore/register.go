@@ -254,6 +254,14 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 			useProxyRetried = true
 			continue
 		}
+		// A SIP response proves that the oversized request reached the registrar.
+		// Do not bypass an explicit rejection (including 408/502-504) by replaying
+		// the same REGISTER over UDP. UDP is only a fallback for a TCP transport
+		// failure where no SIP response was received.
+		if s.largeRegisterMovedToTCP.Load() && result.statusCode != 0 {
+			s.largeRegisterMovedToTCP.Store(false)
+			return 0, &registerAttemptError{result: result, err: err}
+		}
 		if s.usesExternalRegistrationTransport() || !shouldRetryNextRegisterTransport(result, err) {
 			return 0, &registerAttemptError{result: result, err: err}
 		}

@@ -69,14 +69,12 @@ func TestAutoRegisterOverUDPLimitStaysOnUDPWhenTCPIsRefused(t *testing.T) {
 	}
 }
 
-func TestAutoRegisterOverUDPLimitRetriesUDPWhenTCPFails(t *testing.T) {
+func TestAutoRegisterOverUDPLimitDoesNotRetryUDPAfterSIPFailure(t *testing.T) {
 	tcpRegistrar, udpRegistrar := listenRegisterTransports(t)
 	defer tcpRegistrar.Close()
 	defer udpRegistrar.Close()
 	tcpResult := make(chan error, 1)
 	go serveTCPRegisterStatusCode(tcpRegistrar, 503, nil, tcpResult)
-	seen := make(chan string, 1)
-	go serveRegisterStatus(udpRegistrar, 200, seen)
 
 	svc, err := New(largeRegisterTestConfig(tcpRegistrar.Addr().String()))
 	if err != nil {
@@ -85,12 +83,13 @@ func TestAutoRegisterOverUDPLimitRetriesUDPWhenTCPFails(t *testing.T) {
 	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := svc.Register(ctx); err != nil {
-		t.Fatalf("Register: %v", err)
+	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("Register error = %v, want status 503", err)
 	}
-	if request := <-seen; !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/UDP ") {
-		t.Fatalf("REGISTER did not retry over UDP after TCP failed: %q", sipHeaderValue(request, "Via"))
+	if err := <-tcpResult; err != nil {
+		t.Fatal(err)
 	}
+	assertNoUDPRegister(t, udpRegistrar)
 }
 
 // Fails UDP listens once a TCP dial has happened.
@@ -116,7 +115,7 @@ func TestAutoRegisterOverUDPLimitDoesNotReopenTCPWhenUDPFallbackFails(t *testing
 	defer tcpRegistrar.Close()
 	defer udpRegistrar.Close()
 	tcpResult := make(chan error, 1)
-	go serveTCPRegisterStatusCode(tcpRegistrar, 503, nil, tcpResult)
+	go resetAcceptedTCPRegister(tcpRegistrar, tcpResult)
 
 	cfg := largeRegisterTestConfig(tcpRegistrar.Addr().String())
 	cfg.IMSNetwork = &udpFailsAfterTCPNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
@@ -138,4 +137,14 @@ func TestAutoRegisterOverUDPLimitDoesNotReopenTCPWhenUDPFallbackFails(t *testing
 		conn.Close()
 		t.Fatal("failed TCP transport was reopened")
 	}
+}
+
+func resetAcceptedTCPRegister(listener *net.TCPListener, result chan<- error) {
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	_ = conn.SetLinger(0)
+	result <- conn.Close()
 }
