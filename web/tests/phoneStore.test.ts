@@ -29,6 +29,31 @@ function event(id: number, value: PhoneCall): PhoneEvent {
   return { id, type: 'call_connected', call: value, time: '2026-08-13T12:00:00Z' }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+async function withRefreshServices(
+  active: () => Promise<PhoneCall[]>,
+  run: () => Promise<void>
+) {
+  const originalDevices = phoneService.devices
+  const originalActive = phoneService.active
+  const originalHistory = phoneService.history
+  phoneService.devices = async () => []
+  phoneService.active = active
+  phoneService.history = async () => []
+  try {
+    await run()
+  } finally {
+    phoneService.devices = originalDevices
+    phoneService.active = originalActive
+    phoneService.history = originalHistory
+  }
+}
+
 test('normalizes broadcast ownership against the tab media session', () => {
   assert.equal(normalizeCallOwnership(call('other'), 'ours').read_only, true)
   assert.equal(normalizeCallOwnership(call('ours', { read_only: true }), 'ours').read_only, false)
@@ -96,6 +121,49 @@ test('applies call_ended after the event stream restarts with lower ids', () => 
   assert.equal(store.calls.length, 0)
   assert.equal(store.lastEventId, 1)
   assert.equal(store.isCallEnding('call-1'), false)
+})
+
+test('does not let an in-flight active snapshot overwrite a newer SSE state', async () => {
+  const pending = deferred<PhoneCall[]>()
+  await withRefreshServices(() => pending.promise, async () => {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    store.calls = [call('media-1', { status: 'ringing' })]
+    const refresh = store.refresh()
+    store.handleEvent(event(1, call('media-1', { status: 'connected' })))
+    pending.resolve([call('media-1', { status: 'ringing' })])
+    await refresh
+    assert.equal(store.calls[0]?.status, 'connected')
+  })
+})
+
+test('applies an active snapshot when no local call mutation happened', async () => {
+  await withRefreshServices(async () => [], async () => {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    store.calls = [call('media-1')]
+    await store.refresh()
+    assert.equal(store.calls.length, 0)
+  })
+})
+
+test('does not resurrect a call ended while an active snapshot was in flight', async () => {
+  const pending = deferred<PhoneCall[]>()
+  await withRefreshServices(() => pending.promise, async () => {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    store.calls = [call('media-1', { status: 'connected' })]
+    const refresh = store.refresh()
+    store.handleEvent({
+      id: 1,
+      type: 'call_ended',
+      call: call('media-1', { status: 'completed' }),
+      time: '2026-08-13T12:01:00Z'
+    })
+    pending.resolve([call('media-1', { status: 'connected' })])
+    await refresh
+    assert.equal(store.calls.length, 0)
+  })
 })
 
 test('toggleHold keeps mute local and only talks to IMS hold APIs', async () => {
