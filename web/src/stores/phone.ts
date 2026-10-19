@@ -17,6 +17,8 @@ type PhoneState = {
   loading: boolean
   devices: PhoneDevice[]
   calls: PhoneCall[]
+  callsRevision: number
+  callsSnapshotSequence: number
   endingCallIds: string[]
   history: PhoneRecord[]
   mediaId: string
@@ -41,6 +43,8 @@ export const usePhoneStore = defineStore('phone', {
     loading: false,
     devices: [],
     calls: [],
+    callsRevision: 0,
+    callsSnapshotSequence: 0,
     endingCallIds: [],
     history: [],
     mediaId: '',
@@ -90,7 +94,7 @@ export const usePhoneStore = defineStore('phone', {
           phoneService.history()
         ])
         this.devices = devices
-        this.calls = calls
+        this.applyCallsSnapshot(calls)
         this.history = history
       } catch (error) {
         this.error = phoneErrorMessage(error, '电话服务加载失败')
@@ -116,13 +120,21 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async refresh() {
+      const callsRevision = this.callsRevision
+      const snapshotSequence = ++this.callsSnapshotSequence
       const [devices, calls, history] = await Promise.all([
         phoneService.devices(), phoneService.active(this.lease), phoneService.history()
       ])
       this.devices = devices
-      this.calls = calls
-      this.endingCallIds = this.endingCallIds.filter((callId) => calls.some((call) => call.call_id === callId))
+      if (callsRevision === this.callsRevision && snapshotSequence === this.callsSnapshotSequence) {
+        this.applyCallsSnapshot(calls)
+        this.endingCallIds = this.endingCallIds.filter((callId) => calls.some((call) => call.call_id === callId))
+      }
       this.history = history
+    },
+
+    applyCallsSnapshot(calls: PhoneCall[]) {
+      this.calls = calls.map((call) => normalizeCallOwnership(call, this.mediaId))
     },
 
     async enableMedia() {
@@ -230,7 +242,7 @@ export const usePhoneStore = defineStore('phone', {
       this.endingCallIds = [...this.endingCallIds, target.call_id]
       try {
         await phoneService.hangup(target.call_id, this.lease)
-        this.calls = this.calls.filter((item) => item.call_id !== target.call_id)
+        this.removeCall(target.call_id)
         this.clearEndingCall(target.call_id)
         if (target.media_id === this.mediaId) this.releaseMedia()
         void this.reloadHistory()
@@ -332,13 +344,21 @@ export const usePhoneStore = defineStore('phone', {
       const index = this.calls.findIndex((item) => item.call_id === call.call_id)
       if (index >= 0) this.calls = this.calls.map((item, position) => position === index ? normalized : item)
       else this.calls = [normalized, ...this.calls]
+      this.callsRevision += 1
+    },
+
+    removeCall(callId: string) {
+      const calls = this.calls.filter((call) => call.call_id !== callId)
+      if (calls.length === this.calls.length) return
+      this.calls = calls
+      this.callsRevision += 1
     },
 
     handleEvent(event: PhoneEvent) {
       if (event.id === this.lastEventId) return
       this.lastEventId = event.id
       const ended = event.type === 'call_ended' || !ACTIVE_STATUSES.has(event.call.status)
-      if (ended) this.calls = this.calls.filter((call) => call.call_id !== event.call.call_id)
+      if (ended) this.removeCall(event.call.call_id)
       else this.upsertCall(event.call)
       if (event.type === 'call_ended') {
         this.clearEndingCall(event.call.call_id)
@@ -415,6 +435,7 @@ export const usePhoneStore = defineStore('phone', {
       this.mediaId = ''
       this.lease = ''
       this.calls = this.calls.map((call) => normalizeCallOwnership(call, ''))
+      this.callsRevision += 1
       this.mediaState = 'idle'
       this.mediaMode = 'none'
       this.muted = false
