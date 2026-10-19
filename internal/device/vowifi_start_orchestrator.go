@@ -185,6 +185,10 @@ func (p *Pool) prepareVoWiFiStartContext(ctx context.Context, deviceID, traceID,
 		logger.Info("VoWiFi 使用 QMI 模式鉴权", "trace_id", traceID, "device", deviceID)
 	}
 
+	// A ready cache is not re-read here: buildVoWiFiStartProfile reads the live
+	// identity under the ownership lock and adopts a changed IMSI. An extra live
+	// read before that lock would let card policy projection take the lock first
+	// and wait for this start to drain, deadlocking both.
 	w.cacheMu.RLock()
 	identityReady := w.state.Identity.Ready
 	w.cacheMu.RUnlock()
@@ -209,7 +213,8 @@ func (p *Pool) prepareVoWiFiStartContext(ctx context.Context, deviceID, traceID,
 
 	startProfile, errProfile := p.buildVoWiFiStartProfile(ctx, w, traceID)
 	if errProfile != nil {
-		if errors.Is(errProfile, errVoWiFiStartSuperseded) {
+		if errors.Is(errProfile, errVoWiFiStartSuperseded) || errors.Is(errProfile, ErrMultiIMSIDrift) {
+			// Both cancellation and drift already have a specific diagnostic.
 			return startCtx, errProfile
 		}
 		logger.Error("构建 VoWiFi 启动画像失败", "trace_id", traceID, "device", deviceID, "err", errProfile)
@@ -260,7 +265,7 @@ func (p *Pool) prepareVoWiFiStartContext(ctx context.Context, deviceID, traceID,
 		logger.Warn("VoWiFi 启动被 Lebara UK 切卡拦截",
 			"trace_id", traceID,
 			"device", deviceID,
-			"imsi", class.LiveIMSI,
+			"imsi", maskIMSIPrefix(class.LiveIMSI),
 			"err", err)
 		logVoWiFiFailureSummary(traceID, deviceID, "startup", "policy", err.Error(), false, 0)
 		return startCtx, err
@@ -404,7 +409,8 @@ func (p *Pool) prepareCellularStartContext(
 
 	startProfile, errProfile := p.buildVoWiFiStartProfile(ctx, w, traceID)
 	if errProfile != nil {
-		if errors.Is(errProfile, errVoWiFiStartSuperseded) {
+		if errors.Is(errProfile, errVoWiFiStartSuperseded) || errors.Is(errProfile, ErrMultiIMSIDrift) {
+			// Both cancellation and drift already have a specific diagnostic.
 			return startCtx, errProfile
 		}
 		logger.Error("蜂窝模式构建启动画像失败", "trace_id", traceID, "device", deviceID, "err", errProfile)
