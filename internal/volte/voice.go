@@ -350,6 +350,22 @@ func voiceControlLost(err error) bool {
 		strings.Contains(msg, "connection closed")
 }
 
+// emitCallFinalized 在终态事件之后补发 CallFinalized。
+//
+// phone 层把混音 WAV 转成 MP3、把 RecordingName 写回记录的收尾只挂在
+// CallFinalized 上（internal/phone/lifecycle.go）。内置 VoLTE 此前只发
+// CallEnded / CallCanceled，于是 VoLTE 通话的录音永远停在磁盘上：WAV 写出来了，
+// 通话记录里却没有录音。只对真正接通过的通话补发，未接来电没有混音录音，
+// 走一遍收尾只会多出一条 recording_unavailable。
+func (c *Controller) emitCallFinalized(deviceID, callID, peer, direction, codec, reason string, at time.Time) {
+	c.emitEvent(deviceID, voicehost.CallEvent{
+		Type: "CallFinalized", DeviceID: deviceID, CallID: callID,
+		Caller: peer, Callee: peer, Direction: direction,
+		State: "completed", Time: at, Reason: reason, AudioCodec: codec,
+		RecordingError: audioError(c.Status(deviceID)),
+	})
+}
+
 func (c *Controller) finishLocalCall(deviceID string, call nativeCall, reason string) {
 	if strings.TrimSpace(reason) == "" {
 		reason = call.Reason
@@ -376,6 +392,9 @@ func (c *Controller) finishLocalCall(deviceID string, call nativeCall, reason st
 		State: "completed", Time: time.Now(), Reason: reason, AudioCodec: call.Codec,
 		RecordingError: audioError(c.Status(deviceID)),
 	})
+	if call.State == "connected" {
+		c.emitCallFinalized(deviceID, call.ID, call.Peer, call.Direction, call.Codec, reason, time.Now())
+	}
 }
 
 func (c *Controller) HoldCall(ctx context.Context, deviceID, id string) error {
@@ -577,6 +596,9 @@ func (c *Controller) handleVoiceInfo(deviceID string, vs *voiceSession, info *qm
 			}
 		}
 		if eventType == "CallEnded" || eventType == "CallCanceled" {
+			if prev.State == "connected" {
+				c.emitCallFinalized(deviceID, id, peer, dir, codec, reason, now)
+			}
 			c.releaseCallAudio(id)
 			vs.forget(id)
 		}
@@ -589,6 +611,9 @@ func (c *Controller) handleVoiceInfo(deviceID string, vs *voiceSession, info *qm
 		if unansweredInbound(call.Direction, call.State) {
 			eventType = "CallCanceled"
 		}
+		// 状态马上会被改成 completed，这里先记下这通电话是否接通过，
+		// 只有接通过才需要补发 CallFinalized。
+		wasConnected := call.State == "connected"
 		call.State = "completed"
 		vs.put(call)
 		if vs.markEmitted(call.ID, rankKey("completed")) {
@@ -597,6 +622,9 @@ func (c *Controller) handleVoiceInfo(deviceID string, vs *voiceSession, info *qm
 				Direction: call.Direction, State: "completed", Time: now, Reason: call.Reason, AudioCodec: call.Codec,
 				RecordingError: audioError(c.Status(deviceID)),
 			})
+			if wasConnected {
+				c.emitCallFinalized(deviceID, call.ID, call.Peer, call.Direction, call.Codec, call.Reason, now)
+			}
 			c.releaseCallAudio(call.ID)
 			vs.forget(call.ID)
 		}

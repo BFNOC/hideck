@@ -133,7 +133,7 @@ func TestVoiceAgentMOSequenceOnce(t *testing.T) {
 		t.Fatalf("call id %s", snap.CallID)
 	}
 	got := eventTypes(events)
-	want := []string{"CallRinging", "CallRinging", "CallAnswered", "CallEnded"}
+	want := []string{"CallRinging", "CallRinging", "CallAnswered", "CallEnded", "CallFinalized"}
 	if len(got) != len(want) {
 		t.Fatalf("events %v", got)
 	}
@@ -144,6 +144,74 @@ func TestVoiceAgentMOSequenceOnce(t *testing.T) {
 	}
 	if events[0].State != "calling" || events[1].State != "ringing" {
 		t.Fatalf("ring states %s %s", events[0].State, events[1].State)
+	}
+}
+
+func TestVoiceAnsweredCallEmitsCallFinalized(t *testing.T) {
+	ctl, host := enableVoice(t)
+	var events []voicehost.CallEvent
+	ctl.SubscribeCallEvents(func(ev voicehost.CallEvent) { events = append(events, ev) })
+	if _, err := ctl.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "wwan1", Callee: "10086"}); err != nil {
+		t.Fatal(err)
+	}
+	host.fireVoice(&qmi.VoiceAllCallInfo{
+		Calls:              []qmi.VoiceCallInfo{{ID: 1, State: qmiCallConversation, Direction: qmiDirMO}},
+		RemotePartyNumbers: []qmi.VoiceRemotePartyNumber{{CallID: 1, Number: "10086"}},
+	})
+	host.fireVoice(&qmi.VoiceAllCallInfo{
+		Calls: []qmi.VoiceCallInfo{{ID: 1, State: qmiCallEnd, Direction: qmiDirMO}},
+	})
+	// phone 层的录音收尾（混音 WAV → MP3、写回 RecordingName）只挂在
+	// CallFinalized 上，接通过的通话必须补发，否则 VoLTE 录音永远不落地。
+	got := eventTypes(events)
+	if len(got) == 0 || got[len(got)-1] != "CallFinalized" {
+		t.Fatalf("answered call must end with CallFinalized: %v", got)
+	}
+}
+
+func TestVoiceUnansweredCallDoesNotEmitCallFinalized(t *testing.T) {
+	ctl, host := enableVoice(t)
+	var events []voicehost.CallEvent
+	ctl.SubscribeCallEvents(func(ev voicehost.CallEvent) { events = append(events, ev) })
+	if _, err := ctl.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "wwan1", Callee: "10086"}); err != nil {
+		t.Fatal(err)
+	}
+	host.fireVoice(&qmi.VoiceAllCallInfo{
+		Calls:              []qmi.VoiceCallInfo{{ID: 1, State: qmiCallAlerting, Direction: qmiDirMO}},
+		RemotePartyNumbers: []qmi.VoiceRemotePartyNumber{{CallID: 1, Number: "10086"}},
+	})
+	host.fireVoice(&qmi.VoiceAllCallInfo{
+		Calls: []qmi.VoiceCallInfo{{ID: 1, State: qmiCallEnd, Direction: qmiDirMO}},
+	})
+	// 没接通就没有混音录音，补发终态事件只会给未接来电多出一条
+	// recording_unavailable。
+	for _, typ := range eventTypes(events) {
+		if typ == "CallFinalized" {
+			t.Fatalf("unanswered call must not emit CallFinalized: %v", eventTypes(events))
+		}
+	}
+}
+
+func TestVoiceLocalHangupEmitsCallFinalized(t *testing.T) {
+	ctl, host := enableVoice(t)
+	var events []voicehost.CallEvent
+	ctl.SubscribeCallEvents(func(ev voicehost.CallEvent) { events = append(events, ev) })
+	snap, err := ctl.BeginCall(context.Background(), voicehost.BeginCallRequest{DeviceID: "wwan1", Callee: "10000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.fireVoice(&qmi.VoiceAllCallInfo{
+		Calls:              []qmi.VoiceCallInfo{{ID: 1, State: qmiCallConversation, Direction: qmiDirMO}},
+		RemotePartyNumbers: []qmi.VoiceRemotePartyNumber{{CallID: 1, Number: "10000"}},
+	})
+	// 用户点"挂断"走的是 finishLocalCall，不是 QMI 上报的终态路径：
+	// 只补 QMI 那两处的话，最常见的挂断方式仍然拿不到录音。
+	if err := ctl.HangupCall(context.Background(), "wwan1", snap.CallID); err != nil {
+		t.Fatal(err)
+	}
+	got := eventTypes(events)
+	if len(got) == 0 || got[len(got)-1] != "CallFinalized" {
+		t.Fatalf("local hangup must end with CallFinalized: %v", got)
 	}
 }
 
