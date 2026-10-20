@@ -107,6 +107,10 @@ export const phoneService = {
     return (await api.get<{ records: PhoneRecord[] }>('/phone/history', { params: { limit } })).data.records
   },
 
+  async deleteHistory(ids: number[]) {
+    return (await api.post<{ deleted: number }>('/phone/history/delete', { ids })).data.deleted
+  },
+
   async startCall(deviceId: string, callee: string, mediaId: string, lease: string) {
     return (await api.post<PhoneCall>('/phone/calls', {
       device_id: deviceId,

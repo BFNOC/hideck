@@ -404,6 +404,15 @@ export const usePhoneStore = defineStore('phone', {
       }
     },
 
+    async deleteHistory(ids: number[]) {
+      const selected = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))]
+      if (!selected.length) throw new Error('请选择要删除的通话记录')
+      const deleted = await phoneService.deleteHistory(selected)
+      const selectedIDs = new Set(selected)
+      this.history = this.history.filter((record) => !selectedIDs.has(record.id))
+      return deleted
+    },
+
     startClock() {
       if (clockTimer !== null) return
       clockTimer = window.setInterval(() => { this.now = Date.now() }, 1_000)

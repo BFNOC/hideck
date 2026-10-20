@@ -388,6 +388,34 @@ test('labels pending and ended calls from their real lifecycle data', () => {
   assert.equal(phoneRecordStatusLabel(record()), '已结束')
 })
 
+test('history deletion mutates local state only after the server succeeds', async () => {
+  const originalDelete = phoneService.deleteHistory
+  const records: PhoneRecord[] = [1, 2].map((id) => ({
+    id,
+    call_id: `call-${id}`,
+    device_id: 'wwan1',
+    direction: 'outbound',
+    peer: '888',
+    status: 'completed',
+    started_at: '2026-08-13T12:00:00Z',
+    duration_seconds: 10
+  }))
+  try {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    store.history = records
+    phoneService.deleteHistory = async () => { throw new Error('database unavailable') }
+    await assert.rejects(store.deleteHistory([1]), /database unavailable/)
+    assert.deepEqual(store.history.map((record) => record.id), [1, 2])
+
+    phoneService.deleteHistory = async () => 1
+    assert.equal(await store.deleteHistory([1, 1, 0]), 1)
+    assert.deepEqual(store.history.map((record) => record.id), [2])
+  } finally {
+    phoneService.deleteHistory = originalDelete
+  }
+})
+
 test('keeps a waiting second call in the active list', () => {
   setActivePinia(createPinia())
   const store = usePhoneStore()

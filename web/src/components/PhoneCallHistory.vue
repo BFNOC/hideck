@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Call24Regular,
   CallInbound24Regular,
   CallMissed24Regular,
   CallOutbound24Regular,
+  Delete24Regular,
+  MoreHorizontal24Regular,
   PersonAdd24Regular
 } from '@vicons/fluent'
 import type { PhoneRecord } from '../services/phone'
@@ -18,6 +20,19 @@ const props = defineProps<{ records: PhoneRecord[] }>()
 const identities = usePhoneIdentity()
 
 const phone = usePhoneStore()
+const managing = ref(false)
+const deleting = ref(false)
+const selectedIDs = ref<number[]>([])
+const activeStatuses = new Set(['calling', 'ringing', 'waiting', 'connected'])
+
+const deletableRecords = computed(() => props.records.filter((record) => !activeStatuses.has(record.status)))
+const selectedRecords = computed(() => {
+  const selected = new Set(selectedIDs.value)
+  return deletableRecords.value.filter((record) => selected.has(record.id))
+})
+const allSelected = computed(() => (
+  deletableRecords.value.length > 0 && selectedRecords.value.length === deletableRecords.value.length
+))
 
 watch(() => props.records.map((item) => `${item.device_id}\u0000${item.peer}`).join('|'), () => {
   for (const record of props.records) {
@@ -84,6 +99,57 @@ function redial(record: PhoneRecord) {
       ElMessage.error(error instanceof Error ? error.message : '回拨失败')
     })
     .finally(() => { redialing.value = false })
+}
+
+function setSelected(id: number, checked: boolean) {
+  if (checked) {
+    if (!selectedIDs.value.includes(id)) selectedIDs.value = [...selectedIDs.value, id]
+    return
+  }
+  selectedIDs.value = selectedIDs.value.filter((selected) => selected !== id)
+}
+
+function toggleSelectAll() {
+  selectedIDs.value = allSelected.value ? [] : deletableRecords.value.map((record) => record.id)
+}
+
+function toggleManaging() {
+  managing.value = !managing.value
+  selectedIDs.value = []
+}
+
+async function deleteRecords(records: PhoneRecord[]) {
+  if (!records.length || deleting.value) return
+  const count = records.length
+  deleting.value = true
+  try {
+    await ElMessageBox.confirm(
+      count === 1
+        ? '确定删除这条通话记录吗？联系人和录音文件不会受影响。'
+        : `确定删除选中的 ${count} 条通话记录吗？联系人和录音文件不会受影响。`,
+      count === 1 ? '删除通话记录' : '批量删除通话记录',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    const deleted = await phone.deleteHistory(records.map((record) => record.id))
+    const deletedIDs = new Set(records.map((record) => record.id))
+    selectedIDs.value = selectedIDs.value.filter((id) => !deletedIDs.has(id))
+    ElMessage.success(deleted > 0 ? `已删除 ${deleted} 条通话记录` : '所选通话记录已不存在')
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(phoneErrorMessage(error, '删除通话记录失败'))
+  } finally {
+    deleting.value = false
+  }
+}
+
+function handleRecordCommand(record: PhoneRecord, command: string | number | object) {
+  if (command === 'redial') redial(record)
+  else if (command === 'contact') void saveContact(record)
+  else if (command === 'delete') void deleteRecords([record])
 }
 
 async function ensureRecording(record: PhoneRecord) {
@@ -175,7 +241,11 @@ onMounted(() => {
   observeRecordings()
 })
 
-watch(() => props.records, syncRecordingState, { flush: 'post' })
+watch(() => props.records, (records) => {
+  const deletable = new Set(records.filter((record) => !activeStatuses.has(record.status)).map((record) => record.id))
+  selectedIDs.value = selectedIDs.value.filter((id) => deletable.has(id))
+  syncRecordingState()
+}, { flush: 'post' })
 
 onUnmounted(() => {
   observer?.disconnect()
@@ -197,10 +267,42 @@ onUnmounted(() => {
         <span>CALL LOG</span>
         <h2 id="phone-history-title">最近通话</h2>
       </div>
-      <strong>{{ records.length }}</strong>
+      <div class="history-header-actions">
+        <strong>{{ records.length }}</strong>
+        <el-button v-if="records.length" text :disabled="deleting" @click="toggleManaging">
+          {{ managing ? '完成' : '管理' }}
+        </el-button>
+      </div>
     </header>
     <div v-if="records.length" class="history-list">
-      <article v-for="record in records" :key="record.call_id" class="history-item">
+      <div v-if="managing" class="history-bulk-bar" role="toolbar" aria-label="批量管理通话记录">
+        <span>已选 {{ selectedRecords.length }} 条</span>
+        <div>
+          <el-button text :disabled="!deletableRecords.length || deleting" @click="toggleSelectAll">
+            {{ allSelected ? '取消全选' : '全选' }}
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :loading="deleting"
+            :disabled="!selectedRecords.length"
+            @click="deleteRecords(selectedRecords)"
+          >
+            <el-icon><Delete24Regular /></el-icon>
+            删除
+          </el-button>
+        </div>
+      </div>
+      <article v-for="record in records" :key="record.id" class="history-item">
+        <div v-if="managing" class="history-selection">
+          <el-checkbox
+            :model-value="selectedIDs.includes(record.id)"
+            :disabled="activeStatuses.has(record.status) || deleting"
+            :title="activeStatuses.has(record.status) ? '通话结束后可删除' : undefined"
+            :aria-label="`选择 ${record.peer || '未知号码'} 的通话记录`"
+            @change="setSelected(record.id, $event === true)"
+          />
+        </div>
         <div class="history-icon" :class="`is-${record.status}`">
           <el-icon><component :is="statusIcon(record)" /></el-icon>
         </div>
@@ -227,24 +329,32 @@ onUnmounted(() => {
             :src="recordingSources[record.id] || undefined"
           />
         </div>
-        <div class="history-actions">
-          <el-tooltip content="加到联系人" placement="left">
-            <button type="button" class="play-button" :aria-label="`把 ${record.peer || '号码'} 加到联系人`" @click="saveContact(record)">
-              <el-icon><PersonAdd24Regular /></el-icon>
-            </button>
-          </el-tooltip>
-          <el-tooltip v-if="record.peer" content="回拨" placement="left">
-            <button
-              type="button"
-              class="play-button"
-              :disabled="redialing || !!phone.currentCall"
-              :aria-label="`回拨 ${record.peer}`"
-              @click="redial(record)"
-            >
-              <el-icon><Call24Regular /></el-icon>
-            </button>
-          </el-tooltip>
-        </div>
+        <el-dropdown
+          v-if="!managing"
+          trigger="click"
+          placement="bottom-end"
+          @command="handleRecordCommand(record, $event)"
+        >
+          <button type="button" class="record-menu-button" :aria-label="`${record.peer || '未知号码'} 的通话操作`">
+            <el-icon><MoreHorizontal24Regular /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="redial" :disabled="!record.peer || redialing || !!phone.currentCall">
+                <el-icon><Call24Regular /></el-icon>回拨
+              </el-dropdown-item>
+              <el-dropdown-item command="contact" :disabled="!record.peer">
+                <el-icon><PersonAdd24Regular /></el-icon>添加联系人
+              </el-dropdown-item>
+              <el-dropdown-item command="delete" divided :disabled="activeStatuses.has(record.status) || deleting">
+                <span class="danger-menu-item">
+                  <el-icon><Delete24Regular /></el-icon>
+                  {{ activeStatuses.has(record.status) ? '通话结束后可删除' : '删除' }}
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </article>
     </div>
     <div v-else class="history-empty">暂无通话记录</div>
@@ -256,9 +366,15 @@ onUnmounted(() => {
 .history-panel > header { min-height: 68px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--ui-border); }
 .history-panel header span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .history-panel h2 { margin: 2px 0 0; color: var(--ui-text); font-size: 16px; }
-.history-panel header > strong { min-width: 28px; padding: 3px 8px; border-radius: 20px; background: var(--ui-surface-muted); color: var(--ui-text-muted); text-align: center; }
+.history-header-actions { display: flex; align-items: center; gap: 6px; }
+.history-header-actions > strong { min-width: 28px; padding: 3px 8px; border-radius: 20px; background: var(--ui-surface-muted); color: var(--ui-text-muted); text-align: center; }
 .history-list { max-height: 560px; overflow-y: auto; }
+.history-bulk-bar { min-height: 58px; padding: 8px 14px; position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-surface) 94%, transparent); backdrop-filter: blur(12px); }
+.history-bulk-bar > span { color: var(--ui-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+.history-bulk-bar > div { display: flex; align-items: center; gap: 8px; }
 .history-item { min-height: 76px; padding: 12px 14px; display: flex; align-items: flex-start; gap: 11px; border-bottom: 1px solid var(--ui-border-muted); }
+.history-selection { width: 44px; min-height: 44px; flex: 0 0 44px; display: grid; place-items: center; }
+.history-selection :deep(.el-checkbox) { width: 44px; height: 44px; display: grid; place-items: center; }
 .history-icon { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--ui-primary) 10%, var(--ui-surface)); color: var(--ui-primary); }
 .history-icon.is-missed, .history-icon.is-rejected, .history-icon.is-failed { color: var(--ui-danger); background: color-mix(in srgb, var(--ui-danger) 10%, var(--ui-surface)); }
 .history-attribution { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 12px; }
@@ -271,14 +387,13 @@ onUnmounted(() => {
 .status-missed, .status-rejected, .status-failed { color: var(--ui-danger); }
 .status-busy { color: var(--ui-warning); }
 .recording-error { margin: 5px 0 0; color: var(--ui-danger); font-size: 11px; line-height: 1.35; }
-.play-button { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface); color: var(--ui-primary); cursor: pointer; }
-.play-button:disabled { cursor: not-allowed; opacity: .45; }
-.history-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.record-menu-button { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface); color: var(--ui-text-muted); cursor: pointer; }
+.record-menu-button:hover, .record-menu-button:focus-visible { border-color: var(--ui-primary); color: var(--ui-primary); outline: none; }
+.danger-menu-item { width: 100%; display: inline-flex; align-items: center; gap: 8px; color: var(--ui-danger); }
 .recording-player { width: 100%; max-width: 320px; margin-top: 6px; display: block; }
 @media (max-width: 640px) {
   .history-item { padding: 10px 12px; gap: 8px; }
-  .history-actions { flex-direction: row; }
-  .play-button { width: 34px; height: 34px; flex: 0 0 34px; }
+  .history-bulk-bar { padding-inline: 10px; }
   .recording-player { max-width: 100%; }
 }
 .history-empty { min-height: 250px; display: grid; place-items: center; color: var(--ui-text-muted); }
