@@ -29,8 +29,10 @@ type Controller struct {
 
 type session struct {
 	events          sync.Mutex
+	voiceEnsure     sync.Mutex
 	gen             uint64
 	imsHooked       bool
+	imsUnsubscribe  []func()
 	status          Status
 	voice           *voiceSession
 	alsaUnavailable bool
@@ -40,6 +42,8 @@ type session struct {
 }
 
 const voiceUSBQuiet = 20 * time.Second
+
+const voiceIndicationTimeout = 5 * time.Second
 
 func (c *Controller) noteVoiceActivity(deviceID string) {
 	if c == nil {
@@ -150,8 +154,13 @@ func (c *Controller) EnableChecked(ctx context.Context, request EnableRequest) e
 				st.Phase = PhaseRegistering
 			}
 		})
-		c.attachIMS(deviceID, gen)
-		c.attachVoice(deviceID)
+		if err := c.attachIMS(deviceID, gen); err != nil {
+			return c.fail(deviceID, err)
+		}
+		if err := c.attachVoice(deviceID); err != nil {
+			c.patch(deviceID, func(st *Status) { st.VoiceIndicationsReady = false })
+			return c.fail(deviceID, err)
+		}
 		c.waitIMS(ctx, deviceID)
 		return nil
 	})
@@ -186,17 +195,30 @@ func (c *Controller) Disable(deviceID string) {
 				_ = m.Close()
 			}
 		}
+		c.mu.Lock()
+		var unsubscribe []func()
+		if s := c.sess[deviceID]; s != nil {
+			s.gen++
+			unsubscribe = append(unsubscribe, s.imsUnsubscribe...)
+			s.imsUnsubscribe = nil
+			if s.voice != nil {
+				unsubscribe = append(unsubscribe, s.voice.unsubscribe)
+				s.voice.unsubscribe = nil
+				s.voice.attached = false
+			}
+		}
+		delete(c.sess, deviceID)
+		c.mu.Unlock()
+		for _, cancel := range unsubscribe {
+			if cancel != nil {
+				cancel()
+			}
+		}
 		if c.host != nil {
 			if err := c.host.ReleaseIMSClients(deviceID); err != nil {
 				logger.Warn("释放原生 IMS 客户端失败", "device", deviceID, "err", err)
 			}
 		}
-		c.mu.Lock()
-		if s := c.sess[deviceID]; s != nil {
-			s.gen++
-		}
-		delete(c.sess, deviceID)
-		c.mu.Unlock()
 		return nil
 	})
 }
@@ -276,6 +298,9 @@ func (c *Controller) provisionConfig(ctx context.Context, deviceID string) error
 	}
 	if err := c.host.SetNativeIMS(ctx, deviceID, true); err != nil {
 		logger.Warn("QMI 打开原生 IMS 失败，继续用 AT 结果", "device", deviceID, "err", err)
+	}
+	if err := c.ensureVoiceIndications(ctx, deviceID, "enable"); err != nil {
+		return c.fail(deviceID, err)
 	}
 	c.syncAudioStatus(deviceID, res.Current.UACEnabled)
 	c.ensureVoicePCM(deviceID)
@@ -404,30 +429,64 @@ func (c *Controller) syncAudioStatus(deviceID string, nvUAC bool) {
 	})
 }
 
-func (c *Controller) attachIMS(deviceID string, gen uint64) {
+func (c *Controller) attachIMS(deviceID string, gen uint64) error {
 	if c == nil || c.host == nil {
-		return
+		return errors.New("volte: controller is not configured")
 	}
 	c.mu.Lock()
 	s := c.sess[deviceID]
-	if s == nil || s.imsHooked {
+	if s == nil {
 		c.mu.Unlock()
-		return
+		return errors.New("volte: native IMS session is not active")
+	}
+	if s.imsHooked {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+	cancelRegistration, err := c.host.SubscribeIMSRegistration(deviceID, c.imsRegistrationHandler(deviceID, s, gen))
+	if err != nil {
+		return fmt.Errorf("subscribe QMI IMS registration: %w", err)
+	}
+	cancelServices, err := c.host.SubscribeIMSServices(deviceID, c.imsServicesHandler(deviceID, s, gen))
+	if err != nil {
+		cancelRegistration()
+		return fmt.Errorf("subscribe QMI IMS services: %w", err)
+	}
+	c.mu.Lock()
+	if c.sess[deviceID] != s || s.gen != gen || s.imsHooked {
+		c.mu.Unlock()
+		cancelRegistration()
+		cancelServices()
+		return errors.New("volte: native IMS session changed")
 	}
 	s.imsHooked = true
+	s.imsUnsubscribe = []func(){cancelRegistration, cancelServices}
 	c.mu.Unlock()
-	_ = c.host.OnIMSRegistration(deviceID, func(info *qmi.IMSARegistrationStatus) {
+	return nil
+}
+
+func (c *Controller) imsRegistrationHandler(deviceID string, s *session, gen uint64) func(*qmi.IMSARegistrationStatus) {
+	return func(info *qmi.IMSARegistrationStatus) {
 		s.events.Lock()
-		defer s.events.Unlock()
-		if !c.sessionGenerationLive(deviceID, s, gen) {
+		if !c.imsSubscriptionLive(deviceID, s, gen) {
+			s.events.Unlock()
 			return
 		}
-		c.patch(deviceID, func(st *Status) { applyIMSARegistration(st, info) })
-	})
-	_ = c.host.OnIMSServices(deviceID, func(info *qmi.IMSAServicesStatus) {
+		becameRegistered := false
+		c.patch(deviceID, func(st *Status) { becameRegistered = applyIMSARegistration(st, info) })
+		s.events.Unlock()
+		if becameRegistered {
+			go c.refreshVoiceIndications(deviceID, s, gen, "ims_reregister")
+		}
+	}
+}
+
+func (c *Controller) imsServicesHandler(deviceID string, s *session, gen uint64) func(*qmi.IMSAServicesStatus) {
+	return func(info *qmi.IMSAServicesStatus) {
 		s.events.Lock()
 		defer s.events.Unlock()
-		if !c.sessionGenerationLive(deviceID, s, gen) {
+		if !c.imsSubscriptionLive(deviceID, s, gen) {
 			return
 		}
 		c.patch(deviceID, func(st *Status) {
@@ -435,7 +494,7 @@ func (c *Controller) attachIMS(deviceID string, gen uint64) {
 				st.VoiceAvailable = info.VoiceServiceStatus == qmi.IMSAServiceAvailabilityAvailable
 			}
 		})
-	})
+	}
 }
 
 func (c *Controller) sessionGenerationLive(deviceID string, owner *session, gen uint64) bool {
@@ -443,6 +502,13 @@ func (c *Controller) sessionGenerationLive(deviceID string, owner *session, gen 
 	defer c.mu.Unlock()
 	s := c.sess[deviceID]
 	return s != nil && s == owner && s.gen == gen
+}
+
+func (c *Controller) imsSubscriptionLive(deviceID string, owner *session, gen uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.sess[deviceID]
+	return s != nil && s == owner && s.gen == gen && s.imsHooked
 }
 
 func (c *Controller) withDevice(deviceID string, fn func() error) error {
@@ -461,22 +527,31 @@ func (c *Controller) withDevice(deviceID string, fn func() error) error {
 	return fn()
 }
 
-func applyIMSARegistration(st *Status, info *qmi.IMSARegistrationStatus) {
+func applyIMSARegistration(st *Status, info *qmi.IMSARegistrationStatus) bool {
 	if st == nil || info == nil || !info.HasStatus {
-		return
+		return false
 	}
 	switch info.Status {
 	case qmi.IMSARegistrationStateRegistered, qmi.IMSARegistrationStateLimitedRegistered:
+		becameRegistered := !st.IMSRegistered
 		st.IMSRegistered = true
-		st.Phase = PhaseRegistered
-		st.LastError = ""
+		if becameRegistered {
+			st.VoiceIndicationsReady = false
+			st.Phase = PhaseRegistering
+		} else if st.VoiceIndicationsReady {
+			st.Phase = PhaseRegistered
+		}
+		return becameRegistered
 	case qmi.IMSARegistrationStateRegistering:
 		st.IMSRegistered = false
+		st.VoiceIndicationsReady = false
 		st.Phase = PhaseRegistering
 	default:
 		st.IMSRegistered = false
+		st.VoiceIndicationsReady = false
 		st.Phase = PhaseFailed
 	}
+	return false
 }
 
 func (c *Controller) refreshRegistration(ctx context.Context, deviceID string) {
@@ -493,13 +568,68 @@ func (c *Controller) refreshRegistration(ctx context.Context, deviceID string) {
 		}
 		st.IMSRegistered = reg.Registered
 		st.VoiceAvailable = reg.VoiceAvailable
-		if reg.Registered {
+		if reg.Registered && st.VoiceIndicationsReady {
 			st.Phase = PhaseRegistered
 			st.LastError = ""
+		} else if reg.Registered {
+			st.Phase = PhaseRegistering
 		} else if st.IMSEnabled && st.VoLTEEnabled {
+			st.VoiceIndicationsReady = false
 			st.Phase = PhaseUnverified
 		}
 	})
+}
+
+func (c *Controller) ensureVoiceIndications(ctx context.Context, deviceID, reason string) error {
+	c.mu.Lock()
+	s := c.sess[deviceID]
+	if s == nil {
+		c.mu.Unlock()
+		return errors.New("volte: native IMS session is not active")
+	}
+	gen := s.gen
+	c.mu.Unlock()
+	return c.ensureVoiceIndicationsForSession(ctx, deviceID, s, gen, reason)
+}
+
+func (c *Controller) refreshVoiceIndications(deviceID string, s *session, gen uint64, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceIndicationTimeout)
+	defer cancel()
+	if err := c.ensureVoiceIndicationsForSession(ctx, deviceID, s, gen, reason); err != nil {
+		logger.Warn("QMI VOICE 指示恢复失败", "device", deviceID, "reason", reason, "err", err)
+	}
+}
+
+func (c *Controller) ensureVoiceIndicationsForSession(ctx context.Context, deviceID string, s *session, gen uint64, reason string) error {
+	s.voiceEnsure.Lock()
+	defer s.voiceEnsure.Unlock()
+	if !c.sessionGenerationLive(deviceID, s, gen) {
+		return errors.New("volte: native IMS session changed")
+	}
+	ensureCtx, cancel := context.WithTimeout(ctx, voiceIndicationTimeout)
+	defer cancel()
+	err := c.host.EnsureVoiceIndications(ensureCtx, deviceID)
+	if !c.sessionGenerationLive(deviceID, s, gen) {
+		return errors.New("volte: native IMS session changed")
+	}
+	if err != nil {
+		wrapped := fmt.Errorf("ensure QMI VOICE indications (%s): %w", reason, err)
+		c.patch(deviceID, func(st *Status) {
+			st.VoiceIndicationsReady = false
+			st.Phase = PhaseFailed
+			st.LastError = wrapped.Error()
+		})
+		return wrapped
+	}
+	c.patch(deviceID, func(st *Status) {
+		st.VoiceIndicationsReady = true
+		if st.IMSRegistered {
+			st.Phase = PhaseRegistered
+			st.LastError = ""
+		}
+	})
+	logger.Info("QMI VOICE 指示已就绪", "device", deviceID, "reason", reason)
+	return nil
 }
 
 func (c *Controller) fail(deviceID string, err error) error {

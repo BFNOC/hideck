@@ -49,6 +49,7 @@ type voiceSession struct {
 	incomingSeen  map[string]bool
 	recentlyEnded map[uint8]qmiTombstone
 	attached      bool
+	unsubscribe   func()
 	incoming      []func(voicehost.IncomingCall)
 	events        []func(voicehost.CallEvent)
 }
@@ -76,32 +77,64 @@ func newVoiceSession() *voiceSession {
 	}
 }
 
-func (c *Controller) attachVoice(deviceID string) {
+func (c *Controller) attachVoice(deviceID string) error {
 	c.mu.Lock()
 	s := c.sess[deviceID]
 	if s == nil {
 		c.mu.Unlock()
-		return
+		return errors.New("volte: native IMS session is not active")
 	}
 	if s.voice == nil {
 		s.voice = newVoiceSession()
 	}
 	vs := s.voice
-	first := !vs.attached
-	vs.attached = true
+	if vs.attached {
+		c.mu.Unlock()
+		c.ReconcileCalls(context.Background(), deviceID)
+		return nil
+	}
 	gen := s.gen
 	c.mu.Unlock()
-	if first {
-		_ = c.host.OnVoiceStatus(deviceID, func(info *qmi.VoiceAllCallInfo) {
-			s.events.Lock()
-			defer s.events.Unlock()
-			if !c.sessionGenerationLive(deviceID, s, gen) {
-				return
-			}
-			c.handleVoiceInfo(deviceID, vs, info)
-		})
+	unsubscribe, err := c.host.SubscribeVoiceStatus(deviceID, func(info *qmi.VoiceAllCallInfo) {
+		s.events.Lock()
+		defer s.events.Unlock()
+		if !c.voiceSubscriptionLive(deviceID, s, vs, gen) {
+			return
+		}
+		c.handleVoiceInfo(deviceID, vs, info)
+	})
+	if err != nil {
+		return fmt.Errorf("subscribe QMI VOICE status: %w", err)
 	}
+	c.mu.Lock()
+	current := c.sess[deviceID]
+	if current != s || current.gen != gen || vs.attached {
+		c.mu.Unlock()
+		unsubscribe()
+		if current != s || current == nil || current.gen != gen {
+			return errors.New("volte: native IMS session changed")
+		}
+		return nil
+	}
+	vs.attached = true
+	vs.unsubscribe = unsubscribe
+	c.mu.Unlock()
 	c.ReconcileCalls(context.Background(), deviceID)
+	return nil
+}
+
+func (c *Controller) voiceSubscriptionLive(deviceID string, owner *session, voice *voiceSession, gen uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.sess[deviceID]
+	return s != nil && s == owner && s.gen == gen && s.voice == voice && voice.attached
+}
+
+func (c *Controller) voiceStatusSubscribed(deviceID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.sess[deviceID]
+	return s != nil && s.voice != nil && s.voice.attached
 }
 
 func (c *Controller) ReconcileCalls(ctx context.Context, deviceID string) {
@@ -212,11 +245,17 @@ func (c *Controller) beginCall(ctx context.Context, request voicehost.BeginCallR
 		return voicehost.CallSnapshot{}, errors.New("volte: controller is not configured")
 	}
 	st := c.Status(deviceID)
-	if !st.Ready() {
+	if !st.IMSRegistered {
 		return voicehost.CallSnapshot{}, errors.New("volte: native IMS is not registered")
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := c.ensureVoiceIndications(ctx, deviceID, "pre_dial"); err != nil {
+		return voicehost.CallSnapshot{}, err
+	}
+	if !c.voiceStatusSubscribed(deviceID) {
+		return voicehost.CallSnapshot{}, errors.New("volte: QMI VOICE status subscription is not active")
 	}
 	// 拨号前把语音路由重新指到 USB 声卡：模组重启（USB 重新枚举）会丢掉
 	// AT+QPCMV 的设置，而进程里的会话闸门不会跟着复位，症状是声卡能打开、
@@ -448,23 +487,24 @@ func (c *Controller) StartCallCapture(deviceID, id, basePath string) error {
 func (c *Controller) DeviceStatus(deviceID string) map[string]interface{} {
 	st := c.Status(deviceID)
 	return map[string]interface{}{
-		"device_id":           deviceID,
-		"ready":               st.Ready(),
-		"registered":          st.IMSRegistered,
-		"phase":               st.Phase,
-		"backend":             "native_volte",
-		"ims_enabled":         st.IMSEnabled,
-		"volte_enabled":       st.VoLTEEnabled,
-		"voice_available":     st.VoiceAvailable,
-		"uac_enabled":         st.UACEnabled,
-		"reboot_required":     st.RebootRequired,
-		"provision_stage":     st.ProvisionStage,
-		"qmi_ims_unavailable": st.QMIIMSUnavailable,
-		"plmn":                st.PLMN,
-		"mbn_name":            st.MBNName,
-		"lte_registered":      st.LTERegistered,
-		"ims_pdn_active":      st.IMSPDNActive,
-		"last_error":          st.LastError,
+		"device_id":               deviceID,
+		"ready":                   st.Ready(),
+		"registered":              st.IMSRegistered,
+		"phase":                   st.Phase,
+		"backend":                 "native_volte",
+		"ims_enabled":             st.IMSEnabled,
+		"volte_enabled":           st.VoLTEEnabled,
+		"voice_indications_ready": st.VoiceIndicationsReady,
+		"voice_available":         st.VoiceAvailable,
+		"uac_enabled":             st.UACEnabled,
+		"reboot_required":         st.RebootRequired,
+		"provision_stage":         st.ProvisionStage,
+		"qmi_ims_unavailable":     st.QMIIMSUnavailable,
+		"plmn":                    st.PLMN,
+		"mbn_name":                st.MBNName,
+		"lte_registered":          st.LTERegistered,
+		"ims_pdn_active":          st.IMSPDNActive,
+		"last_error":              st.LastError,
 	}
 }
 

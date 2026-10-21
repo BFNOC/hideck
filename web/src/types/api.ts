@@ -42,6 +42,7 @@ export type NativeVoLTEStatus = {
   ims_enabled?: boolean
   volte_enabled?: boolean
   ims_registered?: boolean
+  voice_indications_ready?: boolean
   voice_available?: boolean
   uac_enabled?: boolean
   audio_device?: string

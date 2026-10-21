@@ -505,6 +505,9 @@ func (e *EventEmitter) loop() {
 			e.mu.RUnlock()
 
 			for _, handler := range handlers {
+				if handler == nil {
+					continue
+				}
 				func(h EventHandler) {
 					defer func() {
 						if recover() != nil {
@@ -520,9 +523,31 @@ func (e *EventEmitter) loop() {
 
 // On registers an event handler / On 注册事件处理器
 func (e *EventEmitter) On(handler EventHandler) {
+	_ = e.Subscribe(handler)
+}
+
+// Subscribe registers an event handler and returns an idempotent unsubscribe
+// function. On remains available for callers whose subscription lives as long
+// as the manager.
+func (e *EventEmitter) Subscribe(handler EventHandler) func() {
+	if e == nil || handler == nil {
+		return func() {}
+	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.handlers = append(e.handlers, handler)
+	index := len(e.handlers) - 1
+	e.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			e.mu.Lock()
+			if index < len(e.handlers) {
+				e.handlers[index] = nil
+			}
+			e.mu.Unlock()
+		})
+	}
 }
 
 // Emit sends an event to all handlers / Emit 向所有处理器发送事件
@@ -577,10 +602,16 @@ func (e *EventEmitter) Clear() {
 
 // OnEvent registers a callback for all events / OnEvent 为所有事件注册回调
 func (m *Manager) OnEvent(handler EventHandler) {
+	_ = m.SubscribeEvent(handler)
+}
+
+// SubscribeEvent registers a callback and returns an idempotent unsubscribe
+// function.
+func (m *Manager) SubscribeEvent(handler EventHandler) func() {
 	if m.events == nil {
 		m.events = NewEventEmitter()
 	}
-	m.events.On(handler)
+	return m.events.Subscribe(handler)
 }
 
 // OnConnect registers a callback for connect events / OnConnect 为连接事件注册回调
@@ -621,7 +652,11 @@ func (m *Manager) OnError(handler func(err error)) {
 
 // OnIMSRegistrationStatus registers a callback for IMSA registration status indications.
 func (m *Manager) OnIMSRegistrationStatus(handler func(info *qmi.IMSARegistrationStatus)) {
-	m.OnEvent(func(e Event) {
+	_ = m.SubscribeIMSRegistrationStatus(handler)
+}
+
+func (m *Manager) SubscribeIMSRegistrationStatus(handler func(info *qmi.IMSARegistrationStatus)) func() {
+	return m.SubscribeEvent(func(e Event) {
 		if e.Type == EventIMSRegistrationStatus && handler != nil {
 			handler(e.IMSRegistration)
 		}
@@ -630,7 +665,11 @@ func (m *Manager) OnIMSRegistrationStatus(handler func(info *qmi.IMSARegistratio
 
 // OnIMSServicesStatus registers a callback for IMSA services status indications.
 func (m *Manager) OnIMSServicesStatus(handler func(info *qmi.IMSAServicesStatus)) {
-	m.OnEvent(func(e Event) {
+	_ = m.SubscribeIMSServicesStatus(handler)
+}
+
+func (m *Manager) SubscribeIMSServicesStatus(handler func(info *qmi.IMSAServicesStatus)) func() {
+	return m.SubscribeEvent(func(e Event) {
 		if e.Type == EventIMSServicesStatus && handler != nil {
 			handler(e.IMSServices)
 		}
@@ -648,7 +687,13 @@ func (m *Manager) OnIMSSettingsChanged(handler func(info *qmi.IMSServicesEnabled
 
 // OnVoiceCallStatus registers a callback for voice call status indications.
 func (m *Manager) OnVoiceCallStatus(handler func(info *qmi.VoiceAllCallInfo)) {
-	m.OnEvent(func(e Event) {
+	_ = m.SubscribeVoiceCallStatus(handler)
+}
+
+// SubscribeVoiceCallStatus registers a voice status callback that can be
+// detached when its owning phone session ends.
+func (m *Manager) SubscribeVoiceCallStatus(handler func(info *qmi.VoiceAllCallInfo)) func() {
+	return m.SubscribeEvent(func(e Event) {
 		if e.Type == EventVoiceCallStatus && handler != nil {
 			handler(e.VoiceCalls)
 		}

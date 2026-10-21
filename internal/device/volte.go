@@ -212,6 +212,14 @@ func (p *Pool) EnsureIMSClients(ctx context.Context, deviceID string) error {
 	return w.QMICore.EnsureIMSClients(ctx)
 }
 
+func (p *Pool) EnsureVoiceIndications(ctx context.Context, deviceID string) error {
+	w := p.GetWorker(deviceID)
+	if w == nil || w.QMICore == nil {
+		return fmt.Errorf("设备 %s 没有 QMI VOICE", deviceID)
+	}
+	return w.QMICore.EnsureVOICEIndications(ctx)
+}
+
 func (p *Pool) ReleaseIMSClients(deviceID string) error {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.QMICore == nil {
@@ -220,20 +228,20 @@ func (p *Pool) ReleaseIMSClients(deviceID string) error {
 	return w.QMICore.ReleaseIMSClients()
 }
 
-func (p *Pool) OnIMSRegistration(deviceID string, handler func(*qmi.IMSARegistrationStatus)) error {
+func (p *Pool) SubscribeIMSRegistration(deviceID string, handler func(*qmi.IMSARegistrationStatus)) (func(), error) {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.QMICore == nil {
-		return fmt.Errorf("设备 %s 没有 QMI", deviceID)
+		return nil, fmt.Errorf("设备 %s 没有 QMI", deviceID)
 	}
-	return w.QMICore.OnIMSRegistrationStatus(handler)
+	return w.QMICore.SubscribeIMSRegistrationStatus(handler)
 }
 
-func (p *Pool) OnIMSServices(deviceID string, handler func(*qmi.IMSAServicesStatus)) error {
+func (p *Pool) SubscribeIMSServices(deviceID string, handler func(*qmi.IMSAServicesStatus)) (func(), error) {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.QMICore == nil {
-		return fmt.Errorf("设备 %s 没有 QMI", deviceID)
+		return nil, fmt.Errorf("设备 %s 没有 QMI", deviceID)
 	}
-	return w.QMICore.OnIMSServicesStatus(handler)
+	return w.QMICore.SubscribeIMSServicesStatus(handler)
 }
 
 func (p *Pool) IMSAStatus(ctx context.Context, deviceID string) (volte.Registration, error) {
@@ -359,12 +367,12 @@ func (p *Pool) VOICEStopContinuousDTMF(ctx context.Context, deviceID string, cal
 	return err
 }
 
-func (p *Pool) OnVoiceStatus(deviceID string, handler func(*qmi.VoiceAllCallInfo)) error {
+func (p *Pool) SubscribeVoiceStatus(deviceID string, handler func(*qmi.VoiceAllCallInfo)) (func(), error) {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.QMICore == nil {
-		return fmt.Errorf("设备 %s 没有 QMI VOICE", deviceID)
+		return nil, fmt.Errorf("设备 %s 没有 QMI VOICE", deviceID)
 	}
-	return w.QMICore.OnVoiceCallStatus(handler)
+	return w.QMICore.SubscribeVoiceCallStatus(handler)
 }
 
 func (p *Pool) VOICEGetAllCallInfo(ctx context.Context, deviceID string) (*qmi.VoiceAllCallInfo, error) {

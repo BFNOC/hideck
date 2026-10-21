@@ -10,6 +10,7 @@ export type PhoneDevice = {
   native_volte?: {
     phase?: string
     ims_registered?: boolean
+    voice_indications_ready?: boolean
     ims_enabled?: boolean
     volte_enabled?: boolean
     voice_available?: boolean
