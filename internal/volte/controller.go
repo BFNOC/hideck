@@ -473,10 +473,10 @@ func (c *Controller) imsRegistrationHandler(deviceID string, s *session, gen uin
 			s.events.Unlock()
 			return
 		}
-		becameRegistered := false
-		c.patch(deviceID, func(st *Status) { becameRegistered = applyIMSARegistration(st, info) })
+		needsVoiceRefresh := false
+		c.patch(deviceID, func(st *Status) { needsVoiceRefresh = applyIMSARegistration(st, info) })
 		s.events.Unlock()
-		if becameRegistered {
+		if needsVoiceRefresh {
 			go c.refreshVoiceIndications(deviceID, s, gen, "ims_reregister")
 		}
 	}
@@ -533,15 +533,15 @@ func applyIMSARegistration(st *Status, info *qmi.IMSARegistrationStatus) bool {
 	}
 	switch info.Status {
 	case qmi.IMSARegistrationStateRegistered, qmi.IMSARegistrationStateLimitedRegistered:
-		becameRegistered := !st.IMSRegistered
+		needsVoiceRefresh := !st.IMSRegistered || !st.VoiceIndicationsReady
 		st.IMSRegistered = true
-		if becameRegistered {
+		if needsVoiceRefresh {
 			st.VoiceIndicationsReady = false
 			st.Phase = PhaseRegistering
 		} else if st.VoiceIndicationsReady {
 			st.Phase = PhaseRegistered
 		}
-		return becameRegistered
+		return needsVoiceRefresh
 	case qmi.IMSARegistrationStateRegistering:
 		st.IMSRegistered = false
 		st.VoiceIndicationsReady = false

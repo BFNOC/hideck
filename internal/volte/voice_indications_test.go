@@ -82,6 +82,21 @@ func TestIMSRegistrationReestablishesVoiceIndications(t *testing.T) {
 	if st.Ready() || st.VoiceIndicationsReady || st.Phase != PhaseFailed {
 		t.Fatalf("failed re-registration must block calls: %+v", st)
 	}
+	host.mu.Lock()
+	host.VoiceEnsureErr = nil
+	host.mu.Unlock()
+	host.fireIMSRegistration(&qmi.IMSARegistrationStatus{
+		HasStatus: true,
+		Status:    qmi.IMSARegistrationStateRegistered,
+	})
+	waitForVoiceEnsureCount(t, host, 3)
+	deadline := time.Now().Add(time.Second)
+	for !ctl.Status(host.ID).Ready() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !ctl.Status(host.ID).Ready() {
+		t.Fatalf("later registered indication did not recover readiness: %+v", ctl.Status(host.ID))
+	}
 }
 
 func TestDialRevalidatesVoiceIndications(t *testing.T) {

@@ -170,10 +170,16 @@ type Event struct {
 // EventHandler is a callback function for connection events / EventHandler 是连接事件的回调函数
 type EventHandler func(event Event)
 
+type eventSubscription struct {
+	id      uint64
+	handler EventHandler
+}
+
 // EventEmitter manages event handlers / EventEmitter 管理事件处理器
 type EventEmitter struct {
 	mu        sync.RWMutex
-	handlers  []EventHandler
+	handlers  []eventSubscription
+	nextID    uint64
 	queue     chan Event
 	done      chan struct{}
 	closeOnce sync.Once
@@ -190,7 +196,7 @@ func NewEventEmitterWithQueueSize(size int) *EventEmitter {
 		size = 128
 	}
 	e := &EventEmitter{
-		handlers: make([]EventHandler, 0),
+		handlers: make([]eventSubscription, 0),
 		queue:    make(chan Event, size),
 		done:     make(chan struct{}),
 	}
@@ -500,11 +506,12 @@ func (e *EventEmitter) loop() {
 			return
 		case event := <-e.queue:
 			e.mu.RLock()
-			handlers := make([]EventHandler, len(e.handlers))
+			handlers := make([]eventSubscription, len(e.handlers))
 			copy(handlers, e.handlers)
 			e.mu.RUnlock()
 
-			for _, handler := range handlers {
+			for _, subscription := range handlers {
+				handler := subscription.handler
 				if handler == nil {
 					continue
 				}
@@ -534,16 +541,23 @@ func (e *EventEmitter) Subscribe(handler EventHandler) func() {
 		return func() {}
 	}
 	e.mu.Lock()
-	e.handlers = append(e.handlers, handler)
-	index := len(e.handlers) - 1
+	e.nextID++
+	id := e.nextID
+	e.handlers = append(e.handlers, eventSubscription{id: id, handler: handler})
 	e.mu.Unlock()
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			e.mu.Lock()
-			if index < len(e.handlers) {
-				e.handlers[index] = nil
+			for index := range e.handlers {
+				if e.handlers[index].id != id {
+					continue
+				}
+				copy(e.handlers[index:], e.handlers[index+1:])
+				e.handlers[len(e.handlers)-1] = eventSubscription{}
+				e.handlers = e.handlers[:len(e.handlers)-1]
+				break
 			}
 			e.mu.Unlock()
 		})

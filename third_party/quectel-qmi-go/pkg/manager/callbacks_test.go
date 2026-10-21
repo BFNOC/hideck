@@ -48,6 +48,12 @@ func TestEventEmitterSubscriptionCanBeRemoved(t *testing.T) {
 
 	unsubscribe()
 	unsubscribe()
+	e.mu.RLock()
+	handlerCount := len(e.handlers)
+	e.mu.RUnlock()
+	if handlerCount != 0 {
+		t.Fatalf("unsubscribed handler was retained: %d", handlerCount)
+	}
 	if !e.Emit(Event{Type: EventDisconnected}) {
 		t.Fatal("second Emit failed")
 	}
