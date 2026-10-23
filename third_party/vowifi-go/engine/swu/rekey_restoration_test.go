@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -342,5 +343,21 @@ func TestIncomingRekeyCollisionAnswerIsResent(t *testing.T) {
 	notify, ok := payloads[0].(*ikev2.EncryptedPayloadNotify)
 	if len(payloads) != 1 || !ok || notify.NotifyType != ikev2.TEMPORARY_FAILURE {
 		t.Fatalf("resent = %#v, want TEMPORARY_FAILURE", payloads)
+	}
+}
+
+func TestIKERekeyResponseErrorNamesReceivedPayloads(t *testing.T) {
+	session := &Session{}
+	for _, tc := range []struct {
+		payloads []ikev2.Payload
+		want     string
+	}{
+		{nil, "(response: none)"},
+		{[]ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NO_ADDITIONAL_SAS}}, "(response: N(35))"},
+	} {
+		err := session.completeInitiatedIKESARekey(initiatedIKERekey{payloads: tc.payloads})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("error = %v, want %q", err, tc.want)
+		}
 	}
 }
