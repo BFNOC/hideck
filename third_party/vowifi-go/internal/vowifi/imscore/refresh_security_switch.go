@@ -376,7 +376,7 @@ func (s *Service) retireReplacedSecurity(retirement *saRetirement, trigger strin
 	closed := 0
 	for _, conn := range s.snapshotProtectedConns() {
 		if tcpPortFromAddr(conn.RemoteAddr()) == retirement.oldServerPortC {
-			s.markPortSLocalClose(conn)
+			s.markPortSSARetired(conn)
 			_ = conn.Close()
 			closed++
 		}

@@ -527,3 +527,36 @@ func TestNewFlowClosedBeforeCommitFailsTheRefresh(t *testing.T) {
 	default:
 	}
 }
+
+// A port-s flow left on the old SAs is closed when they are deleted; the
+// P-CSCF reopens port-s over the new SAs when it next sends (TS 24.229
+// 5.2.2.2), so the UE waits for it instead of treating port-s as lost.
+func TestRetiredPortSFlowAwaitsTheNewSAs(t *testing.T) {
+	svc, _, _, _, _ := switchRefreshService(t, 200, switchedSecurityServer)
+	if _, _, err := svc.runRegisterAttempt(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	pipe, pcscf := net.Pipe()
+	defer pcscf.Close()
+	oldPortS := addressedConn{Conn: pipe,
+		local:  &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 41001},
+		remote: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 16381}}
+	if !svc.trackProtectedPortSConnection(oldPortS, time.Now()) {
+		t.Fatal("port-s flow not tracked")
+	}
+	svc.networkDone.Add(1)
+	go svc.serveProtectedSIPConnection(oldPortS)
+	svc.retireReplacedSecurity(svc.saRetirement.Load(), "test")
+	waitFor(t, "the retired port-s close was not recorded", func() bool {
+		return svc.capturePortSSession().lastCloseKind == portSCloseSARetired
+	})
+	if !svc.canAwaitOnDemandPortS() {
+		t.Fatal("a port-s flow closed with its SAs is not awaited from the P-CSCF")
+	}
+	svc.mu.RLock()
+	pushRequired := svc.protectedSMSPushRequiredLocked()
+	svc.mu.RUnlock()
+	if pushRequired {
+		t.Fatal("SMS readiness requires the retired port-s flow")
+	}
+}

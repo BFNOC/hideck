@@ -20,6 +20,9 @@ const (
 	portSCloseOther     = "other"
 	portSCloseTimeout   = "transport_timeout"
 	portSCloseDeadline  = "read_deadline"
+	// Closed by the UE when a refresh switch deleted the SAs under it; the
+	// P-CSCF reopens port-s over the new SAs (TS 33.203 7.4.1a).
+	portSCloseSARetired = "sa_retired"
 )
 
 type portSConnectionState struct {
@@ -27,6 +30,7 @@ type portSConnectionState struct {
 	openedAt     time.Time
 	registrar    string
 	localClosing bool
+	saRetired    bool
 }
 
 type portSSessionState struct {
@@ -118,6 +122,9 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 	if connection.localClosing {
 		kind = portSCloseLocal
 	}
+	if connection.saRetired {
+		kind = portSCloseSARetired
+	}
 	// Retired cleanup must not replace the latest failure. An older live
 	// connection still matters if it is the final downlink on this registrar.
 	relevant := tracked && strings.EqualFold(registrar, currentRegistrar)
@@ -190,6 +197,21 @@ func (s *Service) markPortSLocalClose(conn net.Conn) {
 	state, exists := s.portSSession.connections[conn]
 	if exists {
 		state.localClosing = true
+		s.portSSession.connections[conn] = state
+	}
+	s.portSSessionMu.Unlock()
+}
+
+// markPortSSARetired classifies the coming close of a port-s flow whose SAs a
+// refresh switch deleted.
+func (s *Service) markPortSSARetired(conn net.Conn) {
+	if s == nil || conn == nil {
+		return
+	}
+	s.portSSessionMu.Lock()
+	state, exists := s.portSSession.connections[conn]
+	if exists {
+		state.saRetired = true
 		s.portSSession.connections[conn] = state
 	}
 	s.portSSessionMu.Unlock()

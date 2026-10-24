@@ -463,6 +463,10 @@ func (s *Service) canAwaitOnDemandPortS() bool {
 			preset == twoDegreesNZCarrierPresetID
 	case portSClosePeerReset:
 		return preset == oneNZCarrierPresetID
+	case portSCloseSARetired:
+		// The P-CSCF sends further requests to port_us over the new SAs,
+		// opening a new port-s flow (TS 24.229 5.2.2.2).
+		return true
 	}
 	return false
 }
