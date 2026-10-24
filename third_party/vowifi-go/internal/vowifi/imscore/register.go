@@ -38,6 +38,9 @@ type registerSession struct {
 	serviceRoute   string
 	path           string
 	template       policy.IMSRegisterTemplate
+	// Attempt-owned; never copied into the next attempt's session.
+	refreshOffer *refreshSecurityOffer
+	gatedRefresh bool
 }
 
 type registerAttemptResult struct {
@@ -288,12 +291,13 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	}
 }
 
-func (s *Service) runRegisterAttempt(ctx context.Context) (time.Duration, registerAttemptResult, error) {
-	var result registerAttemptResult
+func (s *Service) runRegisterAttempt(ctx context.Context) (expires time.Duration, result registerAttemptResult, err error) {
 	session, err := s.sessionForRegisterAttempt()
 	if err != nil {
 		return 0, result, err
 	}
+	s.attachRefreshSecurityOffer(session)
+	defer func() { s.releaseRefreshSecurityOffer(session, result, err) }()
 	s.mu.Lock()
 	s.regSession = session
 	s.mu.Unlock()
@@ -302,7 +306,7 @@ func (s *Service) runRegisterAttempt(ctx context.Context) (time.Duration, regist
 	if err != nil {
 		return 0, result, err
 	}
-	expires, err := s.commitRegisterSuccess(response, session)
+	expires, err = s.commitRegisterSuccess(response, session)
 	return expires, result, err
 }
 
@@ -316,12 +320,25 @@ func (s *Service) exchangeRegisterChallenges(
 		return nil, result, err
 	}
 	updateRegisterAttemptResponse(&result, resp)
-	resp, err = s.retryDefaultInitialRegister(ctx, session, resp)
-	if err != nil {
-		return nil, result, err
+	if !session.gatedRefresh {
+		// The fallback rewrites the shared Security-Client of the active SAs.
+		resp, err = s.retryDefaultInitialRegister(ctx, session, resp)
+		if err != nil {
+			return nil, result, err
+		}
+		updateRegisterAttemptResponse(&result, resp)
 	}
-	updateRegisterAttemptResponse(&result, resp)
 	for challengeCount := 0; isDigestChallengeResponse(resp); challengeCount++ {
+		if session.gatedRefresh && (len(resp.HeaderValues("Security-Server")) != 0 ||
+			!s.canReuseProtectedSecurityAgreement(session, resp)) {
+			// A challenge that would set up new SAs is declined before AKA,
+			// Path or realm changes; installing would delete the active SAs
+			// (stage 1). A challenge answered over the active SAs proceeds.
+			return nil, result, &refreshChallengeDeclined{
+				status:         resp.StatusCode,
+				securityServer: logging.RedactSIPRaw(strings.Join(resp.HeaderValues("Security-Server"), ",")),
+			}
+		}
 		result.challengeCount = challengeCount + 1
 		if challengeCount >= maxAKAChallenges {
 			return nil, result, fmt.Errorf("imscore: AKA challenge limit %d exceeded", maxAKAChallenges)
@@ -573,6 +590,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 		"security_client_mechanisms", securityClientMechanismCount(rawSIPHeaderValue(request, "Security-Client")),
 		"sip", logging.RedactSIPRaw(request))
 	s.logRegisterViaPorts(session, request)
+	started := time.Now()
 	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("imscore: REGISTER CSeq %d transaction: %w", session.cseq, err)
@@ -586,6 +604,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 	}
 	logging.Info("IMS REGISTER response",
 		"device", s.DeviceID(), "cseq", session.cseq, "status", response.StatusCode,
+		"elapsed_ms", time.Since(started).Milliseconds(),
 		"security_server", response.Header("Security-Server") != "",
 		"digest_challenge", isDigestChallengeResponse(response))
 	s.logRegisterFlowNegotiation(response)
@@ -893,6 +912,11 @@ func (s *Service) keepRegistrationAfterFailedRefresh(hadBinding bool, err error)
 	if !hadBinding || s == nil || errors.Is(err, enginesim.ErrAPDUBusy) || !s.registrationFlowIntact() {
 		return false
 	}
+	if isRefreshChallengeDeclined(err) {
+		// A failed re-authentication does not de-register (TS 24.229
+		// 5.4.1.2.3 NOTE 2); the active SAs were never touched.
+		return true
+	}
 	var responseErr *registerResponseError
 	if !errors.As(err, &responseErr) {
 		return s.registrationFlowConfirmedDuringLastAttempt()
@@ -1097,7 +1121,11 @@ func registerSecurityHeaders(session *registerSession) string {
 		return ""
 	}
 	var builder strings.Builder
-	builder.WriteString("Security-Client: " + session.security.clientHeader + "\r\n")
+	clientHeader := session.security.clientHeader
+	if session.refreshOffer != nil {
+		clientHeader = session.refreshOffer.header
+	}
+	builder.WriteString("Security-Client: " + clientHeader + "\r\n")
 	headers := imsheaders.SecAgreeProtectedHeaders(session.security.verifyHeader)
 	if len(headers) == 0 {
 		headers = []imsheaders.Header{
