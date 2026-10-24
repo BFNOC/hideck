@@ -13,8 +13,10 @@ import (
 
 var errRegisterContactMissing = errors.New("imscore: REGISTER response does not contain the requested Contact binding")
 
-func registrationExpires(response *sipResponse, requestContact string, configured time.Duration) (time.Duration, error) {
-	contact := matchingRegisterContact(response, requestContact)
+func registrationExpires(
+	response *sipResponse, requestContact string, configured time.Duration, acceptWithoutUser bool,
+) (time.Duration, error) {
+	contact := matchingRegisterContact(response, requestContact, acceptWithoutUser)
 	if contact == "" {
 		return 0, errRegisterContactMissing
 	}
@@ -43,11 +45,23 @@ func parseRegistrationLifetime(value string) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
-func matchingRegisterContact(response *sipResponse, requestContact string) string {
+func matchingRegisterContact(response *sipResponse, requestContact string, acceptWithoutUser bool) string {
 	var own sip.Uri
 	if _, err := sip.ParseAddressValue(requestContact, &own, nil); err != nil || own.Host == "" {
 		return ""
 	}
+	if contact := findRegisterContact(response, own); contact != "" || !acceptWithoutUser || own.User == "" {
+		return contact
+	}
+	// RFC 3261 19.1.4 says a URI without a user part does not match ours.
+	// 2degrees NZ still answers our REGISTER with only the userless form of
+	// our address. The inner IP and protected port are unique to this flow,
+	// so the preset opts in to taking that form as our binding.
+	own.User, own.Password = "", ""
+	return findRegisterContact(response, own)
+}
+
+func findRegisterContact(response *sipResponse, own sip.Uri) string {
 	for _, header := range response.HeaderValues("Contact") {
 		for _, contact := range splitQuotedSIPHeaderValues(header) {
 			var candidate sip.Uri

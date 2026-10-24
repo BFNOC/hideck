@@ -222,6 +222,7 @@ func copyTemplateScalarOverrides(result *policy.IMSRegisterTemplateOverride, val
 	result.IncludeConnectionKeepaliveInAuth = trueBoolPointer(value.IncludeConnectionKeepaliveInAuth)
 	result.SecurityClientIncludesServerParams = trueBoolPointer(value.SecurityClientIncludesServerParams)
 	result.StrictSecurityServerOffer = trueBoolPointer(value.StrictSecurityServerOffer)
+	result.AcceptRegisterContactWithoutUser = trueBoolPointer(value.AcceptRegisterContactWithoutUser)
 	result.EnableInitialRejectFallback = trueBoolPointer(value.EnableInitialRejectFallback)
 	result.FallbackIncludesServerParamsInSecCl = trueBoolPointer(value.FallbackIncludesServerParamsInSecCl)
 }

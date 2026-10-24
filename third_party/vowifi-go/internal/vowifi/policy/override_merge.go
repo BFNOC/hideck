@@ -190,6 +190,7 @@ func applyIMSRegisterTemplateOverride(target IMSRegisterTemplate, override IMSRe
 		target.SecurityClientMechanisms = cloneMechanisms(override.SecurityClientMechanisms)
 	}
 	applyBoolPtr(&target.StrictSecurityServerOffer, override.StrictSecurityServerOffer)
+	applyBoolPtr(&target.AcceptRegisterContactWithoutUser, override.AcceptRegisterContactWithoutUser)
 	applyBoolPtr(&target.EnableInitialRejectFallback, override.EnableInitialRejectFallback)
 	applyBoolPtr(&target.FallbackIncludesServerParamsInSecCl, override.FallbackIncludesServerParamsInSecCl)
 	target.RegisterPolicy = applyIMSRegisterPolicyOverride(target.RegisterPolicy, override.RegisterPolicy)

@@ -10,7 +10,7 @@ import (
 
 func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 	wantHashes := map[string]string{
-		"2degrees_nz_53024.yaml":   "40ba4fc4b21aed123cb5d2c3634a3a4a0d7d7a33046dd2e356e8950e6250c471",
+		"2degrees_nz_53024.yaml":   "361779ed5f41ae506d96d7595b66c9524717bc7a12e1d8dda2ba1875ca778808",
 		"ais_th_52001.yaml":        "f02b536317933c00c1960bfcceaf1b3f2ec8e22e1106917854231953832ccaa0",
 		"ais_th_52003.yaml":        "7b7c444a9c641d19c9ea184997c27c24eacc52d6b31db729b448fe9e1f50d0fd",
 		"att_310280.yaml":          "7337399037af7fbe67874b83f8f0c95ff0a1c588ec49ee41a404cf33e04fd054",

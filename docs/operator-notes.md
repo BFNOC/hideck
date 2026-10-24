@@ -67,6 +67,19 @@
 
 - 自动化测试覆盖身份请求编码、认证门控、发送失败和配置覆盖；不替代 Spark、VOXI 或其他运营商的真卡验收。
 
+## 2degrees NZ（530/24）
+
+- REGISTER 的 200 里列出的 Contact 去掉了用户部分，只剩内层 IP 和端口。按 RFC 3261 §10.2.4、§19.1.4 比对不上，会被判注册失败。
+- 预设 `accept_register_contact_without_user`：带用户部分比对不上时，去掉我们这边的用户部分再按同样的 URI 比较规则比一次，对上就按注册成功处理，日志记 `IMS REGISTER binding matched a Contact without the user part`。这是 2degrees 兼容策略，其他运营商比对不上仍判失败。
+- 可通过 `config/carrier_overrides.yaml` 关闭，修改后需重启服务：
+
+  ```yaml
+  carrier_overrides:
+    "53024":
+      ims_register_template:
+        accept_register_contact_without_user: false
+  ```
+
 ## 德国 O2（262/03、262/07）
 
 - 预设已有：`O2_de_26203`、`O2_de_26207_alias`。ePDG 用 3GPP 名 `epdg.epc.mnc003.mcc262.pub.3gppnetwork.org` / `mnc007`。
