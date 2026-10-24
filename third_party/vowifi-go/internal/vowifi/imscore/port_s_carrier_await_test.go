@@ -9,14 +9,15 @@ import (
 )
 
 func TestCarrierPresetsAwaitPortSWithoutPriorReconnect(t *testing.T) {
-	for _, preset := range []string{globePHCarrierPresetID, ditoPHCarrierPresetID, oneNZCarrierPresetID, ""} {
+	for _, preset := range []string{globePHCarrierPresetID, ditoPHCarrierPresetID, twoDegreesNZCarrierPresetID, oneNZCarrierPresetID, ""} {
 		for _, closeErr := range []error{io.EOF, syscall.ECONNRESET} {
 			t.Run(preset+"/"+closeErr.Error(), func(t *testing.T) {
 				service := newCarrierAwaitTestService(t, preset)
 				closeIdleTestPortS(t, service, closeErr, 20*time.Minute)
 				service.handleProtectedServerPushClosed()
 				timer := stopTestPortSWatch(service)
-				await := ((preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID) && closeErr == io.EOF) ||
+				eofAwait := preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID || preset == twoDegreesNZCarrierPresetID
+				await := (eofAwait && closeErr == io.EOF) ||
 					(preset == oneNZCarrierPresetID && closeErr == syscall.ECONNRESET)
 				if (timer == nil) != await {
 					t.Fatalf("awaited peer reconnect = %t, want %t", timer == nil, await)
@@ -46,7 +47,7 @@ func TestOneNZPortSResetAwaitsAtAnyIdle(t *testing.T) {
 }
 
 func TestOtherPresetsRecoverPeerResetAfterPeerReconnect(t *testing.T) {
-	for _, preset := range []string{"", globePHCarrierPresetID, ditoPHCarrierPresetID, vodafoneUKCarrierPresetID} {
+	for _, preset := range []string{"", globePHCarrierPresetID, ditoPHCarrierPresetID, twoDegreesNZCarrierPresetID, vodafoneUKCarrierPresetID} {
 		t.Run(preset, func(t *testing.T) {
 			service := newCarrierAwaitTestService(t, preset)
 			service.portSOnDemandObserved.Store(true)
@@ -70,6 +71,7 @@ func TestCarrierAwaitBacksOffWhenRegisterDoesNotRestorePortS(t *testing.T) {
 		{"one-nz/after-peer-reconnect", oneNZCarrierPresetID, syscall.ECONNRESET, true},
 		{"globe-eof/first", globePHCarrierPresetID, io.EOF, false},
 		{"dito-eof/first", ditoPHCarrierPresetID, io.EOF, false},
+		{"2degrees-eof/first", twoDegreesNZCarrierPresetID, io.EOF, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service := newCarrierAwaitTestService(t, tc.preset)

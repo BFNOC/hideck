@@ -448,7 +448,10 @@ func (s *Service) canAwaitOnDemandPortS() bool {
 	observed := s.portSOnDemandObserved.Load()
 	switch s.capturePortSSession().lastCloseKind {
 	case portSCloseEOF:
-		return observed || preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID
+		// 2degrees closes an idle port-s after about 2 minutes and has been
+		// seen reopening it for a later MT request.
+		return observed || preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID ||
+			preset == twoDegreesNZCarrierPresetID
 	case portSClosePeerReset:
 		return preset == oneNZCarrierPresetID
 	}
@@ -479,9 +482,10 @@ func portSClosedFor(session portSSessionSnapshot) time.Duration {
 }
 
 const (
-	oneNZCarrierPresetID   = "one_nz_53001"
-	globePHCarrierPresetID = "globe_ph_51502"
-	ditoPHCarrierPresetID  = "dito_51566"
+	oneNZCarrierPresetID        = "one_nz_53001"
+	globePHCarrierPresetID      = "globe_ph_51502"
+	ditoPHCarrierPresetID       = "dito_51566"
+	twoDegreesNZCarrierPresetID = "2degrees_nz_53024"
 )
 
 func (s *Service) consumePortSReconnectWatch(generation uint64, registrar string) bool {
