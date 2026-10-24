@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
+	enginelogger "github.com/iniwex5/vowifi-go/engine/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/api"
@@ -32,6 +33,7 @@ import (
 	"github.com/yibaiba/hideck/internal/upstreamproxy"
 	"github.com/yibaiba/hideck/internal/volte"
 	"github.com/yibaiba/hideck/internal/webdavarchive"
+	"go.uber.org/zap"
 
 	"github.com/yibaiba/hideck/internal/web"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -59,6 +61,11 @@ func main() {
 	})
 	// 将内置 slog 重定向到已就绪的系统日志框架
 	slog.SetDefault(slog.New(logger.NewSlogHandler(logger.ZapLogger())))
+	// The SWu/IKE engine logs to stderr on its own, so its lines never reached
+	// logs/app.log. Route it through the same console, file and SSE outputs.
+	// pkg/logger adds one caller skip for its own wrappers and the engine
+	// wrappers add theirs, so take one back to report the real caller.
+	enginelogger.Set(logger.ZapLogger().WithOptions(zap.AddCallerSkip(-1)))
 	logger.Info("HiDeck 模组管理器启动中...")
 
 	go func() {
