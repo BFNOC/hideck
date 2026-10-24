@@ -51,7 +51,10 @@ func (s *Session) performChildSARekey(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.handleCreateChildSAResp(response, ni, localSPI, newDH)
+	if err := s.handleCreateChildSAResp(response, ni, localSPI, newDH); err != nil {
+		return fmt.Errorf("%w (offer: %s)", err, createChildSAOffer(payloads))
+	}
+	return nil
 }
 
 func (s *Session) completeInitiatedChildSARekey(
