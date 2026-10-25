@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox, type InputInstance } from 'element-plus'
 import { mcpService, type McpToken } from '../../services/mcp'
 import type { McpClientId } from '../../services/mcp-clients'
 import { errorMessage } from '../../services/http'
@@ -16,6 +16,8 @@ const revoking = ref('')
 const deleting = ref('')
 const error = ref('')
 const name = ref('')
+const nameInput = ref<InputInstance>()
+const nameError = ref('')
 const tokens = ref<McpToken[]>([])
 const secret = ref('')
 const showSecret = ref(false)
@@ -40,10 +42,18 @@ async function toggle(value: string | number | boolean) {
   finally { saving.value = false }
 }
 async function create() {
+  if (creating.value) return
+  const tokenName = name.value.trim()
+  if (!tokenName) {
+    nameError.value = '请先填写令牌名称，例如 Codex 或 Hermes。'
+    nameInput.value?.focus()
+    return
+  }
+  nameError.value = ''
   creating.value = true
   error.value = ''
   try {
-    const created = await mcpService.createToken(name.value.trim())
+    const created = await mcpService.createToken(tokenName)
     tokens.value = [created.token, ...tokens.value]
     secret.value = created.secret
     showSecret.value = true
@@ -99,9 +109,14 @@ onMounted(load)
       <label class="mcp-label" for="mcp-endpoint">服务地址 · {{ enabled ? '已开启' : '已关闭' }}</label>
       <div class="mcp-row"><el-input id="mcp-endpoint" :model-value="endpoint" readonly /><el-button @click="copy(endpoint)">复制地址</el-button></div>
       <p class="mcp-help">每个令牌拥有完整日常管理权限，长期有效，可独立撤销。令牌只能用于 MCP。电话双向音频需在电话页连接并授权。</p>
-      <form class="mcp-row" @submit.prevent="create">
-        <el-input v-model="name" aria-label="新令牌名称" placeholder="令牌名称，例如 IDE 助手" :disabled="creating" />
-        <el-button type="primary" native-type="submit" :loading="creating" :disabled="!name.trim() || loading">创建令牌</el-button>
+      <form @submit.prevent="create">
+        <label class="mcp-label" for="mcp-token-name">令牌名称 <span class="mcp-required">（必填）</span></label>
+        <div class="mcp-row">
+          <el-input id="mcp-token-name" ref="nameInput" v-model="name" aria-label="新令牌名称" aria-required="true" :aria-invalid="!!nameError" :aria-describedby="nameError ? 'mcp-token-name-help mcp-token-name-error' : 'mcp-token-name-help'" placeholder="例如 Codex、Hermes 或 IDE 助手" :disabled="creating" @input="nameError = ''" />
+          <el-button type="primary" native-type="submit" :loading="creating" :disabled="loading || creating">创建令牌</el-button>
+        </div>
+        <p id="mcp-token-name-help" class="mcp-name-help">先填写名称，用于区分不同 Agent 的令牌。</p>
+        <p v-if="nameError" id="mcp-token-name-error" class="mcp-name-error" role="alert">{{ nameError }}</p>
       </form>
       <ul class="mcp-token-list" aria-label="MCP 令牌">
         <li v-for="token in tokens" :key="token.id">
@@ -136,6 +151,9 @@ h3 { color: var(--ui-text); font-size: 18px; font-weight: 700; }
 p, small { color: var(--ui-text-muted); }
 .mcp-label { display: block; margin-bottom: 8px; font-weight: 600; }
 .mcp-help { margin: 12px 0 16px; font-size: 13px; line-height: 1.6; }
+.mcp-required, .mcp-name-help { color: var(--ui-text-muted); font-size: 13px; font-weight: 400; }
+.mcp-name-help, .mcp-name-error { margin-top: 8px; line-height: 1.6; }
+.mcp-name-error { color: var(--el-color-danger); font-size: 13px; }
 .mcp-error { color: var(--el-color-danger); margin-bottom: 12px; }
 .mcp-token-list { margin: 16px 0; }
 .mcp-token-list li { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--ui-border); }
