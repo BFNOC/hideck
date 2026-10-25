@@ -80,6 +80,8 @@
         accept_register_contact_without_user: false
   ```
 
+- 短信回执（RP-ACK）走 P-CSCF 连到 port_us 的连接会回 403。现在所有运营商的回执默认从注册流（port_uc 到 port_ps）发，预设打开 `rp_report_over_port_us` 才先走 port_us 的连接。
+
 ## 德国 O2（262/03、262/07）
 
 - 预设已有：`O2_de_26203`、`O2_de_26207_alias`。ePDG 用 3GPP 名 `epdg.epc.mnc003.mcc262.pub.3gppnetwork.org` / `mnc007`。

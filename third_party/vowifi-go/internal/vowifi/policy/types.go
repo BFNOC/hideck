@@ -71,6 +71,7 @@ type IMSRegisterTemplate struct {
 	SecurityClientMechanisms            []IPSec3GPPSecurityMechanism
 	StrictSecurityServerOffer           bool
 	AcceptRegisterContactWithoutUser    bool
+	RPReportOverPortUS                  bool
 	EnableInitialRejectFallback         bool
 	FallbackIncludesServerParamsInSecCl bool
 	RegisterPolicy                      IMSRegisterPolicy
@@ -108,6 +109,7 @@ type IMSRegisterTemplateOverride struct {
 	SecurityClientMechanisms            []IPSec3GPPSecurityMechanism `yaml:"security_client_mechanisms"`
 	StrictSecurityServerOffer           *bool                        `yaml:"strict_security_server_offer"`
 	AcceptRegisterContactWithoutUser    *bool                        `yaml:"accept_register_contact_without_user"`
+	RPReportOverPortUS                  *bool                        `yaml:"rp_report_over_port_us"`
 	EnableInitialRejectFallback         *bool                        `yaml:"enable_initial_reject_fallback"`
 	FallbackIncludesServerParamsInSecCl *bool                        `yaml:"fallback_includes_server_params_in_sec_client"`
 	RegisterPolicy                      IMSRegisterPolicyOverride    `yaml:"register_policy"`

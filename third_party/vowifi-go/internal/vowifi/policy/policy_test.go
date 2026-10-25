@@ -152,7 +152,7 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		t.Fatalf("one nz = %+v", one)
 	}
 	if twoDegrees := ResolveEffectiveCarrierConfig("530", "24"); twoDegrees.PresetID != "2degrees_nz_53024" ||
-		!twoDegrees.IMSRegisterTemplate.AcceptRegisterContactWithoutUser ||
+		!twoDegrees.IMSRegisterTemplate.AcceptRegisterContactWithoutUser || twoDegrees.IMSRegisterTemplate.RPReportOverPortUS ||
 		!CarrierPlanFromEffectiveConfig(twoDegrees).IMS.RegisterTemplate.AcceptRegisterContactWithoutUser {
 		t.Fatalf("2degrees nz = %+v", twoDegrees.IMSRegisterTemplate)
 	}
