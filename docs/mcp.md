@@ -7,7 +7,23 @@ MCP 挂载在现有 HTTP/HTTPS 服务的 `/mcp`，共用监听端口和 TLS，�
 1. 使用网页登录，阅读并确认当前版本的免责声明。
 2. 在设置中开启 MCP，创建一个有明确名称的令牌。
 3. 保存创建窗口展示的令牌或连接配置。明文只返回一次；关闭窗口后只保留显示前缀。
-4. 将配置加入支持 Streamable HTTP 和自定义 Authorization 头的客户端。
+4. 在「选择 Agent / 客户端」中选择对应客户端，复制配置；也可点击「复制给 Agent」，让有本机配置权限的 Agent 合并配置并验证连接。
+
+页面支持以下七种客户端。配置模板中的 `<MCP_TOKEN>` 需要替换为有效令牌；创建窗口中的配置已填入新令牌，关闭窗口后恢复占位符。明文不会因切换客户端而重新从服务器获取。
+
+| 客户端 | 默认用户配置位置 | 配置方式 |
+| --- | --- | --- |
+| [Codex](https://learn.chatgpt.com/docs/extend/mcp) | `~/.codex/config.toml` | TOML 的 `mcp_servers.hideck`，使用 `http_headers` |
+| [Claude Code](https://code.claude.com/docs/en/mcp) | `~/.claude.json` | `mcpServers.hideck`，HTTP URL 与 Authorization 头 |
+| [Cursor](https://cursor.com/docs/context/mcp) | `~/.cursor/mcp.json` | `mcpServers.hideck`，URL 与请求头 |
+| [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/) | `~/.gemini/settings.json` | 使用 `httpUrl` 和请求头 |
+| [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) | `~/.hermes/config.yaml` | YAML 的 `mcp_servers.hideck` |
+| [DeepSeek dsh](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md) | `$DSH_HOME/cordis.patch.yml`，默认 `~/.dsh/cordis.patch.yml` | Cordis `insert` 补丁，注册 `@deepseek-ai/dsh-mcp-client`，传输为 `streamable-http` |
+| [Pi Agent](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md) | `~/.pi/agent/mcp.json` | 新版内置 MCP，使用 URL 与请求头；`pi mcp list` 验证，`/reload` 重载 |
+
+HiDeck 服务已经运行在服务端，以上客户端直接连接远程地址。配置应合并到原文件，保留其他连接及设置；自定义配置目录以客户端的实际设置为准。Agent 所在机器必须能访问服务地址，使用本地 CA 的 HTTPS 服务时需信任该 CA。旧版 Pi 若没有 `pi mcp` 命令，需升级到支持内置 MCP 的版本，或使用该版本已安装的 MCP 扩展配置，不能照搬新版配置。
+
+支持等待参数的模板提供六分钟等待窗口，以覆盖服务器原有的五分钟 eSIM 下载操作；不改变服务器超时。配置生成与格式检查不代表七个客户端均已完成真实连接验收。
 
 通用客户端配置示例（具体客户端的配置文件位置及顶层字段以客户端文档为准）：
 

@@ -1,13 +1,10 @@
 import { api } from '../stores/auth'
+export { mcpClientConfig } from './mcp-clients'
 
 export type McpToken = { id: string; name: string; prefix: string; created_at: string; revoked_at: string | null }
 export type McpSettings = { enabled: boolean; path: string }
 export type McpConnection = { id: string; name: string; status: string; token_id: string }
 export type McpBinding = { token_id: string; name: string; media_id: string; lease: string }
-
-export function mcpClientConfig(endpoint: string, token = '<MCP_TOKEN>') {
-  return JSON.stringify({ mcpServers: { hideck: { type: 'http', url: endpoint, headers: { Authorization: `Bearer ${token}` } } } }, null, 2)
-}
 
 export const mcpService = {
   async settings() { return (await api.get<McpSettings>('/settings/mcp')).data },

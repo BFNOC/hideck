@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { mcpClientConfig, mcpService, type McpToken } from '../../services/mcp'
+import { mcpService, type McpToken } from '../../services/mcp'
+import type { McpClientId } from '../../services/mcp-clients'
 import { errorMessage } from '../../services/http'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import { copyToClipboard } from '../../utils/clipboard'
+import McpClientSetup from './McpClientSetup.vue'
 
 const enabled = ref(false)
 const loading = ref(true)
@@ -15,8 +17,8 @@ const name = ref('')
 const tokens = ref<McpToken[]>([])
 const secret = ref('')
 const showSecret = ref(false)
+const selectedClient = ref<McpClientId>('codex')
 const endpoint = computed(() => `${window.location.origin}/mcp`)
-const config = computed(() => mcpClientConfig(endpoint.value, secret.value || undefined))
 
 async function load() {
   loading.value = true
@@ -57,8 +59,8 @@ async function revoke(id: string) {
   finally { revoking.value = '' }
 }
 async function copy(value: string) {
-  try { await navigator.clipboard.writeText(value); ElMessage.success('已复制') }
-  catch (cause) { error.value = errorMessage(cause, '复制失败，请手动选择并复制') }
+  error.value = ''
+  if (!await copyToClipboard(value)) error.value = '自动复制未完成，请手动选择并复制。'
 }
 onMounted(load)
 </script>
@@ -86,12 +88,14 @@ onMounted(load)
         </li>
       </ul>
       <p v-if="!tokens.length" class="mcp-help">尚未创建令牌。</p>
-      <details><summary>客户端连接配置</summary><pre>{{ mcpClientConfig(endpoint) }}</pre><el-button @click="copy(mcpClientConfig(endpoint))">复制配置模板</el-button></details>
+      <McpClientSetup v-model="selectedClient" :endpoint="endpoint" />
     </template>
     <el-dialog v-model="showSecret" title="保存新令牌" width="min(620px, 92vw)" :close-on-click-modal="false" @closed="secret = ''">
       <p>令牌明文仅在这里展示一次。关闭后无法再次查看。</p>
       <el-input :model-value="secret" readonly aria-label="新 MCP 令牌" />
-      <div class="mcp-row mcp-secret-actions"><el-button @click="copy(secret)">复制令牌</el-button><el-button @click="copy(config)">复制连接配置</el-button></div>
+      <div class="mcp-row mcp-secret-actions"><el-button @click="copy(secret)">复制令牌</el-button></div>
+      <p v-if="error" class="mcp-error" role="alert">{{ error }}</p>
+      <McpClientSetup v-model="selectedClient" :endpoint="endpoint" :token="secret || undefined" />
       <template #footer><el-button type="primary" @click="showSecret = false">已保存，关闭</el-button></template>
     </el-dialog>
   </section>
@@ -109,9 +113,7 @@ p, small { color: var(--ui-text-muted); }
 .mcp-token-list { margin: 16px 0; }
 .mcp-token-list li { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--ui-border); }
 .mcp-token-list li div { display: grid; gap: 4px; overflow-wrap: anywhere; }
-code, pre { font-family: var(--font-mono, monospace); }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; }
-summary { cursor: pointer; padding: 12px 0; }
+code { font-family: var(--font-mono, monospace); }
 .mcp-secret-actions { margin-top: 12px; flex-wrap: wrap; }
 @media (max-width: 640px) { .mcp-settings { padding: 16px; } .mcp-row { flex-wrap: wrap; } .mcp-row > .el-input { flex-basis: 100%; } .mcp-settings :deep(.el-button) { min-height: 44px; } }
 </style>
