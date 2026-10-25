@@ -75,7 +75,7 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 	}()
 	selection, err := s.validateIKESARekeyResponse(rekey.payloads)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w (response: %s)", err, createChildSAOffer(rekey.payloads))
 	}
 	sharedSecret, err := rekey.dh.ComputeSharedSecret(selection.peerKey)
 	if err != nil {
