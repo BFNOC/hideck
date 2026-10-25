@@ -49,7 +49,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 		"tmobile_310260.yaml":      "57619113de3cfbe9ddb4afda13885501415f534f580fc55a8e7f54a15f2b93a6",
 		"vodafone_de_26202.yaml":   "3ad3ae5e4371c7436521e357e782acdef7dc8b6fee1e5574834d7be706347ab6",
 		"vodafone_nl_20404.yaml":   "ca847e87abe516603cd92f05ef0a9e5ba8ad0869f7cca3ea2aabe9f49694df8b",
-		"vodafone_uk_23415.yaml":   "d40342f17a7f665d0c07e127c7cd057d70f4b48ce22da8ef03eb9c07e114fc22",
+		"vodafone_uk_23415.yaml":   "4a83ec1b4d83d853d627b008cdc40ecfc40fd521dd183e303c74b5e79df12808",
 		"ymobile_44000.yaml":       "6804965637e8d5d279b9a2eeb6a2dcd5ecd01bd8b4745ee7a5486b17d1c30c72",
 	}
 	entries, err := carrierPresetFiles.ReadDir("presets")

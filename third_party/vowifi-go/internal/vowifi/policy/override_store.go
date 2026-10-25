@@ -104,6 +104,7 @@ func cloneCarrierOverridePointers(value *CarrierOverride) {
 	template.SecurityClientIncludesServerParams = cloneBoolPointer(template.SecurityClientIncludesServerParams)
 	template.StrictSecurityServerOffer = cloneBoolPointer(template.StrictSecurityServerOffer)
 	template.AcceptRegisterContactWithoutUser = cloneBoolPointer(template.AcceptRegisterContactWithoutUser)
+	template.RPReportOverPortUS = cloneBoolPointer(template.RPReportOverPortUS)
 	template.EnableInitialRejectFallback = cloneBoolPointer(template.EnableInitialRejectFallback)
 	template.FallbackIncludesServerParamsInSecCl = cloneBoolPointer(template.FallbackIncludesServerParamsInSecCl)
 	template.RegisterPolicy.TemporaryRetrySeconds = cloneIntPointer(template.RegisterPolicy.TemporaryRetrySeconds)

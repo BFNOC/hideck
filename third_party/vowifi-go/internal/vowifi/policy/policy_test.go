@@ -152,12 +152,19 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		t.Fatalf("one nz = %+v", one)
 	}
 	if twoDegrees := ResolveEffectiveCarrierConfig("530", "24"); twoDegrees.PresetID != "2degrees_nz_53024" ||
-		!twoDegrees.IMSRegisterTemplate.AcceptRegisterContactWithoutUser ||
+		!twoDegrees.IMSRegisterTemplate.AcceptRegisterContactWithoutUser || twoDegrees.IMSRegisterTemplate.RPReportOverPortUS ||
 		!CarrierPlanFromEffectiveConfig(twoDegrees).IMS.RegisterTemplate.AcceptRegisterContactWithoutUser {
 		t.Fatalf("2degrees nz = %+v", twoDegrees.IMSRegisterTemplate)
 	}
 	if spark := ResolveEffectiveCarrierConfig("530", "05"); spark.IMSRegisterTemplate.AcceptRegisterContactWithoutUser {
 		t.Fatal("spark nz accepts a Contact without the user part")
+	}
+	for _, plmn := range [][2]string{{"234", "15"}, {"515", "02"}, {"530", "01"}, {"530", "05"}, {"234", "87"}} {
+		cfg := ResolveEffectiveCarrierConfig(plmn[0], plmn[1])
+		want := cfg.PresetID == "vodafone_uk_23415"
+		if cfg.IMSRegisterTemplate.RPReportOverPortUS != want {
+			t.Fatalf("%s rp_report_over_port_us = %t, want %t", cfg.PresetID, cfg.IMSRegisterTemplate.RPReportOverPortUS, want)
+		}
 	}
 	if globe := ResolveEffectiveCarrierConfig("515", "02"); globe.PresetID != "globe_ph_51502" ||
 		globe.EPDGAddr != "weconnect.globe.com.ph" || globe.EPDGAddrSource != "preset" ||

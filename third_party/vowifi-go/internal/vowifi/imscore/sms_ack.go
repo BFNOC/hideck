@@ -219,7 +219,12 @@ func (s *Service) sendRPReportWithRetryPolicy(
 	current := specRPAckReport(report)
 	// A protected UDP peer already resolves to the registered flow.
 	peer := rpReportOutboundPeer(report.PeerConn)
-	if peer != nil && s.rpReportRegisteredFlow.Load() {
+	// TS 33.203 7.1: a UE request goes on the UE's own connection from
+	// port_uc to port_ps. On the P-CSCF's connection to port_us the UE is the
+	// server and sends responses (P-CSCF side, NOTE 6). 2degrees answers 403
+	// and One NZ stays silent when the report goes that way. A preset can
+	// still start on that connection.
+	if peer != nil && !s.rpReportPresetPortUS() {
 		current.PeerConn = nil
 	}
 	delay := retryDelay
@@ -236,9 +241,6 @@ func (s *Service) sendRPReportWithRetryPolicy(
 		lastErr = s.sendRPReport(current)
 		sent++
 		if lastErr == nil {
-			if peer != nil {
-				s.rpReportRegisteredFlow.Store(current.PeerConn == nil)
-			}
 			return sent, nil
 		}
 		if !rpReportRetryable(lastErr) {
@@ -261,6 +263,10 @@ func (s *Service) sendRPReportWithRetryPolicy(
 		}
 	}
 	return sent, lastErr
+}
+
+func (s *Service) rpReportPresetPortUS() bool {
+	return s != nil && s.cfg != nil && s.cfg.IMSRegisterTemplate.RPReportOverPortUS
 }
 
 func rpReportRetryable(err error) bool {

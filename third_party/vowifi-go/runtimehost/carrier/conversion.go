@@ -23,6 +23,7 @@ func RegisterTemplateFromInternal(value policy.IMSRegisterTemplate) IMSRegisterT
 		SecurityClientMechanisms:            mechanismsFromInternal(value.SecurityClientMechanisms),
 		StrictSecurityServerOffer:           value.StrictSecurityServerOffer,
 		AcceptRegisterContactWithoutUser:    value.AcceptRegisterContactWithoutUser,
+		RPReportOverPortUS:                  value.RPReportOverPortUS,
 		EnableInitialRejectFallback:         value.EnableInitialRejectFallback,
 		FallbackIncludesServerParamsInSecCl: value.FallbackIncludesServerParamsInSecCl,
 		RegisterPolicy:                      registerPolicyFromInternal(value.RegisterPolicy),
