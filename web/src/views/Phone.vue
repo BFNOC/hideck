@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PhoneMcpConnection from '../components/phone/PhoneMcpConnection.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -409,6 +410,7 @@ async function sendDTMF(digit: string) {
   <div class="app-page phone-page">
     <PageHeader :title="t('phone.title')" :subtitle="t('phone.subtitle')">
       <template #actions>
+        <PhoneMcpConnection />
         <span class="media-state" :class="`is-${phone.mediaState}`">
           <span aria-hidden="true" />{{ phone.mediaReady
             ? phone.mediaMode === 'listen-only' ? '仅听已连接' : '双向语音已连接'

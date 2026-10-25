@@ -14,6 +14,7 @@ import WeComBotNotificationTab from '../components/settings/WeComBotNotification
 import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
 import FeishuNotificationTab from '../components/settings/FeishuNotificationTab.vue'
 import AutoAnswerSettings from '../components/settings/AutoAnswerSettings.vue'
+import McpSettings from '../components/settings/McpSettings.vue'
 import WebDAVArchiveSettings from '../components/settings/WebDAVArchiveSettings.vue'
 import { 
   Key24Regular, 
@@ -637,6 +638,8 @@ onMounted(() => {
             </div>
          </div>
       </section>
+
+      <McpSettings />
 
       <WebDAVArchiveSettings />
 

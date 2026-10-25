@@ -168,3 +168,7 @@ Personal learning, research, and testing. Not a production telephony stack. Inde
 [PolyForm Noncommercial 1.0.0](LICENSE). `third_party/vowifi-go` is AGPL-3.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing binaries or images.
 
 Thanks: [LINUX DO](https://linux.do/) · [iniwex5/vohive-release](https://github.com/iniwex5/vohive-release) · [boa-z/vowifi-go](https://github.com/boa-z/vowifi-go)
+
+### MCP
+
+CLI / IDE 可通过独立令牌使用 `/mcp` 管理日常业务。默认关闭；在网页设置中开启并创建令牌。详见 [MCP 接入与能力覆盖](docs/mcp.md)。

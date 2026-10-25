@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yibaiba/hideck/internal/mbn"
+	"github.com/yibaiba/hideck/internal/mcpserver"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -152,6 +153,7 @@ func Init(dbPath string) error {
 
 	// 自动迁移
 	if err := DB.AutoMigrate(
+		&mcpserver.Token{},
 		&mbn.Asset{}, &mbn.Policy{}, &mbn.Operation{},
 		&Device{},
 		&CardPolicy{},

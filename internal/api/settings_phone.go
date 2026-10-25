@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,6 +44,10 @@ type updateAutoAnswerDeviceRequest struct {
 }
 
 func (s *Server) handleGetPhoneSettings(c *gin.Context) {
+	s.useGetPhoneSettings(c)
+}
+
+func (s *Server) useGetPhoneSettings(c businessContext) {
 	if !s.requirePhone(c) {
 		return
 	}
@@ -52,6 +55,16 @@ func (s *Server) handleGetPhoneSettings(c *gin.Context) {
 }
 
 func (s *Server) handleUpdateAutoAnswerDevice(c *gin.Context) {
+	s.useUpdateAutoAnswerDevice(c)
+}
+
+func (s *Server) useUpdateAutoAnswerDevice(c businessContext) {
+	releaseOperation, allowed := s.acquireBusinessMutation(c)
+	if !allowed {
+		return
+	}
+	defer releaseOperation()
+
 	if !s.requirePhone(c) {
 		return
 	}
@@ -175,15 +188,25 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "请选择不超过 16 MiB 的音频文件"})
 		return
 	}
-	extension := strings.ToLower(filepath.Ext(file.Filename))
+	if c.Request.MultipartForm != nil {
+		defer c.Request.MultipartForm.RemoveAll()
+	}
+	source, err := file.Open()
+	if err != nil {
+		s.respondAutoAnswerUploadError(c, err)
+		return
+	}
+	defer source.Close()
+	s.installAutoAnswerContent(c, file.Filename, source)
+}
+
+func (s *Server) installAutoAnswerContent(c businessContext, name string, source io.Reader) {
+	extension := strings.ToLower(filepath.Ext(name))
 	if _, ok := autoAnswerAudioFormats[extension]; !ok {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error", "message": "自动接听录音支持 WAV、AMR、AMR-WB 或 MP3 文件",
 		})
 		return
-	}
-	if c.Request.MultipartForm != nil {
-		defer c.Request.MultipartForm.RemoveAll()
 	}
 	s.phoneSettingsMu.Lock()
 	defer s.phoneSettingsMu.Unlock()
@@ -199,7 +222,7 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := copyUploadedAudio(file, temporary); err != nil {
+	if err := copyAutoAnswerAudio(source, temporary); err != nil {
 		s.respondAutoAnswerUploadError(c, err)
 		return
 	}
@@ -229,13 +252,9 @@ func (s *Server) handleUploadAutoAnswerAudio(c *gin.Context) {
 	c.JSON(http.StatusCreated, s.phoneSettingsPayload().AutoAnswer)
 }
 
-func copyUploadedAudio(file *multipart.FileHeader, target *os.File) error {
-	source, err := file.Open()
-	if err != nil {
-		return errors.Join(err, target.Close())
-	}
+func copyAutoAnswerAudio(source io.Reader, target *os.File) error {
 	_, copyErr := io.Copy(target, io.LimitReader(source, maxAutoAnswerAudioBytes+1))
-	closeErr := errors.Join(source.Close(), target.Close())
+	closeErr := errors.Join(target.Close())
 	if copyErr != nil {
 		return copyErr
 	}
@@ -284,7 +303,7 @@ func (s *Server) autoAnswerAudioPath() string {
 	return path
 }
 
-func (s *Server) respondAutoAnswerUploadError(c *gin.Context, err error) {
+func (s *Server) respondAutoAnswerUploadError(c businessContext, err error) {
 	logger.Error("保存自动接听录音失败", "err", err)
 	c.JSON(http.StatusInternalServerError, gin.H{
 		"status": "error", "message": fmt.Sprintf("保存自动接听录音失败: %v", err),

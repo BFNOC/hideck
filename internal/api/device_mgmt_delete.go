@@ -17,7 +17,7 @@ type managedDeviceDeleteOps struct {
 	detach       func(string) error
 }
 
-func stopManagedDevice(c *gin.Context, id string, abandon func(string) error) bool {
+func stopManagedDevice(c businessContext, id string, abandon func(string) error) bool {
 	if abandon == nil {
 		return true
 	}
@@ -31,7 +31,7 @@ func stopManagedDevice(c *gin.Context, id string, abandon func(string) error) bo
 	return true
 }
 
-func deleteManagedDevice(c *gin.Context, configPath string, ops managedDeviceDeleteOps) {
+func deleteManagedDevice(c businessContext, configPath string, ops managedDeviceDeleteOps) {
 	id := deviceIDParam(c)
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})

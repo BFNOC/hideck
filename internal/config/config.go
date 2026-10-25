@@ -108,6 +108,7 @@ func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 }
 
 type Config struct {
+	MCP            MCPConfig        `mapstructure:"mcp"`
 	ModemVoice     ModemVoiceConfig `mapstructure:"modem_voice"`
 	OutboundLimits outbound.Config  `mapstructure:"outbound_limits"`
 	Archive        ArchiveConfig    `mapstructure:"archive"`

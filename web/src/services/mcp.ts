@@ -1,0 +1,32 @@
+import { api } from '../stores/auth'
+
+export type McpToken = { id: string; name: string; prefix: string; created_at: string; revoked_at: string | null }
+export type McpSettings = { enabled: boolean; path: string }
+export type McpConnection = { id: string; name: string; status: string; token_id: string }
+export type McpBinding = { token_id: string; name: string; media_id: string; lease: string }
+
+export function mcpClientConfig(endpoint: string, token = '<MCP_TOKEN>') {
+  return JSON.stringify({ mcpServers: { hideck: { type: 'http', url: endpoint, headers: { Authorization: `Bearer ${token}` } } } }, null, 2)
+}
+
+export const mcpService = {
+  async settings() { return (await api.get<McpSettings>('/settings/mcp')).data },
+  async configure(enabled: boolean) { return (await api.put<McpSettings>('/settings/mcp', { enabled })).data },
+  async tokens() { return (await api.get<{ tokens: McpToken[] }>('/mcp/tokens')).data.tokens },
+  async createToken(name: string) { return (await api.post<{ token: McpToken; secret: string }>('/mcp/tokens', { name })).data },
+  async revokeToken(id: string) { await api.delete(`/mcp/tokens/${encodeURIComponent(id)}`) },
+  async bind(input: McpBinding, id?: string) {
+    const path = '/mcp/phone-connections'
+    return id
+      ? (await api.put<McpConnection>(`${path}/${encodeURIComponent(id)}`, input)).data
+      : (await api.post<McpConnection>(path, input)).data
+  },
+  async disconnect(id: string) { await api.delete(`/mcp/phone-connections/${encodeURIComponent(id)}`) },
+  async disconnectOnPageHide(id: string) {
+    const authorization = String(api.defaults.headers.common.Authorization || '')
+    const response = await fetch(`/api/mcp/phone-connections/${encodeURIComponent(id)}`, {
+      method: 'DELETE', headers: { Authorization: authorization }, keepalive: true
+    })
+    if (!response.ok) throw new Error(`解除 MCP 音频绑定失败（HTTP ${response.status}）`)
+  }
+}

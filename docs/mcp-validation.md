@@ -1,0 +1,53 @@
+# MCP 验证与真机验收
+
+验证日期：2026-10-25。软件验证在 macOS、Go 1.26.4 的本地工作区完成。尚未完成下表列出的真机验收，不能据此宣称完整硬件验收通过。
+
+## 已执行的软件验证
+
+| 范围 | 结果与证据 |
+| --- | --- |
+| SDK 协议 | 官方 SDK 客户端建立 Streamable HTTP 连接，发现工具和录音资源模板，实际调用工具、接收 progress 通知、读取资源；允许无参数调用省略 `arguments`，必需参数仍验证；125 项工具使用显式目录注册 |
+| 版本兼容 | SDK 实际处理 `2025-03-26`、`2025-11-25` 请求；未自行实现 JSON-RPC |
+| 鉴权 | 无令牌、错误令牌、网页会话令牌、已撤销令牌被 MCP 拒绝；MCP 令牌被网页 API 拒绝；关闭服务与跨源请求被拒绝 |
+| 存储 | SQLite 仅持久化摘要及元数据；序列化不含明文和摘要；重新建立令牌服务后仍能鉴权、独立撤销；开关写入配置并能重新加载 |
+| 真实业务链路 | 联系人实际写入 SQLite 后可从 REST 读取，删除和文件导入实际提交；大写 VCF 文件名可用，宿主机路径被拒绝 |
+| 短信失败 | SDK 调用离线设备、旧 ICCID、额度耗尽和注入发送器失败均返回错误；保留限额错误码、等待秒数和发送失败原因；失败发送只执行一次，未实际发送短信 |
+| 并发 | REST 与 MCP 共同等待现有 eSIM 变更锁；撤销令牌与音频绑定交错时不残留授权；多个网页连接独立选择 |
+| 音频授权 | 覆盖令牌隔离、网页所有者与媒体凭据验证、媒体失效、重建后更新凭据、撤销清理；此处是服务级测试，不代表真实双向音频已验证 |
+| 进度与取消 | SDK 收到真实 progress 通知；客户端取消传递至服务端业务上下文，不重复执行；业务错误和发送进度失败不会转成成功 |
+| 录音与设备标识 | 实际读取测试文件内容；拒绝路径穿越和撤销后的读取；移除录音产物的服务器路径，返回资源引用；保留设备发现及配置所需的 USB、控制端口、QMI 路径 |
+| 网页静态检查 | 380 项前端测试、类型检查、受影响文件 ESLint、生产构建通过 |
+| 网页音频生命周期 | 7 项新增回归覆盖媒体重建、解除绑定与异步响应交错、页面缓存恢复、离页时未完成的授权、真实错误传播；不依赖真实麦克风，不能替代真机验收 |
+| 网页浏览器检查 | 使用实际 MCP 设置组件和隔离 SQLite 管理接口，检查桌面与 375px 布局、令牌元数据展示、开关初始状态、空名称禁止创建、键盘展开连接配置；未在浏览器中授予真实令牌或麦克风权限 |
+
+后端检查命令如下。所有测试命令同时使用 60 秒进程硬超时和 Go 的 `-timeout=60s`；编译单独限时。未列入全仓库测试。
+
+```sh
+go test -timeout=60s ./internal/api ./internal/mcpserver ./internal/db ./internal/config ./internal/phone ./internal/commandcenter ./internal/automation ./internal/mbn
+go test -race -timeout=60s ./internal/api ./internal/mcpserver ./internal/config ./internal/phone ./internal/commandcenter ./internal/automation ./internal/mbn
+go test -race -timeout=60s ./internal/db
+go test -timeout=60s ./internal/device -run 'MBN|Outbound|RoutedSMS|OperatorSelection|ManagedDeviceMutation|ESIMSwitch' -count=1
+go vet ./internal/api ./internal/mcpserver ./internal/db ./internal/config ./internal/phone ./internal/mbn
+go build ./cmd/hideck
+```
+
+数据库 race 作为独立包通过。初次 race 构建超过进程硬时限，先单独编译后执行；直接执行 API 测试二进制时必须在 `internal/api` 目录运行，以解析原有 OpenAPI 测试文件。
+
+MBN 的两项原有成功驻网测试出现轮询与截止时间重合的失败。仅将这些成功场景的测试注册窗口从一秒改为两秒，稳定期和成功断言保持不变，复验通过；没有修改生产 MBN 超时或重试策略。前端构建保留现有大于 500 kB 的包体积提示。
+
+## 真机验收待执行
+
+目前没有指定可操作的测试模组、SIM、通话对端和 eSIM 下载资料，以下项目未执行。必须在对应真实部署环境完成后，才能关闭首版硬件验收。
+
+| 场景 | 需要记录的结果 |
+| --- | --- |
+| 设备与网络 | 发现、刷新、重启、网络配置、飞行模式、选网、AT/USSD 的实际状态与失败原因 |
+| SIM、MBN 与运营商 | SIM 变更、MBN 忙、eSIM 忙、运营商策略限制，以及 REST/MCP 同时操作的结果 |
+| 短信 | 实际发送、投递状态、额度达到上限后的拒绝；确认没有重复发送 |
+| 网页音频 | 指定令牌授权、两个网页分别连接、媒体重建、关闭网页、撤销令牌后连接失效 |
+| 电话 | MCP 拨出、来电接听、拒接、双向音频、DTMF、保持/恢复/切换、挂断及录音收尾 |
+| 自动接听 | 配置、音频转换、实际接听播放及录音；已有自动外呼录音模式另行验证 |
+| eSIM 长操作 | 下载进度、真实失败、取消与超时后的芯片状态；切卡后异步恢复；确认中断不导致重复下载或虚假成功 |
+| 部署 | 生产 HTTPS、反向代理 Host/Origin、真实 CLI/IDE 配置复制和连接 |
+
+长操作的已知生命周期和取消边界见 [接入文档](mcp.md#长操作文件和录音)。
