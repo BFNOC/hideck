@@ -1220,9 +1220,9 @@ func TestPeerRekeyKEGroupMismatchAnswersInvalidKEPayload(t *testing.T) {
 	}
 }
 
-// On the SHA256 suite Spark's offer only matches with PFS added, which is
-// refused: the current SA stays and the IKE SA is deleted at its lifetime.
-func TestPeerChildSARekeyAddingPFSIsRefused(t *testing.T) {
+// RFC 7296 1.3.3 lets a rekey carry KEi. On the SHA256 suite Spark's offer
+// only matches with PFS in group 14, the IKE SA group, so it is taken.
+func TestPeerChildSARekeyAddingPFSInIKEGroupIsAccepted(t *testing.T) {
 	session, transport := newSparkRekeySession(t)
 	defer stopControlTestSession(session)
 	if err := session.applySelectedESPAlgorithms(&childSASelection{
@@ -1230,6 +1230,28 @@ func TestPeerChildSARekeyAddingPFSIsRefused(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	request, _ := sparkRekeyOffer(t, session, 0, 0xb1c2d3e4)
+	if err := session.handlePeerChildSARekey(request); err != nil {
+		t.Fatalf("handlePeerChildSARekey: %v", err)
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	sa, ok := response[0].(*ikev2.EncryptedPayloadSA)
+	if !ok || proposalDHGroup(sa.Proposals[0]) != 14 || requestKEGroup(t, response) != 14 {
+		t.Fatalf("response = %#v, want the PFS proposal with KEr in group 14", response)
+	}
+}
+
+// A PFS group other than the IKE SA group is not one we offer ourselves;
+// the request is refused and the current SA stays.
+func TestPeerChildSARekeyAddingPFSInOtherGroupIsRefused(t *testing.T) {
+	session, transport := newSparkRekeySession(t)
+	defer stopControlTestSession(session)
+	if err := session.applySelectedESPAlgorithms(&childSASelection{
+		encryption: 12, encryptionKeyBits: 256, integrity: 12,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session.dhGroup = 2
 	oldRemoteSPI := session.espRemoteSPI
 	request, _ := sparkRekeyOffer(t, session, 0, 0xb1c2d3e4)
 	if err := session.handlePeerChildSARekey(request); err != nil {
@@ -1321,5 +1343,37 @@ func TestSparkRekeyOnSHA1SuitePicksFirstProposalWithoutPFS(t *testing.T) {
 	if pendingRemoteSPI(session) != 0xd1c2d3e4 || session.currentChildDHGroup() != 0 {
 		t.Fatalf("pending %08x dh %d, want the SHA1 answer pending without PFS",
 			pendingRemoteSPI(session), session.currentChildDHGroup())
+	}
+}
+
+// RFC 7296 3.3.6: from [14, NONE] with KEi in 14 the responder may take
+// either; we take 14 because KEi is in the IKE SA group.
+func TestPeerChildSARekeyOfferingOptionalPFSTakesKEiGroup(t *testing.T) {
+	session, transport := newSparkRekeySession(t)
+	defer stopControlTestSession(session)
+	if err := session.applySelectedESPAlgorithms(&childSASelection{
+		encryption: 12, encryptionKeyBits: 256, integrity: 12,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	optional := ikev2.NewProposal(1, ikev2.ProtoESP, spiBytes(0xb1c2d3e4))
+	optional.AddTransform(ikev2.TransformTypeEncr, 12, 256)
+	optional.AddTransform(ikev2.TransformTypeInteg, 12)
+	optional.AddTransform(ikev2.TransformTypeDH, 14)
+	optional.AddTransform(ikev2.TransformTypeDH, 0)
+	optional.AddTransform(ikev2.TransformTypeESN, 0)
+	peerDH, err := enginecrypto.NewDiffieHellman(14)
+	if err != nil || peerDH.GenerateKey() != nil {
+		t.Fatalf("peer DH: %v", err)
+	}
+	request := peerChildRekeyRequest(t, session, []*ikev2.Proposal{optional},
+		&ikev2.EncryptedPayloadKE{DHGroup: 14, KEData: peerDH.PublicKeyBytes()})
+	if err := session.handlePeerChildSARekey(request); err != nil {
+		t.Fatalf("handlePeerChildSARekey: %v", err)
+	}
+	response := sentPeerResponsePayloads(t, session, transport)
+	sa, ok := response[0].(*ikev2.EncryptedPayloadSA)
+	if !ok || proposalDHGroup(sa.Proposals[0]) != 14 || requestKEGroup(t, response) != 14 {
+		t.Fatalf("response = %#v, want group 14 with KEr", response)
 	}
 }

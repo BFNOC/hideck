@@ -36,9 +36,28 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	offer := payloads
 	group := s.currentChildDHGroup()
 	narrowed, proposalNum, ok := narrowPeerRekeyOffer(payloads, ikev2.ProtoESP, s.peerRekeyWant(group), s.espEncKeyBits)
-	// RFC 7296 2.8: a rekeyed CHILD_SA keeps the current algorithms, so only a
-	// proposal for the current suite is accepted. A rekey that adds PFS to a
-	// CHILD_SA without it is refused and the current SA stays.
+	// RFC 7296 2.8: a rekeyed CHILD_SA SHOULD keep the current algorithms.
+	// A CHILD_SA without PFS may also gain PFS in the IKE SA group, as our
+	// own rekey offers; any other change is refused and the current SA stays.
+	if group == 0 && s.dhGroup != 0 {
+		// Our choice, not an RFC rule: PFS first when KEi is in the IKE SA
+		// group, otherwise NONE first.
+		order := []uint16{0, s.dhGroup}
+		if peerKEGroup(payloads) == s.dhGroup {
+			order = []uint16{s.dhGroup, 0}
+		}
+		for _, candidate := range order {
+			narrowed, proposalNum, ok = narrowPeerRekeyOffer(payloads, ikev2.ProtoESP, s.peerRekeyWant(candidate), s.espEncKeyBits)
+			if ok {
+				group = candidate
+				break
+			}
+		}
+		if ok && group != 0 {
+			s.Logger.Info("peer CHILD_SA rekey adds PFS in the IKE SA group",
+				zap.Uint16("dh_group", group), zap.String("offer", createChildSAOffer(offer)))
+		}
+	}
 	if !ok {
 		reason := fmt.Sprintf("no proposal matches the current CHILD_SA suite %s", s.childSuiteDescription())
 		return s.rejectPeerRekeyOffer(packet, offer, errors.New(reason))
@@ -63,6 +82,20 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 			errors.New("peer CHILD_SA TSr does not contain an assigned inner address"))
 	}
 	return s.answerPeerChildSARekey(packet, offer, payloads, selection, proposalNum)
+}
+
+// peerKEGroup is the group of the first KE payload, 0 without one.
+func peerKEGroup(payloads []ikev2.Payload) uint16 {
+	for _, payload := range payloads {
+		if payload != nil && payload.Type() == ikev2.PayloadKE {
+			group, _, err := parseKEPayload(payload)
+			if err != nil {
+				return 0
+			}
+			return group
+		}
+	}
+	return 0
 }
 
 func (s *Session) peerRekeyWant(group uint16) map[ikev2.TransformType]ikev2.AlgorithmType {
