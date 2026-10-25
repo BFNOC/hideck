@@ -96,6 +96,7 @@ declare module 'vue' {
     MBNPanel: typeof import('./components/MBNPanel.vue')['default']
     MBNPolicyEditor: typeof import('./components/MBNPolicyEditor.vue')['default']
     McpClientSetup: typeof import('./components/settings/McpClientSetup.vue')['default']
+    McpDiagnostics: typeof import('./components/settings/McpDiagnostics.vue')['default']
     McpSettings: typeof import('./components/settings/McpSettings.vue')['default']
     NotificationQrConnect: typeof import('./components/settings/NotificationQrConnect.vue')['default']
     OperatorSelectionDialog: typeof import('./components/OperatorSelectionDialog.vue')['default']

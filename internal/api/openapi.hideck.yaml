@@ -39,6 +39,38 @@ tags:
   - name: phone
     description: VoWiFi 浏览器实时电话、媒体、事件与录音
 paths:
+  /mcp/diagnostics:
+    get:
+      tags: [settings]
+      summary: 检查 MCP 服务就绪状态和本次进程的令牌调用记录
+      description: |
+        仅接受网页登录会话，MCP 令牌不能访问。验证令牌存储、工具注册、开关、免责声明和有效令牌状态。
+        ready 表示服务就绪，不代表 Agent 所在机器的网络或 TLS 已连通。
+        tokens.activity 只包含最近一次成功鉴权请求及工具名、时间、耗时和失败标记，重启后清空，撤销或删除令牌后清除；不含令牌、调用参数或业务结果。
+      responses:
+        '200':
+          description: 诊断已执行，具体结果由 ready、status 和 message 表示
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready, status, message, initialized, tool_count, output_schema_count, tokens]
+                properties:
+                  ready: { type: boolean }
+                  status: { type: string, enum: [ready, disabled, disclaimer_required, token_required, initialization_failed] }
+                  message: { type: string }
+                  enabled: { type: boolean }
+                  initialized: { type: boolean }
+                  disclaimer_accepted: { type: boolean }
+                  version: { type: string }
+                  tool_count: { type: integer }
+                  output_schema_count: { type: integer }
+                  instructions_available: { type: boolean }
+                  checked_at: { type: string, format: date-time }
+                  tokens: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ErrorMessage' }
+        '503': { $ref: '#/components/responses/ErrorMessage' }
   /mbn/files:
     get:
       tags: [devices]

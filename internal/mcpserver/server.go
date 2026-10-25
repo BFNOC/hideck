@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,13 +26,14 @@ type Result struct {
 	Resources []*mcp.ResourceLink
 }
 type Tool struct {
-	Name        string
-	Description string
-	Schema      json.RawMessage
-	ReadOnly    bool
-	Destructive bool
-	Idempotent  bool
-	Execute     func(context.Context, json.RawMessage, Progress) (Result, error)
+	Name         string
+	Description  string
+	Schema       json.RawMessage
+	OutputSchema json.RawMessage
+	ReadOnly     bool
+	Destructive  bool
+	Idempotent   bool
+	Execute      func(context.Context, json.RawMessage, Progress) (Result, error)
 }
 type Options struct {
 	Tokens        *Tokens
@@ -41,13 +41,36 @@ type Options struct {
 	Tools         []Tool
 	ReadRecording func(context.Context, string) ([]byte, error)
 	Logger        *slog.Logger
+	Version       string
+	Instructions  string
 }
 
-func New(options Options) (http.Handler, error) {
-	server := mcp.NewServer(&mcp.Implementation{Name: "hideck", Version: "1.0.0"}, nil)
+type ServerInfo struct {
+	Version               string `json:"version"`
+	ToolCount             int    `json:"tool_count"`
+	OutputSchemaCount     int    `json:"output_schema_count"`
+	InstructionsAvailable bool   `json:"instructions_available"`
+}
+
+type Handler struct {
+	http.Handler
+	info ServerInfo
+}
+
+func (h *Handler) Info() ServerInfo { return h.info }
+
+func New(options Options) (*Handler, error) {
+	if options.Version == "" {
+		options.Version = "1.0.0"
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "hideck", Version: options.Version}, &mcp.ServerOptions{Instructions: options.Instructions})
+	info := ServerInfo{Version: options.Version, ToolCount: len(options.Tools), InstructionsAvailable: options.Instructions != ""}
 	for _, tool := range options.Tools {
 		if err := register(server, tool, options); err != nil {
 			return nil, err
+		}
+		if len(tool.OutputSchema) > 0 {
+			info.OutputSchemaCount++
 		}
 	}
 	if options.ReadRecording != nil {
@@ -64,7 +87,7 @@ func New(options Options) (http.Handler, error) {
 	}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true, MaxRequestBodyBytes: -1})
 	protected := http.NewCrossOriginProtection().Handler(handler)
-	return authenticate(protected, options), nil
+	return &Handler{Handler: authenticate(protected, options), info: info}, nil
 }
 
 func authenticate(next http.Handler, options Options) http.Handler {
@@ -114,84 +137,16 @@ func register(server *mcp.Server, tool Tool, options Options) error {
 	if err != nil {
 		return fmt.Errorf("%s schema: %w", tool.Name, err)
 	}
-	server.AddTool(&mcp.Tool{Name: tool.Name, Description: tool.Description, InputSchema: &schema,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: tool.ReadOnly, DestructiveHint: &tool.Destructive, IdempotentHint: tool.Idempotent}},
-		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			start := time.Now()
-			result, err := invoke(ctx, req, tool, resolved, options)
-			if options.Logger != nil {
-				var args struct {
-					DeviceID string `json:"device_id"`
-					Request  struct {
-						DeviceID string `json:"device_id"`
-					} `json:"request"`
-				}
-				_ = json.Unmarshal(req.Params.Arguments, &args)
-				if args.DeviceID == "" {
-					args.DeviceID = args.Request.DeviceID
-				}
-				options.Logger.Info("MCP tool", "tool", tool.Name, "token_id", TokenID(ctx), "device_id", args.DeviceID, "duration_ms", time.Since(start).Milliseconds(), "failed", err != nil || result.IsError)
-			}
-			return result, err
-		})
+	output, err := resolveOutputSchema(tool)
+	if err != nil {
+		return err
+	}
+	metadata := &mcp.Tool{Name: tool.Name, Description: tool.Description, InputSchema: &schema,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: tool.ReadOnly, DestructiveHint: &tool.Destructive, IdempotentHint: tool.Idempotent}}
+	if output.schema != nil {
+		metadata.OutputSchema = output.schema
+	}
+	invocation := registeredTool{tool: tool, options: options, input: resolved, output: output}
+	server.AddTool(metadata, invocation.call)
 	return nil
-}
-
-func invoke(ctx context.Context, req *mcp.CallToolRequest, tool Tool, schema *jsonschema.Resolved, options Options) (*mcp.CallToolResult, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if original, ok := ctx.Value(requestContextKey{}).(context.Context); ok {
-		stop := context.AfterFunc(original, cancel)
-		defer stop()
-	}
-	if err := authorizeCall(ctx, options); err != nil {
-		return failure(err), nil
-	}
-	// MCP permits tools/call to omit arguments for tools without inputs.
-	raw := req.Params.Arguments
-	if len(raw) == 0 {
-		raw = json.RawMessage(`{}`)
-	}
-	var arguments map[string]any
-	if err := json.Unmarshal(raw, &arguments); err != nil {
-		return failure(err), nil
-	}
-	if err := schema.Validate(arguments); err != nil {
-		return failure(fmt.Errorf("参数不符合工具契约: %w", err)), nil
-	}
-	var stages float64
-	progress := func(message string, percent float64) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		token := req.Params.GetProgressToken()
-		if token == nil {
-			return nil
-		}
-		total := float64(100)
-		if percent < 0 {
-			stages++
-			percent = stages
-			total = 0
-		}
-		return req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Message: message, Progress: percent, Total: total})
-	}
-	result, err := tool.Execute(ctx, raw, progress)
-	if err != nil {
-		return failure(err), nil
-	}
-	payload, err := json.Marshal(result.Data)
-	if err != nil {
-		return nil, err
-	}
-	response := &mcp.CallToolResult{StructuredContent: result.Data, IsError: result.Failed, Content: []mcp.Content{&mcp.TextContent{Text: string(payload)}}}
-	for _, resource := range result.Resources {
-		response.Content = append(response.Content, resource)
-	}
-	return response, nil
-}
-func failure(err error) *mcp.CallToolResult {
-	data := map[string]any{"error": err.Error()}
-	payload, _ := json.Marshal(data)
-	return &mcp.CallToolResult{IsError: true, StructuredContent: data, Content: []mcp.Content{&mcp.TextContent{Text: string(payload)}}}
 }

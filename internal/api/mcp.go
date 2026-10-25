@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/global"
 	"github.com/yibaiba/hideck/internal/mcpserver"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
@@ -32,7 +33,7 @@ func (s *Server) serveMCP(c *gin.Context) {
 	if !s.requireMCPManagement(c) {
 		return
 	}
-	s.mcpOnce.Do(func() { s.mcpHandler, s.mcpError = s.newMCPHandler() })
+	s.ensureMCPHandler()
 	if s.mcpError != nil {
 		logger.Error("MCP 初始化失败", "err", s.mcpError)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "MCP 初始化失败: " + s.mcpError.Error()})
@@ -41,7 +42,11 @@ func (s *Server) serveMCP(c *gin.Context) {
 	s.mcpHandler.ServeHTTP(c.Writer, c.Request)
 }
 
-func (s *Server) newMCPHandler() (http.Handler, error) {
+func (s *Server) ensureMCPHandler() {
+	s.mcpOnce.Do(func() { s.mcpHandler, s.mcpError = s.newMCPHandler() })
+}
+
+func (s *Server) newMCPHandler() (*mcpserver.Handler, error) {
 	raw, err := loadOpenAPISpecJSON()
 	if err != nil {
 		return nil, err
@@ -50,38 +55,68 @@ func (s *Server) newMCPHandler() (http.Handler, error) {
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return nil, err
 	}
-	tools := []mcpserver.Tool{}
-	for _, operation := range s.mcpOperations() {
-		schema, description, err := mcpInputSchema(spec, operation)
-		if err != nil {
-			return nil, err
-		}
-		tools = append(tools, mcpserver.Tool{Name: operation.name, Description: description, Schema: schema,
-			ReadOnly: operation.readOnly, Destructive: operation.destructive,
-			Execute: func(ctx context.Context, raw json.RawMessage, progress mcpserver.Progress) (mcpserver.Result, error) {
-				return s.executeMCPBusiness(ctx, operation, mcpArguments{raw: raw, progress: progress})
-			}})
+	tools, err := s.mcpBusinessTools(spec)
+	if err != nil {
+		return nil, err
 	}
 	tools = append(tools, s.mcpFileTools()...)
 	tools = append(tools, mcpserver.Tool{Name: "hideck_phone_audio_connections", Description: "查询当前令牌获准使用的网页音频连接。返回连接 ID、名称和状态。", Schema: json.RawMessage(`{"type":"object","additionalProperties":false}`), ReadOnly: true,
 		Execute: func(ctx context.Context, _ json.RawMessage, _ mcpserver.Progress) (mcpserver.Result, error) {
 			return mcpserver.Result{Data: map[string]any{"connections": s.mcpConnections.List(mcpserver.TokenID(ctx))}}, nil
 		}})
-	for i := range tools {
-		execute := tools[i].Execute
-		tools[i].Execute = func(ctx context.Context, raw json.RawMessage, progress mcpserver.Progress) (mcpserver.Result, error) {
-			_, accepted, err := s.disclaimerAcceptance(ctx)
-			if err != nil {
-				return mcpserver.Result{}, err
-			}
-			if !accepted {
-				return mcpserver.Result{}, errors.New("请先在网页阅读并确认当前版本的免责声明")
-			}
-			return execute(ctx, raw, progress)
+	for i, tool := range tools {
+		prepared, err := s.prepareMCPTool(tool)
+		if err != nil {
+			return nil, err
 		}
+		tools[i] = prepared
 	}
 	return mcpserver.New(mcpserver.Options{Tokens: s.mcpTokens, Enabled: s.mcpEnabled, Tools: tools,
-		ReadRecording: s.readMCPRecording, Logger: slog.New(logger.NewSlogHandler(logger.ZapLogger()))})
+		ReadRecording: s.readMCPRecording, Logger: slog.New(logger.NewSlogHandler(logger.ZapLogger())), Version: global.Version, Instructions: mcpInstructions})
+}
+
+func (s *Server) mcpBusinessTools(spec map[string]any) ([]mcpserver.Tool, error) {
+	tools := []mcpserver.Tool{}
+	for _, operation := range s.mcpOperations() {
+		schema, description, err := mcpInputSchema(spec, operation)
+		if err != nil {
+			return nil, err
+		}
+		output, err := mcpOutputSchema(spec, operation)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, mcpserver.Tool{Name: operation.name, Description: description + mcpToolGuidance(operation.name), Schema: schema, OutputSchema: output,
+			ReadOnly: operation.readOnly, Destructive: operation.destructive,
+			Execute: func(ctx context.Context, raw json.RawMessage, progress mcpserver.Progress) (mcpserver.Result, error) {
+				return s.executeMCPBusiness(ctx, operation, mcpArguments{raw: raw, progress: progress})
+			}})
+	}
+	return tools, nil
+}
+
+func (s *Server) prepareMCPTool(tool mcpserver.Tool) (mcpserver.Tool, error) {
+	prepared := tool
+	if len(prepared.OutputSchema) == 0 {
+		output, err := mcpSpecialOutput(prepared.Name)
+		if err != nil {
+			return prepared, err
+		}
+		prepared.OutputSchema = output
+		prepared.Description += mcpToolGuidance(prepared.Name)
+	}
+	execute := prepared.Execute
+	prepared.Execute = func(ctx context.Context, raw json.RawMessage, progress mcpserver.Progress) (mcpserver.Result, error) {
+		_, accepted, err := s.disclaimerAcceptance(ctx)
+		if err != nil {
+			return mcpserver.Result{}, err
+		}
+		if !accepted {
+			return mcpserver.Result{}, errors.New("请先在网页阅读并确认当前版本的免责声明")
+		}
+		return execute(ctx, raw, progress)
+	}
+	return prepared, nil
 }
 
 type mcpArguments struct {

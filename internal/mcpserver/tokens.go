@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,9 +34,15 @@ type TokenStore interface {
 	Delete(context.Context, string) error
 }
 
-type Tokens struct{ store TokenStore }
+type Tokens struct {
+	store    TokenStore
+	mu       sync.Mutex
+	activity map[string]Activity
+}
 
-func NewTokens(store TokenStore) *Tokens { return &Tokens{store: store} }
+func NewTokens(store TokenStore) *Tokens {
+	return &Tokens{store: store, activity: make(map[string]Activity)}
+}
 
 func (s *Tokens) Create(ctx context.Context, name string) (Token, string, error) {
 	name = strings.TrimSpace(name)
@@ -62,6 +69,9 @@ func (s *Tokens) Authenticate(ctx context.Context, secret string) (Token, error)
 	if !strings.HasPrefix(secret, "hideck_mcp_") {
 		return Token{}, ErrUnauthorized
 	}
+	// Serialize observation with revocation/deletion; in-flight completions cannot restore it.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	token, err := s.store.FindDigest(ctx, digest(secret))
 	if err != nil {
 		return Token{}, err
@@ -69,6 +79,9 @@ func (s *Tokens) Authenticate(ctx context.Context, secret string) (Token, error)
 	if token.ID == "" || token.RevokedAt != nil {
 		return Token{}, ErrUnauthorized
 	}
+	activity := s.activity[token.ID]
+	activity.LastRequestAt = time.Now().UTC()
+	s.activity[token.ID] = activity
 	return token, nil
 }
 
@@ -85,9 +98,23 @@ func (s *Tokens) Active(ctx context.Context, id string) (Token, error) {
 
 func (s *Tokens) List(ctx context.Context) ([]Token, error) { return s.store.List(ctx) }
 func (s *Tokens) Revoke(ctx context.Context, id string) error {
-	return s.store.Revoke(ctx, id, time.Now().UTC())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.store.Revoke(ctx, id, time.Now().UTC()); err != nil {
+		return err
+	}
+	delete(s.activity, id)
+	return nil
 }
-func (s *Tokens) Delete(ctx context.Context, id string) error { return s.store.Delete(ctx, id) }
+func (s *Tokens) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.store.Delete(ctx, id); err != nil {
+		return err
+	}
+	delete(s.activity, id)
+	return nil
+}
 func digest(secret string) string {
 	hash := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(hash[:])

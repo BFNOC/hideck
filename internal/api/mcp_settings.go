@@ -18,6 +18,7 @@ func (s *Server) mcpEnabled() bool {
 func (s *Server) registerMCPManagement(api *gin.RouterGroup) {
 	api.GET("/settings/mcp", s.handleMCPSettingsGet)
 	api.PUT("/settings/mcp", s.handleMCPSettingsPut)
+	api.GET("/mcp/diagnostics", s.handleMCPDiagnostics)
 	api.GET("/mcp/tokens", s.handleMCPTokensList)
 	api.POST("/mcp/tokens", s.handleMCPTokensCreate)
 	api.DELETE("/mcp/tokens/:id", s.handleMCPTokensRevoke)

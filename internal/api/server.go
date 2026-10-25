@@ -76,7 +76,7 @@ const updateCheckTimeout = 10 * time.Second
 type Server struct {
 	mcpMu                   sync.RWMutex
 	mcpOnce                 sync.Once
-	mcpHandler              http.Handler
+	mcpHandler              *mcpserver.Handler
 	mcpError                error
 	mcpTokens               *mcpserver.Tokens
 	mcpConnections          *mcpserver.Connections

@@ -52,9 +52,22 @@ SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不
 
 - 路径标识（例如 `device_id`、`iccid`、`call_id`）和查询条件位于参数顶层。
 - 原 REST JSON 请求体放在 `request` 字段内；字段名称、业务验证和分页含义保持一致。
-- 参数的完整 JSON Schema、操作说明和只读/破坏性注解通过 `tools/list` 查询。
+- 参数与输出的 JSON Schema、操作说明和只读/破坏性注解通过 `tools/list` 查询。初始化响应的 `instructions` 提供标识符获取、异步结果查询及错误处理说明。
 - 结果同时提供 `structuredContent` 和 JSON 文本。一般结果为 `{"status_code": 200, "data": ...}`；真实业务错误保留状态、原因和已有业务错误码，并设置 `isError`。
 - 发送短信、外呼、切换 SIM 等写操作不会自动重试。遇到连接中断或超时，应先查询设备、短信投递或通话状态，再决定是否重新操作。
+
+全部 125 项工具均声明 `outputSchema`，保持已有返回字段。普通业务结果声明 `status_code` 和 `data`，204 的 `data` 为 `null`；有 OpenAPI 响应定义的接口展开原有字段约束，命令、MBN、eSIM 下载和文件工具补充实际结构。没有细化响应定义的旧接口只承诺业务信封，不声称已为所有硬件数据建立完整类型模型。识别激活码、上传 MBN、查询网页音频连接分别返回 `{activation}`、`{asset}`、`{connections}`。
+
+Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果发送前按实际序列化 JSON 校验；不符合契约时明确报告错误，并提示操作可能已发生，应先查询真实状态，不能据此自动重试或声称已回滚。该实现遵循 [MCP 输出 Schema 与结构化结果约定](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx)。
+
+| 操作 | 结果关联与完成判断 |
+| --- | --- |
+| 短信发送 | `data.message_id` 非空时用 `sms_delivery` 查询；`acked` 仅为发送端受理，不能声称收件手机已收到 |
+| 网页拨号 | 先查 `phone_audio_connections` 选连接，再传 `audio_connection_id`；`data.call_id` 用于控制，`phone_active` 查询实际通话状态 |
+| eSIM 下载/切换 | 进度不是最终结果；下载最终 `data.step=done` 后仍需保留警告并查询 Profiles，切卡后重新读取身份 |
+| 命令执行 | 202 的 `data.execution.id` 对应事件 `execution_id`；使用 `command_results` 的 `after_id` 游标读取，以事件及执行状态判断结束 |
+| 自动任务 | 202 的 `data.id` 为运行 ID；按 `data.task_id` 调用 `task_runs` 并匹配运行 ID，`queued/running` 不表示完成 |
+| 余额 / MBN | 分别保存 `data.query.id` / `data.operation_id`，用 `balance_get` / `mbn_operations` 查询，不重复发起操作代替查询 |
 
 发送短信示例：
 
@@ -139,6 +152,7 @@ SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET / PUT | `/api/settings/mcp` | 读取/保存开关；默认关闭，持久化到 YAML |
+| GET | `/api/mcp/diagnostics` | 检查服务就绪、工具注册、契约数量及内存中的令牌最近请求/调用；只接受网页会话 |
 | GET / POST | `/api/mcp/tokens` | 列出元数据/创建令牌，创建时单次返回 `secret` |
 | DELETE | `/api/mcp/tokens/:id` | 撤销令牌并解除其音频绑定 |
 | DELETE | `/api/mcp/tokens/:id/record` | 永久删除有效或已撤销令牌记录并解除音频绑定；原撤销接口保持原行为 |
@@ -147,6 +161,10 @@ SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不
 | DELETE | `/api/mcp/phone-connections/:id` | 解除授权，不额外挂断通话 |
 
 SQLite 的 `mcp_tokens` 保存 ID、名称、显示前缀、SHA-256 摘要、创建和撤销时间；不保存令牌明文。音频绑定只保存在内存。
+
+网页「检查接入」返回 `ready/status/message`，区分 MCP 关闭、工具初始化失败、免责声明未确认、无有效令牌和服务就绪；存储读取失败保留真实错误。服务就绪不等于客户端已连接，也不代表模组已驻网。诊断不模拟 Agent 网络，不关闭 TLS 校验。
+
+令牌接入记录仅保留本次进程内最后一次成功鉴权 HTTP 请求时间，以及最后一次工具调用的名称、完成时间、耗时和失败标记。鉴权请求可能只是协议发现或被跨源策略拒绝的请求，不能把它标为工具调用成功。记录不包含令牌、参数或业务结果；重启、撤销、删除后清除，进行中的调用结束也不会恢复已清除记录。开关或令牌列表发生变化时，网页清除旧检查结果，需重新检查。
 
 业务编排接受独立调用上下文，REST 和 MCP 直接调用同一实现；短信/网络/诊断的共享用例按领域拆到 API 模块内的 `*_usecase.go`。MBN 操作租约移入共享入口，REST middleware 对这些入口不重复加锁。电话、MBN、命令、自动任务继续复用原服务。审计记录工具名、令牌 ID、目标设备标识、耗时和失败状态，不记录令牌、短信正文或激活码。
 

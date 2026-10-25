@@ -7,6 +7,7 @@ import { errorMessage } from '../../services/http'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
 import { copyToClipboard } from '../../utils/clipboard'
 import McpClientSetup from './McpClientSetup.vue'
+import McpDiagnostics from './McpDiagnostics.vue'
 
 const enabled = ref(false)
 const loading = ref(true)
@@ -23,6 +24,7 @@ const secret = ref('')
 const showSecret = ref(false)
 const selectedClient = ref<McpClientId>('codex')
 const endpoint = computed(() => `${window.location.origin}/mcp`)
+const diagnosticsKey = computed(() => JSON.stringify([enabled.value, tokens.value.map(token => [token.id, token.revoked_at])]))
 
 async function load() {
   loading.value = true
@@ -128,6 +130,7 @@ onMounted(load)
       </ul>
       <p v-if="!tokens.length" class="mcp-help">尚未创建令牌。</p>
       <McpClientSetup v-model="selectedClient" :endpoint="endpoint" />
+      <McpDiagnostics :key="diagnosticsKey" />
     </template>
     <el-dialog v-model="showSecret" title="保存令牌" width="min(620px, 92vw)" append-to-body :close-on-click-modal="false" @closed="secret = ''">
       <p>令牌仅显示一次，请妥善保存。</p>
