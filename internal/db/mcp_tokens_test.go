@@ -52,3 +52,47 @@ func TestMCPTokensPersistDigestOnlyAndRevoke(t *testing.T) {
 		t.Fatalf("revoked token by id: %v", err)
 	}
 }
+
+func TestMCPTokensDeleteActiveAndRevoked(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "active", true: "revoked"}[revoked], func(t *testing.T) {
+			database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "mcp.db")), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := database.AutoMigrate(&mcpserver.Token{}); err != nil {
+				t.Fatal(err)
+			}
+			tokens := mcpserver.NewTokens(NewMCPTokenStore(database))
+			ctx := t.Context()
+			token, secret, err := tokens.Create(ctx, "delete me")
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, _, err := tokens.Create(ctx, "keep me")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if revoked {
+				if err := tokens.Revoke(ctx, token.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tokens.Delete(ctx, token.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tokens.Authenticate(ctx, secret); !errors.Is(err, mcpserver.ErrUnauthorized) {
+				t.Fatalf("deleted token still authenticates: %v", err)
+			}
+			for _, id := range []string{token.ID, "' OR 1=1 --"} {
+				if err := tokens.Delete(ctx, id); !errors.Is(err, mcpserver.ErrUnauthorized) {
+					t.Fatalf("missing token deletion: %v", err)
+				}
+			}
+			list, err := tokens.List(ctx)
+			if err != nil || len(list) != 1 || list[0].ID != other.ID {
+				t.Fatalf("incorrect remaining tokens: count=%d err=%v", len(list), err)
+			}
+		})
+	}
+}

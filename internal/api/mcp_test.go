@@ -21,6 +21,9 @@ func (s *memoryMCPTokens) Create(_ context.Context, token mcpserver.Token) error
 	return nil
 }
 func (s *memoryMCPTokens) List(context.Context) ([]mcpserver.Token, error) {
+	if s.token.ID == "" {
+		return []mcpserver.Token{}, nil
+	}
 	return []mcpserver.Token{s.token}, nil
 }
 func (s *memoryMCPTokens) FindDigest(_ context.Context, digest string) (mcpserver.Token, error) {
@@ -37,6 +40,13 @@ func (s *memoryMCPTokens) FindID(_ context.Context, id string) (mcpserver.Token,
 }
 func (s *memoryMCPTokens) Revoke(_ context.Context, _ string, at time.Time) error {
 	s.token.RevokedAt = &at
+	return nil
+}
+func (s *memoryMCPTokens) Delete(_ context.Context, id string) error {
+	if s.token.ID != id || id == "" {
+		return mcpserver.ErrUnauthorized
+	}
+	s.token = mcpserver.Token{}
 	return nil
 }
 

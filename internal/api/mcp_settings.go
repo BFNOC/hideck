@@ -21,6 +21,7 @@ func (s *Server) registerMCPManagement(api *gin.RouterGroup) {
 	api.GET("/mcp/tokens", s.handleMCPTokensList)
 	api.POST("/mcp/tokens", s.handleMCPTokensCreate)
 	api.DELETE("/mcp/tokens/:id", s.handleMCPTokensRevoke)
+	api.DELETE("/mcp/tokens/:id/record", s.handleMCPTokensDelete)
 	api.POST("/mcp/phone-connections", s.handleMCPConnectionBind)
 	api.PUT("/mcp/phone-connections/:id", s.handleMCPConnectionBind)
 	api.DELETE("/mcp/phone-connections/:id", s.handleMCPConnectionDelete)
@@ -101,6 +102,21 @@ func (s *Server) handleMCPTokensRevoke(c *gin.Context) {
 	s.mcpMu.Lock()
 	defer s.mcpMu.Unlock()
 	if err := s.mcpTokens.Revoke(c.Request.Context(), c.Param("id")); err != nil {
+		mcpManagementError(c, err)
+		return
+	}
+	s.mcpConnections.Revoke(c.Param("id"))
+	c.Status(http.StatusNoContent)
+}
+func (s *Server) handleMCPTokensDelete(c *gin.Context) {
+	if !s.requireMCPManagement(c) {
+		return
+	}
+
+	// Serialize deletion with binding so a deleted token cannot retain audio access.
+	s.mcpMu.Lock()
+	defer s.mcpMu.Unlock()
+	if err := s.mcpTokens.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		mcpManagementError(c, err)
 		return
 	}

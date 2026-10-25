@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { mcpService, type McpToken } from '../../services/mcp'
 import type { McpClientId } from '../../services/mcp-clients'
 import { errorMessage } from '../../services/http'
@@ -12,6 +13,7 @@ const loading = ref(true)
 const saving = ref(false)
 const creating = ref(false)
 const revoking = ref('')
+const deleting = ref('')
 const error = ref('')
 const name = ref('')
 const tokens = ref<McpToken[]>([])
@@ -58,6 +60,26 @@ async function revoke(id: string) {
   } catch (cause) { error.value = errorMessage(cause, '令牌撤销失败') }
   finally { revoking.value = '' }
 }
+async function deleteToken(token: McpToken) {
+  const message = token.revoked_at
+    ? `删除令牌“${token.name}”的记录？删除后不可恢复。`
+    : `删除令牌“${token.name}”？令牌将立即失效并解除网页音频授权，已开始的硬件操作不会回滚。删除后不可恢复。`
+  try {
+    await ElMessageBox.confirm(message, '删除 MCP 令牌', {
+      confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
+    })
+  } catch (cause) {
+    if (cause !== 'cancel' && cause !== 'close') error.value = errorMessage(cause, '无法确认删除令牌')
+    return
+  }
+  deleting.value = token.id
+  error.value = ''
+  try {
+    await mcpService.deleteToken(token.id)
+    tokens.value = tokens.value.filter(item => item.id !== token.id)
+  } catch (cause) { error.value = errorMessage(cause, '令牌删除失败') }
+  finally { deleting.value = '' }
+}
 async function copy(value: string) {
   error.value = ''
   if (!await copyToClipboard(value)) error.value = '自动复制未完成，请手动选择并复制。'
@@ -84,7 +106,10 @@ onMounted(load)
       <ul class="mcp-token-list" aria-label="MCP 令牌">
         <li v-for="token in tokens" :key="token.id">
           <div><strong>{{ token.name }}</strong><code>{{ token.prefix }}…</code><small>{{ formatDeviceDateTime(token.created_at) }} · {{ token.revoked_at ? '已撤销' : '有效' }}</small></div>
-          <el-button v-if="!token.revoked_at" type="danger" plain :loading="revoking === token.id" :disabled="!!revoking" :aria-label="`撤销 ${token.name}`" @click="revoke(token.id)">撤销</el-button>
+          <div class="mcp-token-actions">
+            <el-button v-if="!token.revoked_at" plain :loading="revoking === token.id" :disabled="!!revoking || !!deleting" :aria-label="`撤销 ${token.name}`" @click="revoke(token.id)">撤销</el-button>
+            <el-button type="danger" plain :loading="deleting === token.id" :disabled="!!revoking || !!deleting" :aria-label="`删除 ${token.name}`" @click="deleteToken(token)">删除</el-button>
+          </div>
         </li>
       </ul>
       <p v-if="!tokens.length" class="mcp-help">尚未创建令牌。</p>
@@ -114,7 +139,9 @@ p, small { color: var(--ui-text-muted); }
 .mcp-error { color: var(--el-color-danger); margin-bottom: 12px; }
 .mcp-token-list { margin: 16px 0; }
 .mcp-token-list li { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--ui-border); }
-.mcp-token-list li div { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.mcp-token-list li > div:first-child { display: grid; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
+.mcp-token-list .mcp-token-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
+.mcp-token-actions :deep(.el-button + .el-button) { margin-left: 0; }
 code { font-family: var(--font-mono, monospace); }
 .mcp-secret-actions { margin-top: 12px; flex-wrap: wrap; }
 @media (max-width: 640px) { .mcp-settings { padding: 16px; } .mcp-row { flex-wrap: wrap; } .mcp-row > .el-input { flex-basis: 100%; } .mcp-settings :deep(.el-button) { min-height: 44px; } }

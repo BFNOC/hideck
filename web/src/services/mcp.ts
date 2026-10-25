@@ -12,6 +12,7 @@ export const mcpService = {
   async tokens() { return (await api.get<{ tokens: McpToken[] }>('/mcp/tokens')).data.tokens },
   async createToken(name: string) { return (await api.post<{ token: McpToken; secret: string }>('/mcp/tokens', { name })).data },
   async revokeToken(id: string) { await api.delete(`/mcp/tokens/${encodeURIComponent(id)}`) },
+  async deleteToken(id: string) { await api.delete(`/mcp/tokens/${encodeURIComponent(id)}/record`) },
   async bind(input: McpBinding, id?: string) {
     const path = '/mcp/phone-connections'
     return id

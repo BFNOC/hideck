@@ -107,6 +107,15 @@ func TestMCPContactFileImportWithRealSDK(t *testing.T) {
 }
 
 func TestMCPBindingCannotSurviveConcurrentRevocation(t *testing.T) {
+	testMCPBindingInvalidation(t, "")
+}
+
+func TestMCPBindingCannotSurviveConcurrentDeletion(t *testing.T) {
+	testMCPBindingInvalidation(t, "/record")
+}
+
+func testMCPBindingInvalidation(t *testing.T, suffix string) {
+	t.Helper()
 	server := &Server{fullCfg: &config.Config{MCP: config.MCPConfig{Enabled: true}}, mcpTokens: mcpserver.NewTokens(&memoryMCPTokens{})}
 	token, _, err := server.mcpTokens.Create(t.Context(), "audio")
 	if err != nil {
@@ -130,7 +139,7 @@ func TestMCPBindingCannotSurviveConcurrentRevocation(t *testing.T) {
 	<-validating
 	go func() {
 		defer close(revoked)
-		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/api/mcp/tokens/"+token.ID, nil))
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/api/mcp/tokens/"+token.ID+suffix, nil))
 	}()
 	// Revocation may wait for the in-flight bind, but must invalidate it before
 	// returning. The gate also reproduces a revoke overtaking media validation.

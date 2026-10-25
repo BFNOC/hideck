@@ -44,3 +44,13 @@ func (s *MCPTokenStore) Revoke(ctx context.Context, id string, at time.Time) err
 	}
 	return nil
 }
+func (s *MCPTokenStore) Delete(ctx context.Context, id string) error {
+	result := s.database.WithContext(ctx).Where("id = ?", id).Delete(&mcpserver.Token{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return mcpserver.ErrUnauthorized
+	}
+	return nil
+}

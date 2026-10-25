@@ -30,6 +30,7 @@ type TokenStore interface {
 	FindDigest(context.Context, string) (Token, error)
 	FindID(context.Context, string) (Token, error)
 	Revoke(context.Context, string, time.Time) error
+	Delete(context.Context, string) error
 }
 
 type Tokens struct{ store TokenStore }
@@ -86,6 +87,7 @@ func (s *Tokens) List(ctx context.Context) ([]Token, error) { return s.store.Lis
 func (s *Tokens) Revoke(ctx context.Context, id string) error {
 	return s.store.Revoke(ctx, id, time.Now().UTC())
 }
+func (s *Tokens) Delete(ctx context.Context, id string) error { return s.store.Delete(ctx, id) }
 func digest(secret string) string {
 	hash := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(hash[:])

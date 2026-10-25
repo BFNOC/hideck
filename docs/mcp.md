@@ -41,7 +41,7 @@ HiDeck 服务已经运行在服务端，以上客户端直接连接远程地址�
 }
 ```
 
-令牌不能用于网页登录或 REST 管理接口，网页会话令牌也不能访问 MCP。首版令牌均拥有本页所列业务权限、长期有效，可独立撤销。关闭服务或撤销令牌后，后续 HTTP 请求及业务调用立即拒绝；已开始的硬件操作不承诺回滚。
+令牌不能用于网页登录或 REST 管理接口，网页会话令牌也不能访问 MCP。首版令牌均拥有本页所列业务权限、长期有效，可独立撤销。“撤销”保留失效记录；“删除”永久移除记录，有效及已撤销令牌均可删除。关闭服务、撤销或删除令牌后，后续 HTTP 请求及业务调用立即拒绝，关联网页音频授权失效；已开始的硬件操作不承诺回滚。
 
 SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不需要 Origin。若本机反向代理连接 `127.0.0.1` 并转发公网 Host，SDK 可能返回 403；应在该代理的 MCP 路由中把上游 Host 设为实际本地服务地址（例如 `localhost:7575`），并继续保留公网 HTTPS 和 Authorization 头。不要关闭跨源校验来规避错误。
 
@@ -140,6 +140,7 @@ SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不
 | GET / PUT | `/api/settings/mcp` | 读取/保存开关；默认关闭，持久化到 YAML |
 | GET / POST | `/api/mcp/tokens` | 列出元数据/创建令牌，创建时单次返回 `secret` |
 | DELETE | `/api/mcp/tokens/:id` | 撤销令牌并解除其音频绑定 |
+| DELETE | `/api/mcp/tokens/:id/record` | 永久删除有效或已撤销令牌记录并解除音频绑定；原撤销接口保持原行为 |
 | POST | `/api/mcp/phone-connections` | 校验当前用户的 `media_id`、`lease` 后绑定令牌 |
 | PUT | `/api/mcp/phone-connections/:id` | 更新该用户和令牌原有连接的媒体凭据 |
 | DELETE | `/api/mcp/phone-connections/:id` | 解除授权，不额外挂断通话 |
