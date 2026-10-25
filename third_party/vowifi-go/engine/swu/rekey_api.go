@@ -94,16 +94,16 @@ func (s *Session) handleCreateChildSARespOffer(
 ) (uint16, error) {
 	packet, err := ikev2.DecodePacket(data)
 	if err != nil {
-		wipeChildRekeyKE(newChildDH)
+		newChildDH.Wipe()
 		return 0, fmt.Errorf("swu: decode CHILD_SA rekey response: %w", err)
 	}
 	payloads, err := s.decryptAndParse(packet)
 	if err != nil {
-		wipeChildRekeyKE(newChildDH)
+		newChildDH.Wipe()
 		return 0, fmt.Errorf("swu: decrypt CHILD_SA rekey response: %w", err)
 	}
 	if err := childSARejectionError(payloads); err != nil {
-		wipeChildRekeyKE(newChildDH)
+		newChildDH.Wipe()
 		return 0, err
 	}
 	s.childSAMu.RLock()

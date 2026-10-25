@@ -103,7 +103,7 @@ func (s *Session) attemptChildSARekey(offer childRekeyDHOffer) error {
 	})
 	response, err := s.sendEncryptedWithRetry(payloads, ikev2.CREATE_CHILD_SA)
 	if err != nil {
-		wipeChildRekeyKE(newDH)
+		newDH.Wipe()
 		return fmt.Errorf("%w (offer: %s)", err, createChildSAOffer(payloads))
 	}
 	selected, err := s.handleCreateChildSARespOffer(response, ni, localSPI, newDH, offer)
@@ -128,12 +128,6 @@ func (s *Session) childRekeyDHOffer() childRekeyDHOffer {
 		return childRekeyDHOffer{}
 	}
 	return childRekeyDHOffer{keGroup: s.dhGroup, groups: []uint16{s.dhGroup, 0}}
-}
-
-func wipeChildRekeyKE(dh *enginecrypto.DiffieHellman) {
-	if dh != nil {
-		enginecrypto.Wipe(dh.SharedKey)
-	}
 }
 
 func (s *Session) completeInitiatedChildSARekey(
@@ -162,7 +156,7 @@ func (s *Session) completeInitiatedChildSARekeySelected(rekey initiatedChildReke
 	offeredKE := rekey.newDH
 	defer func() {
 		if !installed {
-			wipeChildRekeyKE(offeredKE)
+			offeredKE.Wipe()
 		}
 	}()
 	tsi, tsr := s.currentChildSelectors()
@@ -205,7 +199,7 @@ func (s *Session) completeInitiatedChildSARekeySelected(rekey initiatedChildReke
 	}
 	installed = true
 	if offeredKE != rekey.newDH {
-		wipeChildRekeyKE(offeredKE)
+		offeredKE.Wipe()
 	}
 	if err := s.deleteOldChildSA(rekey.oldRemoteSPI, rekey.oldLocalSPI); err != nil {
 		logger.Warn("CHILD_SA rekey switched but old SA delete failed", zap.Error(err))
