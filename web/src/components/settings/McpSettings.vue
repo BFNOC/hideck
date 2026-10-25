@@ -66,9 +66,9 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="ui-card mcp-settings" aria-labelledby="mcp-settings-title" :aria-busy="loading">
+  <section class="mcp-settings" aria-labelledby="mcp-settings-title" :aria-busy="loading">
     <div class="mcp-heading">
-      <div><h2 id="mcp-settings-title">MCP 接入</h2><p>让 CLI / IDE 中的 AI 助手管理设备、短信、电话与日常业务。</p></div>
+      <div><h3 id="mcp-settings-title">MCP 接入</h3><p>让 CLI / IDE 中的 AI 助手管理设备、短信、电话与日常业务。</p></div>
       <el-switch :model-value="enabled" :loading="saving" :disabled="loading || saving" aria-label="启用 MCP 服务" @change="toggle" />
     </div>
     <p v-if="error" class="mcp-error" role="alert">{{ error }} <el-button v-if="!loading" text @click="load">重新加载</el-button></p>
@@ -102,10 +102,12 @@ onMounted(load)
 </template>
 
 <style scoped>
-.mcp-settings { padding: 24px; }
+.mcp-settings { grid-column: 1 / -1; min-width: 0; padding: 24px; border-top: 1px solid var(--ui-border); }
 .mcp-heading, .mcp-row, .mcp-token-list li { display: flex; align-items: center; gap: 12px; }
 .mcp-heading { justify-content: space-between; margin-bottom: 16px; }
-h2 { font-size: 18px; font-weight: 650; }
+.mcp-heading > div { min-width: 0; }
+.mcp-heading :deep(.el-switch) { flex-shrink: 0; }
+h3 { color: var(--ui-text); font-size: 18px; font-weight: 700; }
 p, small { color: var(--ui-text-muted); }
 .mcp-label { display: block; margin-bottom: 8px; font-weight: 600; }
 .mcp-help { margin: 12px 0 16px; font-size: 13px; line-height: 1.6; }
