@@ -19,19 +19,18 @@ async function copy(value: string) {
 
 <template>
   <div class="mcp-client-setup">
-    <label class="mcp-client-label" :for="selectorId">选择 Agent / 客户端</label>
+    <label class="mcp-client-label" :for="selectorId">Agent / 客户端</label>
     <el-select :id="selectorId" v-model="selected" aria-label="选择 MCP 客户端" class="mcp-client-select">
       <el-option v-for="option in MCP_CLIENTS" :key="option.id" :label="option.name" :value="option.id" />
     </el-select>
-    <p class="mcp-client-path">配置位置：<code>{{ client.configPath }}</code></p>
+    <p class="mcp-client-path">配置文件：<code>{{ client.configPath }}</code></p>
     <p class="mcp-client-hint">{{ client.hint }} <a :href="client.docsUrl" target="_blank" rel="noopener noreferrer">官方说明</a></p>
-    <p v-if="!token" class="mcp-client-hint">下方为配置模板。创建令牌时可复制已填入新令牌的配置。</p>
+    <p v-if="!token" class="mcp-client-hint">将 <code>&lt;MCP_TOKEN&gt;</code> 替换为令牌。</p>
     <pre class="mcp-client-config" tabindex="0" :aria-label="`${client.name} ${client.format} 连接配置`">{{ config }}</pre>
     <div class="mcp-client-actions">
       <el-button @click="copy(config)">{{ token ? '复制连接配置' : '复制配置模板' }}</el-button>
       <el-button type="primary" plain @click="copy(instructions)">复制给 Agent</el-button>
     </div>
-    <p class="mcp-client-hint">可将说明交给有本机配置权限的 Agent 完成接入。Agent 所在机器需要能访问此服务地址。</p>
     <p v-if="copyError" class="mcp-client-error" role="alert">{{ copyError }}</p>
   </div>
 </template>

@@ -45,7 +45,7 @@ async function create() {
   if (creating.value) return
   const tokenName = name.value.trim()
   if (!tokenName) {
-    nameError.value = '请先填写令牌名称，例如 Codex 或 Hermes。'
+    nameError.value = '请输入令牌名称。'
     nameInput.value?.focus()
     return
   }
@@ -72,8 +72,8 @@ async function revoke(id: string) {
 }
 async function deleteToken(token: McpToken) {
   const message = token.revoked_at
-    ? `删除令牌“${token.name}”的记录？删除后不可恢复。`
-    : `删除令牌“${token.name}”？令牌将立即失效并解除网页音频授权，已开始的硬件操作不会回滚。删除后不可恢复。`
+    ? `删除“${token.name}”的记录？此操作不可恢复。`
+    : `删除“${token.name}”？令牌将失效并解除音频授权，记录不可恢复。`
   try {
     await ElMessageBox.confirm(message, '删除 MCP 令牌', {
       confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
@@ -100,7 +100,7 @@ onMounted(load)
 <template>
   <section class="mcp-settings" aria-labelledby="mcp-settings-title" :aria-busy="loading">
     <div class="mcp-heading">
-      <div><h3 id="mcp-settings-title">MCP 接入</h3><p>让 CLI / IDE 中的 AI 助手管理设备、短信、电话与日常业务。</p></div>
+      <div><h3 id="mcp-settings-title">MCP 接入</h3><p>通过 AI 助手管理设备、短信和电话。</p></div>
       <el-switch :model-value="enabled" :loading="saving" :disabled="loading || saving" aria-label="启用 MCP 服务" @change="toggle" />
     </div>
     <p v-if="error" class="mcp-error" role="alert">{{ error }} <el-button v-if="!loading" text @click="load">重新加载</el-button></p>
@@ -108,14 +108,13 @@ onMounted(load)
     <template v-else>
       <label class="mcp-label" for="mcp-endpoint">服务地址 · {{ enabled ? '已开启' : '已关闭' }}</label>
       <div class="mcp-row"><el-input id="mcp-endpoint" :model-value="endpoint" readonly /><el-button @click="copy(endpoint)">复制地址</el-button></div>
-      <p class="mcp-help">每个令牌拥有完整日常管理权限，长期有效，可独立撤销。令牌只能用于 MCP。电话双向音频需在电话页连接并授权。</p>
+      <p class="mcp-help">令牌拥有全部业务权限，可随时撤销。网页音频需在电话页授权。</p>
       <form @submit.prevent="create">
         <label class="mcp-label" for="mcp-token-name">令牌名称 <span class="mcp-required">（必填）</span></label>
         <div class="mcp-row">
-          <el-input id="mcp-token-name" ref="nameInput" v-model="name" aria-label="新令牌名称" aria-required="true" :aria-invalid="!!nameError" :aria-describedby="nameError ? 'mcp-token-name-help mcp-token-name-error' : 'mcp-token-name-help'" placeholder="例如 Codex、Hermes 或 IDE 助手" :disabled="creating" @input="nameError = ''" />
+          <el-input id="mcp-token-name" ref="nameInput" v-model="name" aria-label="新令牌名称" aria-required="true" :aria-invalid="!!nameError" :aria-describedby="nameError ? 'mcp-token-name-error' : undefined" placeholder="例如 Codex、Grok Build" :disabled="creating" @input="nameError = ''" />
           <el-button type="primary" native-type="submit" :loading="creating" :disabled="loading || creating">创建令牌</el-button>
         </div>
-        <p id="mcp-token-name-help" class="mcp-name-help">先填写名称，用于区分不同 Agent 的令牌。</p>
         <p v-if="nameError" id="mcp-token-name-error" class="mcp-name-error" role="alert">{{ nameError }}</p>
       </form>
       <ul class="mcp-token-list" aria-label="MCP 令牌">
@@ -130,8 +129,8 @@ onMounted(load)
       <p v-if="!tokens.length" class="mcp-help">尚未创建令牌。</p>
       <McpClientSetup v-model="selectedClient" :endpoint="endpoint" />
     </template>
-    <el-dialog v-model="showSecret" title="保存新令牌" width="min(620px, 92vw)" :close-on-click-modal="false" @closed="secret = ''">
-      <p>令牌明文仅在这里展示一次。关闭后无法再次查看。</p>
+    <el-dialog v-model="showSecret" title="保存令牌" width="min(620px, 92vw)" append-to-body :close-on-click-modal="false" @closed="secret = ''">
+      <p>令牌仅显示一次，请妥善保存。</p>
       <el-input :model-value="secret" readonly aria-label="新 MCP 令牌" />
       <div class="mcp-row mcp-secret-actions"><el-button @click="copy(secret)">复制令牌</el-button></div>
       <p v-if="error" class="mcp-error" role="alert">{{ error }}</p>
@@ -151,9 +150,8 @@ h3 { color: var(--ui-text); font-size: 18px; font-weight: 700; }
 p, small { color: var(--ui-text-muted); }
 .mcp-label { display: block; margin-bottom: 8px; font-weight: 600; }
 .mcp-help { margin: 12px 0 16px; font-size: 13px; line-height: 1.6; }
-.mcp-required, .mcp-name-help { color: var(--ui-text-muted); font-size: 13px; font-weight: 400; }
-.mcp-name-help, .mcp-name-error { margin-top: 8px; line-height: 1.6; }
-.mcp-name-error { color: var(--el-color-danger); font-size: 13px; }
+.mcp-required { color: var(--ui-text-muted); font-size: 13px; font-weight: 400; }
+.mcp-name-error { margin-top: 8px; color: var(--el-color-danger); font-size: 13px; line-height: 1.6; }
 .mcp-error { color: var(--el-color-danger); margin-bottom: 12px; }
 .mcp-token-list { margin: 16px 0; }
 .mcp-token-list li { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--ui-border); }

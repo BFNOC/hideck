@@ -7,8 +7,8 @@ import {
 const endpoint = 'https://hideck.example.com:7576/mcp'
 const token = 'test-token-for-config-generation'
 
-test('all seven requested clients have setup paths, official docs and verification instructions', () => {
-  assert.deepEqual(MCP_CLIENTS.map(client => client.id), ['codex', 'claude-code', 'cursor', 'gemini-cli', 'hermes', 'dsh', 'pi'])
+test('all eight requested clients have setup paths, official docs and verification instructions', () => {
+  assert.deepEqual(MCP_CLIENTS.map(client => client.id), ['codex', 'claude-code', 'cursor', 'gemini-cli', 'hermes', 'dsh', 'pi', 'grok-build'])
   for (const client of MCP_CLIENTS) {
     assert.ok(client.configPath)
     assert.equal(new URL(client.docsUrl).protocol, 'https:')
@@ -56,6 +56,16 @@ test('Hermes generates an mcp_servers YAML entry', () => {
   ].join('\n'))
 })
 
+test('Grok Build uses native HTTP headers rather than the Codex http_headers key', () => {
+  const config = buildMcpClientConfig('grok-build', { endpoint, token })
+  assert.equal(config, [
+    '[mcp_servers.hideck]', 'url = "https://hideck.example.com:7576/mcp"',
+    'tool_timeout_sec = 360', 'headers = { Authorization = "Bearer test-token-for-config-generation" }'
+  ].join('\n'))
+  assert.doesNotMatch(config, /http_headers|command =/)
+  assert.match(buildMcpAgentInstructions('grok-build', { endpoint, token }), /grok mcp doctor hideck/)
+})
+
 test('DeepSeek dsh generates a Cordis insert patch with a Streamable HTTP plugin', () => {
   const config = buildMcpClientConfig('dsh', { endpoint, token })
   assert.equal(config, [
@@ -80,8 +90,8 @@ test('special characters remain quoted data in JSON, TOML and YAML output', () =
     const url = config.match(/^\s*url\s*[:=]\s*(.+)$/m)?.[1]
     assert.ok(url)
     assert.equal(JSON.parse(url), specialEndpoint)
-    const authorization = client.id === 'codex'
-      ? config.match(/http_headers = \{ Authorization = (.+) \}/)?.[1]
+    const authorization = client.format === 'TOML'
+      ? config.match(/(?:http_headers|headers) = \{ Authorization = (.+) \}/)?.[1]
       : config.match(/^\s*Authorization: (.+)$/m)?.[1]
     assert.ok(authorization)
     assert.equal(JSON.parse(authorization), `Bearer ${specialToken}`)
