@@ -151,6 +151,14 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		!one.WithholdDeviceIdentity || !CarrierPlanFromEffectiveConfig(one).Device.Withhold {
 		t.Fatalf("one nz = %+v", one)
 	}
+	if twoDegrees := ResolveEffectiveCarrierConfig("530", "24"); twoDegrees.PresetID != "2degrees_nz_53024" ||
+		!twoDegrees.IMSRegisterTemplate.AcceptRegisterContactWithoutUser ||
+		!CarrierPlanFromEffectiveConfig(twoDegrees).IMS.RegisterTemplate.AcceptRegisterContactWithoutUser {
+		t.Fatalf("2degrees nz = %+v", twoDegrees.IMSRegisterTemplate)
+	}
+	if spark := ResolveEffectiveCarrierConfig("530", "05"); spark.IMSRegisterTemplate.AcceptRegisterContactWithoutUser {
+		t.Fatal("spark nz accepts a Contact without the user part")
+	}
 	if globe := ResolveEffectiveCarrierConfig("515", "02"); globe.PresetID != "globe_ph_51502" ||
 		globe.EPDGAddr != "weconnect.globe.com.ph" || globe.EPDGAddrSource != "preset" ||
 		globe.IMSTransport != "tcp" || CarrierPlanFromEffectiveConfig(globe).IMS.Transport != "tcp" {

@@ -396,14 +396,21 @@ func updateRegisterAttemptAuth(result *registerAttemptResult, session *registerS
 }
 
 func (s *Service) commitRegisterSuccess(resp *sipResponse, session *registerSession) (time.Duration, error) {
-	expires, err := registrationExpires(resp, session.requestContact, s.cfg.Expires)
+	acceptWithoutUser := s.cfg.IMSRegisterTemplate.AcceptRegisterContactWithoutUser
+	expires, err := registrationExpires(resp, session.requestContact, s.cfg.Expires, acceptWithoutUser)
 	if err != nil {
 		if errors.Is(err, errRegisterContactMissing) {
 			logging.Info("IMS REGISTER response Contact mismatch",
 				"device", s.DeviceID(), "requested", redactContactUser(session.requestContact),
-				"response", redactedResponseContacts(resp), "response_headers", sipHeaderNames(resp))
+				"response", redactedResponseContacts(resp), "response_headers", sipHeaderNames(resp),
+				"accept_without_user", acceptWithoutUser)
 		}
 		return 0, err
+	}
+	if acceptWithoutUser && matchingRegisterContact(resp, session.requestContact, false) == "" {
+		logging.Info("IMS REGISTER binding matched a Contact without the user part",
+			"device", s.DeviceID(), "requested", redactContactUser(session.requestContact),
+			"response", redactedResponseContacts(resp))
 	}
 	s.finalizeRegistrationTransportSwitch()
 	s.lastRegisterContactCount.Store(int32(registerContactBindingCount(resp)))

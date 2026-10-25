@@ -70,6 +70,7 @@ type IMSRegisterTemplate struct {
 	SecurityClientIncludesServerParams  bool
 	SecurityClientMechanisms            []IPSec3GPPSecurityMechanism
 	StrictSecurityServerOffer           bool
+	AcceptRegisterContactWithoutUser    bool
 	EnableInitialRejectFallback         bool
 	FallbackIncludesServerParamsInSecCl bool
 	RegisterPolicy                      IMSRegisterPolicy
