@@ -1,6 +1,6 @@
 # HiDeck MCP 接入
 
-MCP 挂载在现有 HTTP/HTTPS 服务的 `/mcp`，共用监听端口和 TLS，提供 125 个工具。默认关闭，在网页「设置 → MCP 接入」开启。协议由 [官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0) 的无状态 Streamable HTTP 实现，协议版本由 SDK 协商。
+HiDeck 通过 MCP 向 CLI 和 IDE 中的 AI 助手提供 125 个业务工具。服务默认关闭，在网页「设置 → MCP 接入」开启，使用独立令牌连接。
 
 ## 连接
 
@@ -24,7 +24,9 @@ MCP 挂载在现有 HTTP/HTTPS 服务的 `/mcp`，共用监听端口和 TLS，�
 
 HiDeck 服务已经运行在服务端，以上客户端直接连接远程地址。配置应合并到原文件，保留其他连接及设置；自定义配置目录以客户端的实际设置为准。Agent 所在机器必须能访问服务地址，使用本地 CA 的 HTTPS 服务时需信任该 CA。旧版 Pi 若没有 `pi mcp` 命令，需升级到支持内置 MCP 的版本，或使用该版本已安装的 MCP 扩展配置，不能照搬新版配置。
 
-支持等待参数的模板提供六分钟等待窗口，以覆盖服务器原有的五分钟 eSIM 下载操作；不改变服务器超时。配置生成与格式检查不代表八个客户端均已完成真实连接验收。
+服务地址为 HiDeck 访问地址加 `/mcp`，支持 HTTP 和 HTTPS，例如 `http://<主机>:<HTTP 端口>/mcp` 或 `https://hideck.example.com/mcp`。网页配置使用当前网页的协议、主机和端口；跨机器连接时，应填写 Agent 实际能够访问的地址。
+
+连接使用 Streamable HTTP，协议版本自动协商。支持等待参数的模板提供六分钟等待窗口，以覆盖五分钟 eSIM 下载操作。各客户端的验证范围见 [验证说明](mcp-validation.md)。
 
 通用客户端配置示例（具体客户端的配置文件位置及顶层字段以客户端文档为准）：
 
@@ -33,7 +35,7 @@ HiDeck 服务已经运行在服务端，以上客户端直接连接远程地址�
   "mcpServers": {
     "hideck": {
       "type": "http",
-      "url": "https://hideck.example.com:7576/mcp",
+      "url": "https://hideck.example.com/mcp",
       "headers": {
         "Authorization": "Bearer <MCP_TOKEN>"
       }
@@ -56,9 +58,9 @@ SDK 保留 DNS 重绑定保护，外围使用 Go 的跨源保护。CLI 请求不
 - 结果同时提供 `structuredContent` 和 JSON 文本。一般结果为 `{"status_code": 200, "data": ...}`；真实业务错误保留状态、原因和已有业务错误码，并设置 `isError`。
 - 发送短信、外呼、切换 SIM 等写操作不会自动重试。遇到连接中断或超时，应先查询设备、短信投递或通话状态，再决定是否重新操作。
 
-全部 125 项工具均声明 `outputSchema`，保持已有返回字段。普通业务结果声明 `status_code` 和 `data`，204 的 `data` 为 `null`；有 OpenAPI 响应定义的接口展开原有字段约束，命令、MBN、eSIM 下载和文件工具补充实际结构。没有细化响应定义的旧接口只承诺业务信封，不声称已为所有硬件数据建立完整类型模型。识别激活码、上传 MBN、查询网页音频连接分别返回 `{activation}`、`{asset}`、`{connections}`。
+全部 125 项工具均声明 `outputSchema`。普通业务结果包含 `status_code` 和 `data`，204 的 `data` 为 `null`。部分业务数据仍为通用结构，应以对应工具的 Schema 为准。识别激活码、上传 MBN、查询网页音频连接分别返回 `{activation}`、`{asset}`、`{connections}`。
 
-Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果发送前按实际序列化 JSON 校验；不符合契约时明确报告错误，并提示操作可能已发生，应先查询真实状态，不能据此自动重试或声称已回滚。该实现遵循 [MCP 输出 Schema 与结构化结果约定](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx)。
+Schema 同时覆盖业务失败和 `{error}` 工具错误。输出不符合契约时会明确报告错误；操作可能已经发生，应先查询真实状态，不能据此自动重试或声称已回滚。
 
 | 操作 | 结果关联与完成判断 |
 | --- | --- |
@@ -76,7 +78,7 @@ Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果�
   "name": "hideck_sms_send",
   "arguments": {
     "request": {
-      "device_id": "wwan0",
+      "device_id": "<设备 ID>",
       "phone": "<收件号码>",
       "message": "<短信内容>"
     }
@@ -126,7 +128,7 @@ Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果�
   "name": "hideck_phone_dial",
   "arguments": {
     "audio_connection_id": "<连接 ID>",
-    "request": { "device_id": "wwan0", "callee": "<被叫号码>" }
+    "request": { "device_id": "<设备 ID>", "callee": "<被叫号码>" }
   }
 }
 ```
@@ -141,7 +143,7 @@ Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果�
 - 选网扫描在请求内等待并发送进度消息，复用设备当前扫描及其原有两分钟超时。客户端取消只停止等待；已交给模组的扫描不会被描述为已撤销。
 - eSIM 切卡仍沿用原有独立三十秒操作上下文及异步刷新，断开不代表硬件操作回滚。无 context 参数的已有硬件接口也不能保证立即停止。
 - 命令中心、余额查询和自动任务返回原有执行/查询/运行 ID，通过结果和运行记录工具查询；保持原有任务生命周期。
-- 文件输入使用 `filename`、`content_base64`，不接受宿主机路径。联系人使用 vcf/csv，沿用 8 MiB 和 5000 条限制；自动接听音频沿用 16 MiB 及原有转换流程；激活码图片/PDF 沿用 12 MiB 限制；MBN 文件沿用 MBN 服务校验。协议层不以 SDK 默认的 4 MiB 请求体限制截断这些现有文件格式，业务文件限制继续生效。
+- 文件输入使用 `filename`、`content_base64`，不接受宿主机路径。联系人支持 vcf/csv，限制为 8 MiB 和 5000 条；自动接听音频限制为 16 MiB；激活码图片/PDF 限制为 12 MiB；MBN 文件按 MBN 服务规则校验。
 - 联系人导出、MBN 文件读取返回 MIME 类型和 base64 内容。
 - 通话记录/命令结果中的可读取 MP3 录音返回 `hideck://recordings/<录音名>` 和 resource link，使用 MCP `resources/read` 读取。资源每次读取都需要有效令牌，不返回服务器文件路径。
 
@@ -155,7 +157,7 @@ Schema 同时覆盖原有业务失败和 `{error}` 工具错误。成功结果�
 | GET | `/api/mcp/diagnostics` | 检查服务就绪、工具注册、契约数量及内存中的令牌最近请求/调用；只接受网页会话 |
 | GET / POST | `/api/mcp/tokens` | 列出元数据/创建令牌，创建时单次返回 `secret` |
 | DELETE | `/api/mcp/tokens/:id` | 撤销令牌并解除其音频绑定 |
-| DELETE | `/api/mcp/tokens/:id/record` | 永久删除有效或已撤销令牌记录并解除音频绑定；原撤销接口保持原行为 |
+| DELETE | `/api/mcp/tokens/:id/record` | 永久删除有效或已撤销令牌记录并解除音频绑定 |
 | POST | `/api/mcp/phone-connections` | 校验当前用户的 `media_id`、`lease` 后绑定令牌 |
 | PUT | `/api/mcp/phone-connections/:id` | 更新该用户和令牌原有连接的媒体凭据 |
 | DELETE | `/api/mcp/phone-connections/:id` | 解除授权，不额外挂断通话 |
@@ -166,7 +168,13 @@ SQLite 的 `mcp_tokens` 保存 ID、名称、显示前缀、SHA-256 摘要、创
 
 令牌接入记录仅保留本次进程内最后一次成功鉴权 HTTP 请求时间，以及最后一次工具调用的名称、完成时间、耗时和失败标记。鉴权请求可能只是协议发现或被跨源策略拒绝的请求，不能把它标为工具调用成功。记录不包含令牌、参数或业务结果；重启、撤销、删除后清除，进行中的调用结束也不会恢复已清除记录。开关或令牌列表发生变化时，网页清除旧检查结果，需重新检查。
 
-业务编排接受独立调用上下文，REST 和 MCP 直接调用同一实现；短信/网络/诊断的共享用例按领域拆到 API 模块内的 `*_usecase.go`。MBN 操作租约移入共享入口，REST middleware 对这些入口不重复加锁。电话、MBN、命令、自动任务继续复用原服务。审计记录工具名、令牌 ID、目标设备标识、耗时和失败状态，不记录令牌、短信正文或激活码。
+## 日志与排查
 
-验证记录见 [MCP 验证与真机验收](mcp-validation.md)。
-能力缺口与优化评估见 [MCP 能力检查](mcp-review.md)。
+工具调用日志统一显示在网页「实时日志」页面，搜索 `MCP tool` 可筛选。日志包含工具名、令牌 ID、目标设备、耗时及失败状态，不记录令牌明文、短信正文或激活码。
+
+- 401：检查是否携带有效 MCP 令牌，以及令牌是否已撤销或删除。
+- 403：检查反向代理的 Host 转发和浏览器 Origin。
+- 503：检查 MCP 开关、服务及存储状态。
+- 客户端连不上：确认其能访问配置地址；HTTPS 连接同时检查证书信任。
+
+验证范围见 [MCP 验证说明](mcp-validation.md)，当前限制见 [MCP 能力与限制](mcp-review.md)。
