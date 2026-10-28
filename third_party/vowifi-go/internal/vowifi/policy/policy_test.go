@@ -157,6 +157,10 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 		!CarrierPlanFromEffectiveConfig(twoDegrees).IMS.RegisterTemplate.RefreshOffersNewSecurityClient {
 		t.Fatalf("2degrees nz = %+v", twoDegrees.IMSRegisterTemplate)
 	}
+	if dito := ResolveEffectiveCarrierConfig("515", "66"); dito.PresetID != "dito_51566" ||
+		!CarrierPlanFromEffectiveConfig(dito).IMS.RegisterTemplate.RefreshOffersNewSecurityClient {
+		t.Fatalf("dito ph = %+v", dito.IMSRegisterTemplate)
+	}
 	for _, plmn := range [][2]string{{"234", "15"}, {"515", "02"}, {"530", "01"}, {"530", "05"}, {"234", "87"}} {
 		if cfg := ResolveEffectiveCarrierConfig(plmn[0], plmn[1]); cfg.IMSRegisterTemplate.RefreshOffersNewSecurityClient {
 			t.Fatalf("%s refresh_offers_new_security_client is on", cfg.PresetID)
