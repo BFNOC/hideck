@@ -17,9 +17,12 @@ import (
 // changes port_uc when SAs are replaced. The refresh keeps sending over the
 // old SAs (§7.4.1a); the offer only matters if the S-CSCF re-authenticates.
 //
-// Stage 1 does not install new SAs: a challenged refresh is declined before
-// any AKA processing and the existing binding, SAs and flow are kept, as
-// after any other refused refresh (§5.4.1.2.3 NOTE 2).
+// A challenge with a Security-Server switches to new SAs built from this
+// offer (refresh_security_switch.go). A second challenge during the switch
+// is declined before any AKA processing and the existing binding, SAs and
+// flow are kept: an S-CSCF whose challenge goes unanswered leaves an already
+// registered identity registered (§5.4.1.2.3 NOTE 2). Keeping them instead
+// of a new REGISTER with a new Call-ID (§5.1.1.5.1) is our choice.
 type refreshSecurityOffer struct {
 	client   securityMechanism
 	header   string
@@ -28,15 +31,15 @@ type refreshSecurityOffer struct {
 	released bool
 }
 
-// refreshChallengeDeclined marks a re-authentication of a refresh that this
-// stage does not complete. It keeps the received status and Security-Server.
+// refreshChallengeDeclined marks a re-authentication of a refresh that is not
+// answered. It keeps the received status and Security-Server.
 type refreshChallengeDeclined struct {
 	status         int
 	securityServer string
 }
 
 func (err *refreshChallengeDeclined) Error() string {
-	return fmt.Sprintf("imscore: refresh REGISTER challenged with status %d (Security-Server %q); new SAs are not installed on a refresh",
+	return fmt.Sprintf("imscore: refresh REGISTER challenged with status %d (Security-Server %q) declined; the active SAs are kept",
 		err.status, err.securityServer)
 }
 
@@ -127,14 +130,15 @@ func (s *Service) attachRefreshSecurityOffer(session *registerSession) {
 	if !refreshOffersNewSecurityClient(session) || s.needsOutboundBindingRefresh() {
 		return
 	}
-	session.gatedRefresh = true
 	offer, err := s.prepareRefreshSecurityOffer(session)
 	if err != nil {
+		// Without an offer the refresh, and any challenge to it, stays as on main.
 		logging.WarnRate("ims-refresh-offer-skipped-"+s.DeviceID(), 30*time.Second,
 			"IMS refresh Security-Client offer skipped; reusing the active parameters",
 			"device", s.DeviceID(), "cseq", session.cseq, "err", err)
 		return
 	}
+	session.gatedRefresh = true
 	session.refreshOffer = offer
 	active := session.security.client
 	logging.Info("IMS refresh Security-Client offers new parameters",
@@ -150,6 +154,8 @@ func (s *Service) releaseRefreshSecurityOffer(session *registerSession, result r
 	if session == nil || !session.gatedRefresh {
 		return
 	}
+	switchAttempted := session.switching != nil
+	s.abortRefreshSecuritySwitch(session, attemptErr)
 	offer := session.refreshOffer
 	var closeErr error
 	if offer != nil && !offer.released {
@@ -157,7 +163,15 @@ func (s *Service) releaseRefreshSecurityOffer(session *registerSession, result r
 		closeErr = closeRefreshReservations(offer.tcp, offer.udp)
 	}
 	disposition := "accepted_without_challenge"
+	var switchFailed *refreshSwitchFailed
 	switch {
+	case switchAttempted && session.switching != nil:
+		// Committed; a later failure is reported in err.
+		disposition = "switched"
+	case errors.As(attemptErr, &switchFailed):
+		disposition = "switch_failed_" + switchFailed.phase
+	case switchAttempted:
+		disposition = "switch_aborted"
 	case isRefreshChallengeDeclined(attemptErr):
 		disposition = "challenge_declined"
 	case attemptErr != nil:
@@ -165,7 +179,7 @@ func (s *Service) releaseRefreshSecurityOffer(session *registerSession, result r
 	}
 	logging.Info("IMS refresh Security-Client offer released",
 		"device", s.DeviceID(), "cseq", session.cseq, "offered", offer != nil,
-		"status", result.statusCode, "disposition", disposition, "install_attempted", false,
+		"status", result.statusCode, "disposition", disposition, "switch_attempted", switchAttempted || switchFailed != nil,
 		"err", errorString(attemptErr), "close_err", errorString(closeErr))
 }
 

@@ -2,6 +2,7 @@ package imscore
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -17,9 +18,13 @@ import (
 type loopbackIPSecNetwork struct {
 	*SystemIMSNetwork
 	installs, removals int
+	listenErr          error
 }
 
 func (n *loopbackIPSecNetwork) ListenTCP(*net.TCPAddr) (net.Listener, error) {
+	if n.listenErr != nil {
+		return nil, n.listenErr
+	}
 	return net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 }
 
@@ -121,34 +126,54 @@ func TestRefreshOffersNewSecurityClientAndKeepsActiveSAs(t *testing.T) {
 	}
 }
 
-func TestChallengedRefreshIsDeclinedBeforeAKA(t *testing.T) {
-	for _, securityServer := range []string{securityServerOffer("hmac-sha-1-96", "aes-cbc", "q=1"), "malformed"} {
-		svc, network, previous := establishedRefreshService(t, true)
-		var sent int
-		captureRegisterRequests(svc, func(request string, _ int) *sipResponse {
-			sent++
-			return akaChallengeResponse(request, securityServer)
+// TS 24.229 5.1.1.5.1 item 3: a Security-Server without the parameters for
+// the new SAs ends the authentication. Refusing an unchanged port_pc or a
+// moved port_ps (TS 33.203 7.4.0 obligations of the P-CSCF), checking before
+// AKA, and keeping the active SAs and binding rather than sending a new
+// REGISTER with a new Call-ID are our choices.
+func TestChallengedRefreshIsRefusedBeforeAKA(t *testing.T) {
+	for _, test := range []struct{ name, securityServer string }{
+		{"malformed", "malformed"},
+		{"P-CSCF kept port-c", strings.Replace(switchedSecurityServer, "port-c=16382", "port-c=16381", 1)},
+		{"P-CSCF moved port-s", strings.Replace(switchedSecurityServer, "port-s=15060", "port-s=15062", 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, network, previous, _, sm1 := switchRefreshService(t, 200, test.securityServer)
+			_, _, err := svc.runRegisterAttempt(context.Background())
+			var failed *refreshSwitchFailed
+			if !errors.As(err, &failed) || failed.phase != "negotiate" {
+				t.Fatalf("err = %v", err)
+			}
+			if added, aborts, commits, _ := network.counts(); len(*sm1) != 1 || added != 0 || aborts != 0 || commits != 0 {
+				t.Fatalf("sent %d added %d aborts %d commits %d", len(*sm1), added, aborts, commits)
+			}
+			svc.mu.RLock()
+			session := svc.regSession
+			svc.mu.RUnlock()
+			if session.challenge != previous.challenge || session.authHeader != previous.authHeader ||
+				session.security != previous.security {
+				t.Fatal("a refused challenge was answered or changed the session")
+			}
+			if session.refreshOffer == nil || !session.refreshOffer.released {
+				t.Fatal("offer not released")
+			}
+			if !svc.keepRegistrationAfterFailedRefresh(true, err) {
+				t.Fatalf("a refused challenge dropped the binding: %v", err)
+			}
 		})
-		_, _, err := svc.runRegisterAttempt(context.Background())
-		if !isRefreshChallengeDeclined(err) {
-			t.Fatalf("Security-Server %q: err = %v", securityServer, err)
-		}
-		if sent != 1 || network.installs != 0 || network.removals != 0 {
-			t.Fatalf("Security-Server %q: sent %d installs %d removals %d", securityServer, sent, network.installs, network.removals)
-		}
-		svc.mu.RLock()
-		session := svc.regSession
-		svc.mu.RUnlock()
-		if session.challenge != previous.challenge || session.authHeader != previous.authHeader ||
-			session.security != previous.security || session.path != previous.path {
-			t.Fatalf("Security-Server %q: declined challenge changed the session", securityServer)
-		}
-		if session.refreshOffer == nil || !session.refreshOffer.released {
-			t.Fatalf("Security-Server %q: offer not released", securityServer)
-		}
-		if !strings.Contains(err.Error(), "401") {
-			t.Fatalf("declined error lost the received status: %v", err)
-		}
+	}
+}
+
+func TestRefreshWithoutReservedPortCRefreshesAsOnMain(t *testing.T) {
+	svc, network, session := establishedRefreshService(t, true)
+	network.listenErr = errors.New("no port")
+	active := session.security.clientHeader
+	svc.attachRefreshSecurityOffer(session)
+	if session.refreshOffer != nil || session.gatedRefresh {
+		t.Fatalf("offer = %+v gated = %t, want the refresh as on main", session.refreshOffer, session.gatedRefresh)
+	}
+	if session.security.clientHeader != active {
+		t.Fatalf("Security-Client changed to %q", session.security.clientHeader)
 	}
 }
 
@@ -250,5 +275,45 @@ func TestRefreshChallengeWithoutSecurityServerIsAnsweredOverActiveSAs(t *testing
 	if sipHeaderValue(sent[1], "Security-Client") != sipHeaderValue(sent[0], "Security-Client") ||
 		sipHeaderValue(sent[1], "Security-Client") == previous.security.clientHeader {
 		t.Fatal("the answer to the challenge changed or dropped the offered Security-Client")
+	}
+}
+
+// The initial-reject fallback still runs on a refresh with an offer. It
+// rewrites the offered Security-Client and leaves the active SAs' own.
+func TestRefreshInitialRejectFallbackRewritesOnlyTheOffer(t *testing.T) {
+	svc, _, previous := establishedRefreshService(t, true)
+	template := svc.cfg.IMSRegisterTemplate
+	template.EnableInitialRejectFallback = true
+	template.SecurityClientIncludesServerParams = true
+	template.FallbackIncludesServerParamsInSecCl = false
+	svc.cfg.IMSRegisterTemplate = template
+	previous.template = template
+	active := previous.security.clientHeader
+	var sent []string
+	captureRegisterRequests(svc, func(request string, _ int) *sipResponse {
+		sent = append(sent, request)
+		if len(sent) == 1 {
+			return registerResponseForRequest(request, 400, nil)
+		}
+		return registerResponseForRequest(request, 200, nil)
+	})
+	if _, _, err := svc.runRegisterAttempt(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(sent) != 2 {
+		t.Fatalf("sent %d REGISTERs, want the fallback retry", len(sent))
+	}
+	first, retried := sipHeaderValue(sent[0], "Security-Client"), sipHeaderValue(sent[1], "Security-Client")
+	if first == retried || first == active || retried == active {
+		t.Fatalf("Security-Client first %q retried %q active %q", first, retried, active)
+	}
+	svc.mu.RLock()
+	session := svc.regSession
+	svc.mu.RUnlock()
+	if session.security.clientHeader != active {
+		t.Fatalf("fallback rewrote the active Security-Client to %q", session.security.clientHeader)
+	}
+	if !strings.Contains(retried, "port-c="+strconv.Itoa(int(session.refreshOffer.client.PortC))) {
+		t.Fatalf("fallback dropped the offered port-c: %q", retried)
 	}
 }

@@ -129,9 +129,19 @@ func (s *Service) connectProtectedRegistrationTCP(ctx context.Context, client, s
 }
 
 func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, server securityMechanism) error {
+	conn, err := s.dialProtectedTCP(ctx, client, server)
+	if err != nil {
+		return err
+	}
+	s.activateProtectedRegistrationTCP(conn)
+	return nil
+}
+
+// dialProtectedTCP opens the flow port_uc -> port_ps without publishing it.
+func (s *Service) dialProtectedTCP(ctx context.Context, client, server securityMechanism) (net.Conn, error) {
 	registrationRemote := s.currentRegistrationRemote()
 	if registrationRemote == nil || registrationRemote.IP == nil {
-		return errors.New("imscore: registrar IP unavailable for protected TCP")
+		return nil, errors.New("imscore: registrar IP unavailable for protected TCP")
 	}
 	local := &net.TCPAddr{IP: s.cfg.LocalIP, Port: int(client.PortC)}
 	remote := &net.TCPAddr{IP: registrationRemote.IP, Port: int(server.PortS)}
@@ -143,17 +153,16 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 	})
 	logSecureChannelAttemptResult(attempts, err)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := setIPSec3GPPTCPMSS(conn); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("imscore: set protected REGISTER TCP MSS: %w", err)
+		return nil, fmt.Errorf("imscore: set protected REGISTER TCP MSS: %w", err)
 	}
 	logging.Info("IMS protected REGISTER TCP connected",
 		"local_port", local.Port, "remote_port", remote.Port)
 	logSecureChannelEstablished(conn)
-	s.activateProtectedRegistrationTCP(conn)
-	return nil
+	return conn, nil
 }
 
 func (s *Service) protectedReconnectParameters() (bool, securityMechanism, securityMechanism) {
@@ -726,12 +735,41 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 		readErr = io.EOF
 	}
 	err := fmt.Errorf("imscore: registration SIP stream closed: %w", readErr)
-	logging.WarnRate("ims-registration-stream", "IMS registration SIP stream closed", "err", err)
-	s.failTCPKeepalivePong(errTCPCRLFStreamClosed)
 	_ = conn.Close()
 	stopped := s.stopped()
 	s.mu.Lock()
 	current := s.registrationTCP == conn
+	pending := s.registrationPendingTCP == conn
+	switching := s.registrationPendingTCP != nil
+	if pending {
+		// Fail SM7 now instead of waiting for Timer F; a commit racing this
+		// close sees the error.
+		s.registrationPendingErr = readErr
+		if s.registrationPendingCancel != nil {
+			s.registrationPendingCancel()
+		}
+	}
+	role := "retired"
+	switch {
+	case current:
+		role = "current"
+	case pending:
+		role = "sm7_pending"
+	}
+	logging.WarnRate("ims-registration-stream", "IMS registration SIP stream closed", "err", err,
+		"role", role, "switch_pending", switching, "local", conn.LocalAddr())
+	if current && switching {
+		// The refresh switch owns the outcome: a commit publishes the new
+		// flow, an abort finds no intact flow and fails the refresh.
+		s.registrationTCP = nil
+		s.registrationTCPProtected = false
+		s.transport.SetSendFn(func(string) error {
+			return errors.New("imscore: registered SIP transport is not connected")
+		})
+		s.mu.Unlock()
+		s.failTCPKeepalivePong(errTCPCRLFStreamClosed)
+		return
+	}
 	if current {
 		if !stopped {
 			s.abandonReplacementDownlinkWaitLocked()
@@ -747,6 +785,10 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 		}
 	}
 	s.mu.Unlock()
+	if current {
+		// A retired or still-pending flow carries no keepalive of its own.
+		s.failTCPKeepalivePong(errTCPCRLFStreamClosed)
+	}
 	if !current || stopped {
 		return
 	}
@@ -765,6 +807,7 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
+		s.noteInboundOverNewSA(tcpPortFromAddr(conn.LocalAddr()), tcpPortFromAddr(conn.RemoteAddr()))
 		if err := s.dispatchInboundSIPMessageWithPeer(message, message.String(), func(response string) error {
 			return s.writeSIPStream(conn, response)
 		}, conn); err != nil {
