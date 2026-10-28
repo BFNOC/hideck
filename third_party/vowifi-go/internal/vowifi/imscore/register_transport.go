@@ -649,15 +649,17 @@ func (s *Service) trackProtectedConnection(conn net.Conn) bool {
 
 // Track the accepted socket and its port-s generation atomically with failover.
 func (s *Service) trackProtectedPortSConnection(conn net.Conn, now time.Time) bool {
-	s.mu.RLock()
+	s.mu.Lock()
 	s.protectedConnMu.Lock()
 	select {
 	case <-s.stop:
 		s.protectedConnMu.Unlock()
-		s.mu.RUnlock()
+		s.mu.Unlock()
 		return false
 	default:
 	}
+	// The P-CSCF reopened port-s, so a later close is awaiting it again.
+	s.smsReception.reportFailed = false
 	registrar := strings.TrimSpace(s.registrar)
 	s.portSSessionMu.Lock()
 	generation := s.recordPortSOpenedLocked(conn, now, registrar)
@@ -665,7 +667,7 @@ func (s *Service) trackProtectedPortSConnection(conn net.Conn, now time.Time) bo
 	changed := !s.portSPushReady.Swap(true)
 	s.portSSessionMu.Unlock()
 	s.protectedConnMu.Unlock()
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	s.logPortSOpened(conn, registrar, generation)
 	s.finishProtectedConnectionTracking(changed)
 	return true

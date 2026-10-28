@@ -124,6 +124,8 @@ func (s *Service) backoffMissingPortSAfterRegister(generation uint64) {
 			"IMS port-s REGISTER recovery did not restore downlink; schedule P-CSCF replacement after backoff",
 			"device", s.DeviceID(), "pcscf", s.currentPortSRecoveryRegistrar(),
 			"failures", backoff.failures, "retry_at", backoff.retryAt)
+		// Readiness no longer reports this port-s as awaiting the peer.
+		s.notifySMSReadiness()
 	}
 	s.schedulePortSReconnectWatchAt(backoff.retryAt)
 	logging.WarnRate("ims-ports-recovery-no-flow-"+s.DeviceID(), 30*time.Second,
