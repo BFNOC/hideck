@@ -306,6 +306,15 @@ func (network *installerIMSNetwork) takeAllLocked() error {
 	return err
 }
 
+// KeepsTwoIPSec3GPPSets reports whether the installer can add a set beside the
+// active one; only the userspace netstack can.
+func (network *installerIMSNetwork) KeepsTwoIPSec3GPPSets() bool {
+	network.mu.Lock()
+	defer network.mu.Unlock()
+	_, ok := network.installer.(alongsideIPSec3GPPInstaller)
+	return ok
+}
+
 // AddIPSec3GPP installs a replacement SA set alongside the active one.
 func (network *installerIMSNetwork) AddIPSec3GPP(value ipsec3gpp.Policy) error {
 	network.mu.Lock()

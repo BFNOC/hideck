@@ -18,8 +18,11 @@ import (
 type loopbackIPSecNetwork struct {
 	*SystemIMSNetwork
 	installs, removals int
+	oneSASet           bool
 	listenErr          error
 }
+
+func (n *loopbackIPSecNetwork) KeepsTwoIPSec3GPPSets() bool { return !n.oneSASet }
 
 func (n *loopbackIPSecNetwork) ListenTCP(*net.TCPAddr) (net.Listener, error) {
 	if n.listenErr != nil {
@@ -164,16 +167,34 @@ func TestChallengedRefreshIsRefusedBeforeAKA(t *testing.T) {
 	}
 }
 
-func TestRefreshWithoutReservedPortCRefreshesAsOnMain(t *testing.T) {
-	svc, network, session := establishedRefreshService(t, true)
-	network.listenErr = errors.New("no port")
-	active := session.security.clientHeader
-	svc.attachRefreshSecurityOffer(session)
-	if session.refreshOffer != nil || session.gatedRefresh {
-		t.Fatalf("offer = %+v gated = %t, want the refresh as on main", session.refreshOffer, session.gatedRefresh)
-	}
-	if session.security.clientHeader != active {
-		t.Fatalf("Security-Client changed to %q", session.security.clientHeader)
+func TestRefreshKeepsActiveSecurityClientWithoutTwoSASets(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		oneSet   bool
+		external bool
+	}{
+		{name: "one SA set", oneSet: true},
+		{name: "external transport", external: true},
+		{name: "port-c reservation failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, network, session := establishedRefreshService(t, true)
+			network.oneSASet = test.oneSet
+			if !test.oneSet && !test.external {
+				network.listenErr = errors.New("no port")
+			}
+			svc.mu.Lock()
+			svc.externalTransport = test.external
+			svc.mu.Unlock()
+			active := session.security.clientHeader
+			svc.attachRefreshSecurityOffer(session)
+			if session.refreshOffer != nil || session.gatedRefresh {
+				t.Fatalf("offer = %+v gated = %t, want the refresh as on main", session.refreshOffer, session.gatedRefresh)
+			}
+			if session.security.clientHeader != active {
+				t.Fatalf("Security-Client changed to %q", session.security.clientHeader)
+			}
+		})
 	}
 }
 

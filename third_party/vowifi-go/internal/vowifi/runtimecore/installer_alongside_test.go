@@ -5,7 +5,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/iniwex5/vowifi-go/engine/swu"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
 )
 
 type alongsideRecordingInstaller struct {
@@ -28,6 +31,24 @@ func (installer *alongsideRecordingInstaller) InstallIPSec3GPP(context.Context, 
 
 func (installer *alongsideRecordingInstaller) InstallIPSec3GPPAlongside(context.Context, ipsec3gpp.Policy) (func() error, error) {
 	return installer.install()
+}
+
+func TestInstallerIMSNetworkReportsTwoSASetSupport(t *testing.T) {
+	for name, test := range map[string]struct {
+		installer imscore.IPSec3GPPInstaller
+		want      bool
+	}{
+		"alongside installer": {installer: &alongsideRecordingInstaller{}, want: true},
+		"userspace netstack":  {installer: resolveIPSec3GPPInstaller(swu.DataplaneModeUserspace, &netstack.Network{}), want: true},
+		"system dataplane":    {installer: resolveIPSec3GPPInstaller("kernel", nil)},
+		"no installer":        {},
+	} {
+		network := newInstallerIMSNetwork(nil, test.installer)
+		got := network.(interface{ KeepsTwoIPSec3GPPSets() bool }).KeepsTwoIPSec3GPPSets()
+		if got != test.want {
+			t.Errorf("%s: KeepsTwoIPSec3GPPSets = %t, want %t", name, got, test.want)
+		}
+	}
 }
 
 func TestInstallerIMSNetworkKeepsReplacedSetUntilRetired(t *testing.T) {

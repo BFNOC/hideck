@@ -123,11 +123,32 @@ func closeRefreshReservations(listener net.Listener, udp net.PacketConn) error {
 	return err
 }
 
+// keepsTwoIPSec3GPPSets reports an IMS network that can hold a new SA set
+// beside the active one (TS 33.203 7.4.1a).
+func (s *Service) keepsTwoIPSec3GPPSets() bool {
+	if s == nil || s.cfg == nil || s.cfg.IMSNetwork == nil {
+		return false
+	}
+	network, ok := s.cfg.IMSNetwork.(interface{ KeepsTwoIPSec3GPPSets() bool })
+	return ok && network.KeepsTwoIPSec3GPPSets()
+}
+
 // attachRefreshSecurityOffer runs once per refresh attempt, outside mu.
 func (s *Service) attachRefreshSecurityOffer(session *registerSession) {
 	// The REGISTER that completes an outbound flow right after the initial
 	// registration is not a refresh of a confirmed binding.
 	if !refreshOffersNewSecurityClient(session) || s.needsOutboundBindingRefresh() {
+		return
+	}
+	// New parameters invite a re-authentication that needs both SA sets at
+	// once; without that the refresh stays as on main.
+	s.mu.RLock()
+	external := s.externalTransport
+	s.mu.RUnlock()
+	if ok := s.keepsTwoIPSec3GPPSets(); !ok || external {
+		logging.WarnRate("ims-refresh-offer-unsupported-"+s.DeviceID(), time.Hour,
+			"IMS refresh Security-Client offer skipped; this registration cannot keep two SA sets",
+			"device", s.DeviceID(), "cseq", session.cseq, "two_sa_sets", ok, "external_transport", external)
 		return
 	}
 	offer, err := s.prepareRefreshSecurityOffer(session)
