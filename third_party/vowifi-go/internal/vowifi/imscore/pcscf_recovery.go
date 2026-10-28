@@ -190,6 +190,7 @@ func (s *Service) resetRegistrationForPCSCFSwitch() error {
 	s.mwiSubscriptionDialog = registrationSubscriptionDialog{}
 	s.sipOutboundKeepalive = false
 	s.sipOutbound = false
+	s.sipOutboundFlow.Store(false)
 	s.sipOutboundRequired = false
 	s.outboundContactOffered = false
 	s.outboundContactRegistered = false

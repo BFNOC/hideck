@@ -155,6 +155,7 @@ func (s *Service) registerLocked(ctx context.Context) error {
 		s.signalingFailureReason = err.Error()
 		s.sipOutboundKeepalive = false
 		s.sipOutbound = false
+		s.sipOutboundFlow.Store(false)
 		s.sipOutboundRequired = false
 		s.outboundContactOffered = false
 		s.outboundContactRegistered = false

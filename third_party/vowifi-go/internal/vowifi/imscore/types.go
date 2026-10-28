@@ -203,6 +203,16 @@ type Service struct {
 	portSRecoveryAwaitingFlow atomic.Bool
 	portSOnDemandObserved     atomic.Bool
 	portSMissingAfterRegister atomic.Bool
+	// Set once per port-s timeout when recovery switches to awaiting the
+	// peer; drives the one-shot log and the reopen attribution.
+	portSTimeoutAwaitEntered atomic.Bool
+	// Port-s generation when the last recovery REGISTER was sent.
+	portSRecoveryRegisterGen atomic.Uint64
+	// The timed-out port-s whose probe REGISTER has not failed yet
+	// (timeoutProbeGraceLocked); nil when there is none.
+	portSTimeoutProbe atomic.Pointer[portSTimeoutProbeEpisode]
+	// Mirrors sipOutbound for readers that cannot take mu.
+	sipOutboundFlow           atomic.Bool
 	portSWatchMu              sync.Mutex
 	portSWatchTimer           *time.Timer
 	portSWatchGeneration      uint64
@@ -482,3 +492,10 @@ type SMSDeliveryIdentityStore = smsdelivery.IdentityStore
 
 // DeliveryPartStatus is one delivery part.
 type DeliveryPartStatus = smsdelivery.DeliveryPartStatus
+
+// portSTimeoutProbeEpisode is a port-s timeout on a timeoutAwaitPreset carrier,
+// bound to the port-s generation and P-CSCF it closed on.
+type portSTimeoutProbeEpisode struct {
+	generation uint64
+	registrar  string
+}
