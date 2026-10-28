@@ -76,6 +76,9 @@ type IMSNetwork interface {
 // SystemIMSNetwork is the default IMS network implementation.
 type SystemIMSNetwork struct {
 	localIP net.IP
+	// DisableMPTCPMSSFallback keeps the OS-selected listener even when Linux
+	// MPTCP cannot set TCP_MAXSEG. The later MSS setup then reports the error.
+	DisableMPTCPMSSFallback bool
 }
 
 // NewSystemIMSNetwork creates a network with the given local IP.
@@ -141,7 +144,7 @@ func (n *SystemIMSNetwork) DialTCPContext(ctx context.Context, local, remote *ne
 
 // ListenTCP listens for TCP connections.
 func (n *SystemIMSNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
-	return net.ListenTCP("tcp", addr)
+	return listenSystemIMSTCP(addr, !n.DisableMPTCPMSSFallback)
 }
 
 // ListenPacket listens for UDP packets.

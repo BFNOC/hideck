@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
@@ -127,6 +128,9 @@ func TestAutoRegisterOverUDPLimitDoesNotReopenTCPWhenUDPFallbackFails(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	err = svc.Register(ctx)
+	if serverErr := <-tcpResult; serverErr != nil {
+		t.Fatalf("reset registrar: %v", serverErr)
+	}
 	if err == nil || !strings.Contains(err.Error(), "udp unavailable") {
 		t.Fatalf("Register error = %v, want the UDP fallback failure", err)
 	}
@@ -145,6 +149,24 @@ func resetAcceptedTCPRegister(listener *net.TCPListener, result chan<- error) {
 		result <- err
 		return
 	}
-	_ = conn.SetLinger(0)
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		result <- err
+		return
+	}
+	// Wait for REGISTER so the reset tests an established transport, not a failed dial.
+	request, err := readSIPStreamMessage(bufio.NewReader(conn))
+	if err != nil {
+		result <- err
+		return
+	}
+	if !strings.HasPrefix(request, "REGISTER ") {
+		result <- errors.New("expected TCP REGISTER before reset")
+		return
+	}
+	if err := conn.SetLinger(0); err != nil {
+		result <- err
+		return
+	}
 	result <- conn.Close()
 }

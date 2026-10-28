@@ -133,8 +133,7 @@ func TestSubscriptionExpiryDoesNotShortenRetryAfter(t *testing.T) {
 
 func TestSubscriptionMWIRejectionStillWinsOverTimersAndEOF(t *testing.T) {
 	for _, status := range []int{405, 489} {
-		s := newSubscriptionLifecycleTestService(t, nil)
-		s.cfg.CarrierPresetID = "2degrees_nz_53024"
+		s := newSubscriptionLifecycleTestServiceForPreset(t, nil, "2degrees_nz_53024")
 		result := beginProtocolSubscription(t, s, true)
 		result.response, result.err = sip.NewResponse(status, "unsupported"), errors.New("unsupported MWI")
 		_ = s.recordMWISubscriptionResult(result)

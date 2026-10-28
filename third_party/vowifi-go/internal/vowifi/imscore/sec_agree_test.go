@@ -83,7 +83,9 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	}
 	defer tcpServer.Close()
 	result := make(chan error, 1)
-	go serveUDPChallengeThenTCPSuccess(udpServer, tcpServer, result)
+	release := make(chan struct{})
+	defer close(release)
+	go serveUDPChallengeThenTCPSuccess(udpServer, tcpServer, registrationTestExchange{result: result, release: release})
 
 	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
 	svc, err := New(&IMSConfig{
@@ -284,7 +286,13 @@ func waitForTCPConnectionClose(conn *net.TCPConn) error {
 	return fmt.Errorf("initial REGISTER connection remained open: %w", err)
 }
 
-func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPListener, result chan<- error) {
+type registrationTestExchange struct {
+	result  chan<- error
+	release <-chan struct{}
+}
+
+func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPListener, exchange registrationTestExchange) {
+	result := exchange.result
 	buffer := make([]byte, 64*1024)
 	n, remote, err := udpServer.ReadFromUDP(buffer)
 	if err != nil {
@@ -354,6 +362,10 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 	}
 	_, err = conn.Write([]byte(registerWireResponse(subscribe, 200, "")))
 	result <- err
+	if err == nil {
+		// Keep the registered flow alive until the test has asserted readiness.
+		<-exchange.release
+	}
 }
 
 // Registration and MWI subscriptions are independent; either may arrive first.
