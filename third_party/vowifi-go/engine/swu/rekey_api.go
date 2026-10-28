@@ -80,31 +80,53 @@ func (s *Session) handleCreateChildSAResp(
 	newSPI uint32,
 	newChildDH *enginecrypto.DiffieHellman,
 ) error {
+	_, err := s.handleCreateChildSARespOffer(data, initiatorNonce, newSPI, newChildDH, childRekeyDHOffer{})
+	return err
+}
+
+// handleCreateChildSARespOffer installs the answer to a CHILD_SA rekey offer
+// and returns the selected D-H group, 0 for none.
+func (s *Session) handleCreateChildSARespOffer(
+	data, initiatorNonce []byte,
+	newSPI uint32,
+	newChildDH *enginecrypto.DiffieHellman,
+	offer childRekeyDHOffer,
+) (uint16, error) {
 	packet, err := ikev2.DecodePacket(data)
 	if err != nil {
-		return fmt.Errorf("swu: decode CHILD_SA rekey response: %w", err)
+		newChildDH.Wipe()
+		return 0, fmt.Errorf("swu: decode CHILD_SA rekey response: %w", err)
 	}
 	payloads, err := s.decryptAndParse(packet)
 	if err != nil {
-		return fmt.Errorf("swu: decrypt CHILD_SA rekey response: %w", err)
+		newChildDH.Wipe()
+		return 0, fmt.Errorf("swu: decrypt CHILD_SA rekey response: %w", err)
 	}
 	if err := childSARejectionError(payloads); err != nil {
-		return err
+		newChildDH.Wipe()
+		return 0, err
 	}
 	s.childSAMu.RLock()
 	oldLocalSPI, oldRemoteSPI := s.espLocalSPI, s.espRemoteSPI
 	s.childSAMu.RUnlock()
-	return s.completeInitiatedChildSARekeyWithOld(initiatedChildRekey{
+	selected, err := s.completeInitiatedChildSARekeySelected(initiatedChildRekey{
 		payloads: payloads, nonce: initiatorNonce, localSPI: newSPI,
 		oldLocalSPI: oldLocalSPI, oldRemoteSPI: oldRemoteSPI, newDH: newChildDH,
+		offersNone: offer.offersNone(),
 	})
+	if err != nil {
+		return 0, fmt.Errorf("%w (answer: %s)", err, createChildSAOffer(payloads))
+	}
+	return selected, nil
 }
 
 func childSARejectionError(payloads []ikev2.Payload) error {
 	for _, payload := range payloads {
 		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
 		if ok && notify.NotifyType < 16384 {
-			return &createChildSARejectError{NotifyType: notify.NotifyType}
+			return &createChildSARejectError{
+				NotifyType: notify.NotifyType, NotifyData: append([]byte(nil), notify.NotifyData...),
+			}
 		}
 	}
 	return nil

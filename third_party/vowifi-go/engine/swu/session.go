@@ -328,6 +328,7 @@ type Session struct {
 	childDHSecret           []byte
 	pendingPeerRekey        *pendingPeerChildRekey
 	pendingRekeySPI         atomic.Uint32 // inbound SPI of pendingPeerRekey for the data path
+	childRekeyOmitDH        atomic.Bool   // the last no-PFS CHILD_SA rekey that worked left D-H out
 	lastCreateChildSAAnswer *createChildSAAnswer
 	childTSi                *ikev2.EncryptedPayloadTS
 	childTSr                *ikev2.EncryptedPayloadTS
