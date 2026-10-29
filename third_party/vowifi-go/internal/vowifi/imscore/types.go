@@ -211,6 +211,7 @@ type Service struct {
 	registrationPendingCancel context.CancelFunc
 	registrationPendingErr    error
 	protectedUDPRetiring      *protectedUDPTransport
+	saRetirementMu            sync.Mutex
 	saRetirement              atomic.Pointer[saRetirement]
 
 	// Set once per port-s timeout when recovery switches to awaiting the

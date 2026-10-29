@@ -366,6 +366,11 @@ func (s *Service) retireWhenDrained(retirement *saRetirement) {
 // retireReplacedSecurity deletes the replaced SAs and closes the flows they
 // protected. Only the current retirement acts; stale timers are no-ops.
 func (s *Service) retireReplacedSecurity(retirement *saRetirement, trigger string) {
+	// Claiming the retirement clears its pointer before cleanup completes.
+	// Even a nil caller must wait, or the previous cleanup can remove the
+	// retiring set published by the next refresh switch.
+	s.saRetirementMu.Lock()
+	defer s.saRetirementMu.Unlock()
 	if retirement == nil || !s.saRetirement.CompareAndSwap(retirement, nil) {
 		return
 	}
