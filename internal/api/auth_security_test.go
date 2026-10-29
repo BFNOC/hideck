@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -214,5 +215,48 @@ func TestCheckPasswordPlaintextFallbackStillMatchesCorrectly(t *testing.T) {
 	}
 	if checkPassword("plain-secret", "") {
 		t.Fatal("空密码不应匹配非空存储密码")
+	}
+}
+
+// In-flight password checks reserve capacity too; successful checks only
+// refund their own slots, even when requests arrive at the same time.
+func TestLoginConcurrentReservationsAndRefunds(t *testing.T) {
+	s := &Server{loginAttempts: make(map[string]loginAttempt)}
+	now := time.Unix(1_800_000_000, 0)
+	reserveBurst := func() []func() {
+		const contenders = 64
+		start := make(chan struct{})
+		results := make(chan func(), contenders)
+		var workers sync.WaitGroup
+		for range contenders {
+			workers.Go(func() {
+				<-start
+				release, _ := s.allowLoginAttempt("192.0.2.1", now)
+				results <- release
+			})
+		}
+		close(start)
+		workers.Wait()
+		close(results)
+		var allowed []func()
+		for release := range results {
+			if release != nil {
+				allowed = append(allowed, release)
+			}
+		}
+		return allowed
+	}
+	reserved := reserveBurst()
+	if len(reserved) != loginAttemptLimit {
+		t.Fatalf("reserved=%d want %d", len(reserved), loginAttemptLimit)
+	}
+	refunds := loginAttemptLimit / 2
+	var workers sync.WaitGroup
+	for _, release := range reserved[:refunds] {
+		workers.Go(release)
+	}
+	workers.Wait()
+	if got := len(reserveBurst()); got != refunds {
+		t.Fatalf("reserved after refund=%d want %d", got, refunds)
 	}
 }
