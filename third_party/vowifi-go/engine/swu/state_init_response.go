@@ -239,8 +239,7 @@ func (s *Session) applyNATTraversal(sourceHash, destinationHash []byte) {
 	s.natDetected = !bytes.Equal(sourceHash, expectedSource) ||
 		!bytes.Equal(destinationHash, expectedDestination)
 	if s.natDetected {
-		s.socket.SetRemotePort(4500)
-		s.remotePort = 4500
+		s.floatToNATTPort()
 	}
 }
 
