@@ -1,6 +1,7 @@
 package swu
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 
@@ -22,36 +23,31 @@ const natTPort = 4500
 // §2.23's "send all subsequent traffic from port 4500" refers to our sending
 // port; the SOCKS5 UDP socket is bound to an ephemeral port, not 4500, both
 // before and after this change.
-// If the new association cannot be opened the old one is kept.
-func (s *Session) floatToNATTPort() {
+// Failures are returned to the handshake so its cleanup closes the transport.
+func (s *Session) floatToNATTPort() error {
 	current := s.transport()
 	if proxied, ok := current.(*ipsec.Socks5Transport); ok && proxied.RemotePort() != natTPort {
-		if s.reassociateSocks5(proxied) {
-			return
-		}
+		return s.reassociateSocks5(proxied)
 	}
 	current.SetRemotePort(natTPort)
 	s.mu.Lock()
 	s.remotePort = natTPort
 	s.mu.Unlock()
+	return nil
 }
 
-func (s *Session) reassociateSocks5(previous *ipsec.Socks5Transport) bool {
+func (s *Session) reassociateSocks5(previous *ipsec.Socks5Transport) error {
 	remote := net.JoinHostPort(previous.RemoteIP().String(), strconv.Itoa(natTPort))
 	replacement, err := s.openSocks5Transport(remote)
 	if err != nil {
-		logger.Warn("SWu NAT-T float kept the existing SOCKS5 UDP association",
-			zap.String("remote", remote), zap.Error(err))
-		return false
+		return fmt.Errorf("swu: open SOCKS5 NAT-T association: %w", err)
 	}
 	// A full handshake after a declined session resumption still has the
 	// resumption's IKE control loop reading the old transport; move it along.
 	controlWasRunning, err := s.stopIKEControlGeneration()
 	if err != nil {
 		replacement.Stop()
-		logger.Warn("SWu NAT-T float kept the existing SOCKS5 UDP association",
-			zap.String("remote", remote), zap.Error(err))
-		return false
+		return fmt.Errorf("swu: stop IKE control for NAT-T float: %w", err)
 	}
 	s.setTransport(replacement)
 	s.mu.Lock()
@@ -59,17 +55,17 @@ func (s *Session) reassociateSocks5(previous *ipsec.Socks5Transport) bool {
 	s.mu.Unlock()
 	s.startNetEventMonitor()
 	previous.Stop()
+	if controlWasRunning {
+		if err := s.startIKEControl(); err != nil {
+			return fmt.Errorf("swu: restart IKE control after NAT-T float: %w", err)
+		}
+	}
 	logger.Info("SWu NAT-T float opened a new SOCKS5 UDP association",
 		zap.String("remote", remote),
 		zap.Uint16("old_local_port", previous.LocalPort()),
 		zap.Uint16("new_local_port", replacement.LocalPort()),
 		zap.Bool("ike_control_restarted", controlWasRunning))
-	if controlWasRunning {
-		if err := s.startIKEControl(); err != nil {
-			logger.Warn("SWu NAT-T float could not restart IKE control", zap.Error(err))
-		}
-	}
-	return true
+	return nil
 }
 
 func (s *Session) openSocks5Transport(remote string) (*ipsec.Socks5Transport, error) {

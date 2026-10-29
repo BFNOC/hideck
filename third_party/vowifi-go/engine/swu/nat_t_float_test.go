@@ -3,12 +3,16 @@ package swu
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/binary"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/engine/crypto"
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
@@ -86,7 +90,9 @@ func TestNATTFloatOpensNewSOCKS5Association(t *testing.T) {
 	server := newNATTSOCKSServer(t, 2)
 	session, original := newNATTSOCKSSession(t, server)
 
-	session.applyNATTraversal([]byte{1}, []byte{2})
+	if err := session.applyNATTraversal([]byte{1}, []byte{2}); err != nil {
+		t.Fatal(err)
+	}
 
 	replacement, ok := session.transport().(*ipsec.Socks5Transport)
 	if !ok || replacement == original {
@@ -111,7 +117,9 @@ func TestNATTFloatOpensNewSOCKS5Association(t *testing.T) {
 		t.Fatalf("datagram from port %d to %d, want from %d to 4500", source, destination, replacement.LocalPort())
 	}
 
-	session.applyNATTraversal([]byte{1}, []byte{2})
+	if err := session.applyNATTraversal([]byte{1}, []byte{2}); err != nil {
+		t.Fatal(err)
+	}
 	if got := server.associates.Load(); got != 2 || session.transport() != replacement {
 		t.Fatalf("repeated float reassociated: count=%d", got)
 	}
@@ -127,7 +135,9 @@ func TestNATTFloatMovesRunningIKEControlToNewAssociation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.stopIKEControl() })
 
-	session.applyNATTraversal([]byte{1}, []byte{2})
+	if err := session.applyNATTraversal([]byte{1}, []byte{2}); err != nil {
+		t.Fatal(err)
+	}
 
 	replacement := session.transport()
 	if replacement == original {
@@ -144,22 +154,47 @@ func TestNATTFloatMovesRunningIKEControlToNewAssociation(t *testing.T) {
 	}
 }
 
-func TestNATTFloatKeepsSOCKS5AssociationWhenReassociationFails(t *testing.T) {
+func TestNATTFloatReportsSOCKS5ReassociationFailure(t *testing.T) {
 	server := newNATTSOCKSServer(t, 1)
 	session, original := newNATTSOCKSSession(t, server)
 
-	session.applyNATTraversal([]byte{1}, []byte{2})
-
+	err := session.applyNATTraversal([]byte{1}, []byte{2})
+	if err == nil || !strings.Contains(err.Error(), "open SOCKS5 NAT-T association") {
+		t.Fatalf("float error=%v, want association failure", err)
+	}
 	if session.transport() != original {
 		t.Fatalf("transport replaced despite failed reassociation: %T", session.transport())
 	}
-	if session.remotePort != natTPort || original.RemotePort() != natTPort {
-		t.Fatalf("remote port session=%d transport=%d want 4500", session.remotePort, original.RemotePort())
+	if session.remotePort != 500 || original.RemotePort() != 500 {
+		t.Fatalf("failed float changed port: session=%d transport=%d", session.remotePort, original.RemotePort())
 	}
-	if err := original.SendIKE([]byte{0}); err != nil {
+}
+
+func TestIKEInitReportsNATTReassociationFailure(t *testing.T) {
+	server := newNATTSOCKSServer(t, 1)
+	session, original := newNATTSOCKSSession(t, server)
+	if _, err := session.buildIKESAInitPacket(); err != nil {
 		t.Fatal(err)
 	}
-	if source, destination := server.readDatagram(t); source != int(original.LocalPort()) || destination != natTPort {
-		t.Fatalf("datagram from port %d to %d, want from %d to 4500", source, destination, original.LocalPort())
+	responderDH, err := crypto.NewDiffieHellman(session.dhGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := buildInitResp(t, session, responderDH,
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NAT_DETECTION_SOURCE_IP, NotifyData: make([]byte, sha1.Size)},
+		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.NAT_DETECTION_DESTINATION_IP, NotifyData: make([]byte, sha1.Size)},
+	)
+	err = session.handleIKESAInitResp(encodeInitPacket(t, response))
+	if err == nil || !strings.Contains(err.Error(), "open SOCKS5 NAT-T association") {
+		t.Fatalf("IKE init error=%v, want NAT-T failure", err)
+	}
+	if cleanupErr := session.cleanupConnectAttempt(context.Background(), err); cleanupErr == nil {
+		t.Fatal("cleanup lost the handshake error")
+	}
+	if session.transport() != nil {
+		t.Fatal("failed handshake retained its transport")
+	}
+	if _, open := <-original.IKEPackets(); open {
+		t.Fatal("failed handshake did not close the original association")
 	}
 }
