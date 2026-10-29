@@ -109,6 +109,7 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 		return false
 	}
 	// Order close evidence against accepted UDP requests and failover commits.
+	var probe *portSTimeoutProbeEpisode
 	s.mu.Lock()
 	currentRegistrar := strings.TrimSpace(s.registrar)
 	s.portSSessionMu.Lock()
@@ -141,6 +142,10 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 		s.portSSession.lastCloseReason = errorText(err)
 		s.portSSession.closedRegistrar = registrar
 		s.recordPortSTimeoutLocked(registrar, kind)
+		if kind == portSCloseTimeout && s.timeoutAwaitPreset() && !s.sipOutboundFlow.Load() {
+			probe = &portSTimeoutProbeEpisode{generation: s.portSSession.generation, registrar: currentRegistrar}
+			s.portSTimeoutProbe.Store(probe)
+		}
 	}
 	startFailover := false
 	if current && kind == portSClosePeerReset {
@@ -157,6 +162,11 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 		"close_kind", kind, "reason", errorText(err),
 		"lifetime", elapsedSince(connection.openedAt, now),
 		"last_inbound_at", lastInboundAt)
+	if probe != nil {
+		logging.Info("IMS port-s timed out; SMS reception stays ready until the probe REGISTER answers",
+			"device", s.DeviceID(), "pcscf", probe.registrar, "port_s_generation", probe.generation,
+			"carrier_preset", strings.TrimSpace(s.cfg.CarrierPresetID))
+	}
 	if startFailover {
 		s.startPendingPortSResetFailover()
 	}
