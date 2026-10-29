@@ -158,6 +158,7 @@ func (s *Service) markPCSCFRegistrationUnboundWithReason(reason string, sipCode 
 }
 
 func (s *Service) resetRegistrationForPCSCFSwitch() error {
+	s.retireReplacedSecurity(s.saRetirement.Load(), "pcscf_switch")
 	s.resetRegistrationTransportForRegistrarRetry()
 	for _, conn := range s.detachProtectedConnections() {
 		s.markPortSLocalClose(conn)

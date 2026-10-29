@@ -203,6 +203,16 @@ type Service struct {
 	portSRecoveryAwaitingFlow atomic.Bool
 	portSOnDemandObserved     atomic.Bool
 	portSMissingAfterRegister atomic.Bool
+
+	// Refresh SA switch (TS 33.203 7.4.1a). The pending flow carries SM7
+	// until the 200 (guarded by mu); the retiring path and retirement keep
+	// the replaced SAs serving their own flows until they are deleted.
+	registrationPendingTCP    net.Conn
+	registrationPendingCancel context.CancelFunc
+	registrationPendingErr    error
+	protectedUDPRetiring      *protectedUDPTransport
+	saRetirement              atomic.Pointer[saRetirement]
+
 	portSWatchMu              sync.Mutex
 	portSWatchTimer           *time.Timer
 	portSWatchGeneration      uint64
