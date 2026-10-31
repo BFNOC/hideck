@@ -155,6 +155,7 @@ func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.
 // Service is the IMS core service.
 type Service struct {
 	cfg *IMSConfig
+	dev devTraceState
 	registrationRuntime
 	messagingRuntime
 	observability

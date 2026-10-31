@@ -42,6 +42,8 @@ type registerSession struct {
 	refreshOffer *refreshSecurityOffer
 	gatedRefresh bool
 	switching    *pendingSecuritySwitch
+	// refresh marks a reregistration of an existing binding.
+	refresh bool
 }
 
 type registerAttemptResult struct {
@@ -86,6 +88,7 @@ func (s *Service) registerLocked(ctx context.Context) error {
 		return errors.New("imscore: service stopped")
 	default:
 	}
+	s.devBeginRegister()
 	s.mu.Lock()
 	hadBinding := s.regState == regRegistered || (s.regSession != nil && s.regSession.expires > 0)
 	// Refreshing an existing binding does not create a fresh recovery path.
@@ -112,10 +115,15 @@ func (s *Service) registerLocked(ctx context.Context) error {
 		expires, err = s.runRegisterFlow(ctx)
 	}
 	var switchFailed *refreshSwitchFailed
-	if err != nil && hadBinding && !errors.As(err, &switchFailed) && isProtectedPortConflict(err) {
+	if err != nil && hadBinding && !errors.As(err, &switchFailed) &&
+		(isProtectedPortConflict(err) || isReregistrationForbidden(err)) {
 		// The reset drops the binding this refresh was meant to keep. A
-		// conflict on SM7 only fails the new SAs; the old ones stay.
+		// conflict or 403 on a gated refresh's SM7 only fails the new SAs;
+		// the old ones stay (TS 24.229 5.1.1.5.1). A 403 to the reregistration
+		// calls for an initial registration (5.1.1.4.1); running it in this
+		// tunnel instead of reconnecting is our choice.
 		hadBinding = false
+		s.devLogRefreshRejected(err, "initial registration with new ports in this tunnel")
 		expires, err = s.registerWithFreshProtectedPorts(ctx, err)
 	}
 	if err == nil && s.lastRegisterContactCount.Load() > 1 {
@@ -306,6 +314,7 @@ func (s *Service) runRegisterAttempt(ctx context.Context) (expires time.Duration
 	s.regSession = session
 	s.mu.Unlock()
 	s.recordRegisterSession(session)
+	s.devLogRegisterContext(session)
 	response, result, err := s.exchangeRegisterChallenges(ctx, session)
 	if err != nil {
 		return 0, result, err
@@ -624,6 +633,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 		"security_client_mechanisms", securityClientMechanismCount(rawSIPHeaderValue(request, "Security-Client")),
 		"sip", logging.RedactSIPRaw(request))
 	s.logRegisterViaPorts(session, request)
+	s.devLogRegisterRequest(session, request)
 	started := time.Now()
 	var response *sipResponse
 	var err error
@@ -644,9 +654,15 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 	}
 	logging.Info("IMS REGISTER response",
 		"device", s.DeviceID(), "cseq", session.cseq, "status", response.StatusCode,
+		"reason", response.Reason,
 		"elapsed_ms", time.Since(started).Milliseconds(),
 		"security_server", response.Header("Security-Server") != "",
 		"digest_challenge", isDigestChallengeResponse(response))
+	if response.parsed != nil {
+		logging.Debug("IMS REGISTER inbound", "device", s.DeviceID(), "cseq", session.cseq,
+			"sip", logging.RedactSIPRaw(response.parsed.String()))
+	}
+	s.devLogRegisterResponse(session, response, time.Since(started))
 	s.logRegisterFlowNegotiation(response)
 	s.recordRegisterResponse(response)
 	return response, nil
@@ -700,6 +716,7 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 			authHeader: previous.authHeader, expires: previous.expires,
 			security: previous.security, publicID: previous.publicID,
 			serviceRoute: previous.serviceRoute, path: previous.path, template: previous.template,
+			refresh: true,
 		}
 		s.mu.RUnlock()
 		return session, nil
@@ -723,6 +740,13 @@ func (s *Service) retryDefaultInitialRegister(
 ) (*sipResponse, error) {
 	template := session.template
 	if !template.EnableInitialRejectFallback || response == nil {
+		return response, nil
+	}
+	if session.refresh && response.StatusCode == 403 {
+		// TS 24.229 5.1.1.4.1 answers a 403 to a reregistration with an
+		// initial registration, not another reregistration. 408/500/504 are
+		// in the same clause but still keep the binding (keepRegistration-
+		// AfterFailedRefresh); that is a separate gap.
 		return response, nil
 	}
 	warning, body, _, _ := summarizeSIPFailure(response)

@@ -47,6 +47,17 @@ func buildIMSConfig(input imsConfigInput) (*imscore.IMSConfig, error) {
 		prepared.Profile.UserAgent, input.result.LocalAddr, prepared.CarrierPlan,
 	)
 	value.ICCID = strings.TrimSpace(prepared.Profile.ICCID)
+	// [dev] hideck#90: does the IMEI the ePDG may receive in IKE match the
+	// one in +sip.instance? Only the comparison is logged, never the IMEI.
+	ikeIMEI := firstNonEmpty(prepared.CarrierPlan.Device.IdentityIMEI, prepared.Profile.IMEI)
+	logging.Info("[dev] IMS device identity",
+		"device", input.session.DeviceID,
+		"ike_identity_imei_matches_contact", devIMEIDigits(ikeIMEI, 14) == devIMEIDigits(value.IMEI, 14),
+		"ike_identity_tac_matches_contact", devIMEIDigits(ikeIMEI, 8) == devIMEIDigits(value.IMEI, 8),
+		"contact_imei_present", devIMEIDigits(value.IMEI, 14) != "",
+		"ike_identity_enabled", prepared.CarrierPlan.Device.IdentityEnabled,
+		"ike_identity_withheld", prepared.CarrierPlan.Device.Withhold,
+		"user_agent", strings.TrimSpace(value.UserAgent))
 	if err := imscore.ApplyResolvedIMSIdentityToConfig(&value, identity, prepared.Profile.MCC); err != nil {
 		return nil, fmt.Errorf("runtimecore: apply IMS identity: %w", err)
 	}
@@ -111,4 +122,19 @@ func convertRegisterTemplate(
 		IncludePANIAuthenticated:  template.IncludePANIAuthenticated,
 		StrictSecurityServerOffer: template.StrictSecurityServerOffer,
 	}
+}
+
+// devIMEIDigits returns the first n digits of an IMEI in either plain or
+// urn:gsma:imei form, or "" when it has fewer.
+func devIMEIDigits(value string, n int) string {
+	digits := make([]byte, 0, 16)
+	for index := 0; index < len(value); index++ {
+		if value[index] >= '0' && value[index] <= '9' {
+			digits = append(digits, value[index])
+		}
+	}
+	if len(digits) < n {
+		return ""
+	}
+	return string(digits[:n])
 }

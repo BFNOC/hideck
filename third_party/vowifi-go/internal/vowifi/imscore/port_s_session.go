@@ -91,6 +91,7 @@ func (s *Service) logPortSOpened(conn net.Conn, registrar string, generation uin
 		"device", s.DeviceID(), "event", "opened", "generation", generation,
 		"pcscf", registrar, "inner_ip", s.cfg.LocalAddr,
 		"remote", conn.RemoteAddr(), "local", conn.LocalAddr())
+	s.devLogPortSEvent("opened", generation, conn)
 }
 
 func (s *Service) recordPortSInbound(now time.Time) {
@@ -162,6 +163,7 @@ func (s *Service) recordPortSClosed(conn net.Conn, err error, now time.Time) boo
 		"close_kind", kind, "reason", errorText(err),
 		"lifetime", elapsedSince(connection.openedAt, now),
 		"last_inbound_at", lastInboundAt)
+	s.devLogPortSEvent("closed:"+kind, generation, conn)
 	if probe != nil {
 		logging.Info("IMS port-s timed out; SMS reception stays ready until the probe REGISTER answers",
 			"device", s.DeviceID(), "pcscf", probe.registrar, "port_s_generation", probe.generation,

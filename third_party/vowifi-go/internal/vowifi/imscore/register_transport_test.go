@@ -496,8 +496,10 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	defer registrar.Close()
-	requests := make(chan string, 2)
-	go serveRegistrationSequence(registrar, requests, []int{200, 403})
+	requests := make(chan string, 3)
+	// The 403 to the refresh is followed by an initial registration in the
+	// same tunnel (TS 24.229 5.1.1.4.1); only its failure is reported.
+	go serveRegistrationSequence(registrar, requests, []int{200, 403, 403})
 
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-refresh", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
@@ -516,14 +518,17 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	seen := make([]string, 0, 2)
-	for attempt := 0; attempt < 2; attempt++ {
+	seen := make([]string, 0, 3)
+	for attempt := 0; attempt < 3; attempt++ {
 		select {
 		case request := <-requests:
 			seen = append(seen, request)
 		case <-ctx.Done():
 			t.Fatalf("received only %d REGISTER requests before timeout", attempt)
 		}
+	}
+	if sipHeaderValue(seen[2], "Call-ID") == sipHeaderValue(seen[1], "Call-ID") {
+		t.Fatal("403 to the refresh was not followed by an initial registration")
 	}
 	if sipHeaderValue(seen[0], "Call-ID") != sipHeaderValue(seen[1], "Call-ID") {
 		t.Fatal("registration refresh changed Call-ID")

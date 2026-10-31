@@ -147,35 +147,47 @@ func isProtectedPortConflict(err error) bool {
 		strings.Contains(strings.ToLower(responseErr.message), "ip+port conflict")
 }
 
+// isReregistrationForbidden matches a 403 to a reregistration, which TS 24.229
+// 5.1.1.4.1 answers with an initial registration.
+func isReregistrationForbidden(err error) bool {
+	var responseErr *registerResponseError
+	return errors.As(err, &responseErr) && responseErr.statusCode == 403
+}
+
 // registerWithFreshProtectedPorts drops the current SA and transport and runs
 // an initial registration, which reserves and offers new protected ports.
 // Called with registerMu held. The registration starts over in the configured
 // transport order and has only what is left of the refresh deadline.
-func (s *Service) registerWithFreshProtectedPorts(ctx context.Context, conflict error) (time.Duration, error) {
+func (s *Service) registerWithFreshProtectedPorts(ctx context.Context, rejected error) (time.Duration, error) {
 	var budget time.Duration
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = time.Until(deadline).Round(time.Millisecond)
 	}
-	logging.Info("IMS re-REGISTER rejected for a protected port conflict; registering with new ports",
-		"device", s.DeviceID(), "pcscf", s.currentPortSRecoveryRegistrar(),
+	cause := "protected_port_conflict"
+	if isReregistrationForbidden(rejected) {
+		cause = "forbidden"
+	}
+	logging.Info("IMS re-REGISTER rejected; registering with new ports",
+		"device", s.DeviceID(), "cause", cause, "pcscf", s.currentPortSRecoveryRegistrar(),
 		"previous_transport", s.currentRegistrationTransport(),
-		"transport_order", registerTransportCandidates(s.cfg.Transport), "budget", budget, "err", conflict)
+		"transport_order", registerTransportCandidates(s.cfg.Transport), "budget", budget, "err", rejected)
 	if err := s.resetRegistrationForPCSCFSwitch(); err != nil {
-		logging.Info("IMS reset after protected port conflict failed",
-			"device", s.DeviceID(), "pcscf", s.currentPortSRecoveryRegistrar(), "err", err)
-		return 0, fmt.Errorf("imscore: reset registration after protected port conflict: %w", err)
+		logging.Info("IMS reset after rejected re-REGISTER failed",
+			"device", s.DeviceID(), "cause", cause, "pcscf", s.currentPortSRecoveryRegistrar(), "err", err)
+		return 0, fmt.Errorf("imscore: reset registration after rejected re-REGISTER (%s): %w", cause, err)
 	}
 	started := time.Now()
+	s.devSetTrigger("re-REGISTER rejected: " + cause)
 	expires, err := s.runRegisterFlow(ctx)
 	if err != nil {
 		logging.Info("IMS registration with new protected ports failed",
-			"device", s.DeviceID(), "pcscf", s.currentPortSRecoveryRegistrar(),
+			"device", s.DeviceID(), "cause", cause, "pcscf", s.currentPortSRecoveryRegistrar(),
 			"last_transport", s.currentRegistrationTransport(), "elapsed", time.Since(started).Round(time.Millisecond),
 			"ctx_err", ctx.Err(), "err", err)
 		return expires, err
 	}
 	logging.Info("IMS registered with new protected ports",
-		"device", s.DeviceID(), "pcscf", s.currentPortSRecoveryRegistrar(),
+		"device", s.DeviceID(), "cause", cause, "pcscf", s.currentPortSRecoveryRegistrar(),
 		"transport", s.currentRegistrationTransport(), "elapsed", time.Since(started).Round(time.Millisecond))
 	return expires, nil
 }

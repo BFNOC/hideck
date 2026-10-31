@@ -20,6 +20,7 @@ func (s *Service) triggerRegisterImmediate(reason string) {
 	s.registrationRefreshAt = now
 	s.nextRegister = now
 	s.mu.Unlock()
+	s.devRecordTrigger(reason)
 	s.reRegisterPending.Store(true)
 	logging.WarnRate("ims-register-immediate-"+s.DeviceID(), 30*time.Second,
 		"IMS immediate re-registration scheduled",

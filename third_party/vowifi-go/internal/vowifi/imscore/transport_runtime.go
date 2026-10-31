@@ -226,6 +226,7 @@ func (s *Service) dispatchInboundSIPRequest(
 	peer net.Conn,
 ) error {
 	s.logInboundSIPRequest(request)
+	s.devLogInboundRequest(request, raw, peer)
 	smsCheckpoint := s.captureSMSReceptionCheckpoint()
 	s.markSelfRoutedSubscription(request)
 	s.transport.DeliverRequest(raw)

@@ -23,6 +23,9 @@ func (s *Service) logRegisterFlowNegotiation(response *sipResponse) {
 	supportedOutbound := containsHeaderToken(supported, "outbound")
 	pathOB := containsSIPParameter(path, "ob")
 	contactRegID := containsSIPParameter(contact, "reg-id")
+	// TS 24.229 5.1.1.4.1 f) stores a nextnonce for the next REGISTER; we do
+	// not yet, so record whether the S-CSCF sends one.
+	authenticationInfo := strings.Join(response.HeaderValues("Authentication-Info"), ",")
 	s.mu.Lock()
 	s.sipOutboundKeepalive = requiredOutbound || viaKeep
 	// RFC 5626: Supported: outbound only means the registrar understands
@@ -36,6 +39,7 @@ func (s *Service) logRegisterFlowNegotiation(response *sipResponse) {
 		s.outboundContactRegistered = true
 	}
 	s.flowTimer = parseFlowTimerHeader(response.HeaderValues("Flow-Timer"))
+	flowTimer := s.flowTimer
 	s.stunMappedAddr = nil
 	s.mu.Unlock()
 	s.applyRFC5626TCPKeepalive()
@@ -48,7 +52,10 @@ func (s *Service) logRegisterFlowNegotiation(response *sipResponse) {
 		"path_ob", pathOB,
 		"service_route_count", serviceRouteHeaderHopCount(serviceRouteText),
 		"service_route_orig", serviceRouteHeaderHasOrig(serviceRouteText),
-		"contact_reg_id", contactRegID)
+		"contact_reg_id", contactRegID,
+		"flow_timer", flowTimer,
+		"authentication_info", strings.TrimSpace(authenticationInfo) != "",
+		"nextnonce", containsSIPParameter(authenticationInfo, "nextnonce"))
 }
 
 func serviceRouteHeaderHopCount(value string) int {
