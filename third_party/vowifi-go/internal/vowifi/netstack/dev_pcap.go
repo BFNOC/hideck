@@ -29,6 +29,9 @@ import (
 const (
 	devPcapDirEnv   = "HIDECK_DEV90_PCAP_DIR"
 	devPcapMaxBytes = 64 << 20
+	// Queued blocks before record starts dropping instead of blocking.
+	devPcapQueueDepth = 4096
+	devPcapMaxComment = 512
 	// LINKTYPE_RAW: the block starts with the IPv4 or IPv6 header.
 	devPcapLinkTypeRaw = 101
 )
@@ -40,12 +43,18 @@ var (
 )
 
 type devPcap struct {
-	mu      sync.Mutex
-	file    *os.File
-	path    string
+	path  string
+	file  *os.File
+	queue chan []byte
+	done  chan struct{}
+	// mu orders record's queue send against Close.
+	mu      sync.RWMutex
+	closed  bool
+	full    atomic.Bool
+	dropped atomic.Uint64
+	// written and packets belong to the writer goroutine until done closes.
 	written int64
 	packets uint64
-	full    bool
 }
 
 func openDevPcap() *devPcap {
@@ -70,38 +79,64 @@ func openDevPcap() *devPcap {
 		logging.Info("[dev] IMS inner pcap unavailable", "path", path, "err", err)
 		return nil
 	}
+	p := &devPcap{
+		path: path, file: file, written: int64(len(header)),
+		queue: make(chan []byte, devPcapQueueDepth), done: make(chan struct{}),
+	}
+	go p.writeLoop()
 	logging.Info("[dev] IMS inner pcap opened", "path", path)
-	return &devPcap{file: file, path: path, written: int64(len(header))}
+	return p
 }
 
-func (p *devPcap) record(packet []byte, note string) {
-	if p == nil || len(packet) == 0 {
+// record queues one packet; a full queue drops it rather than delay the
+// packet path, and Close reports how many were dropped.
+func (p *devPcap) record(at time.Time, packet []byte, note string) {
+	if p == nil || len(packet) == 0 || p.full.Load() {
 		return
 	}
 	keep, summary := devPcapCut(packet)
 	if summary != "" {
 		note += " " + summary
 	}
-	block := pcapngEnhancedPacket(time.Now(), packet[:keep], len(packet), note)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.file == nil || p.full {
+	if len(note) > devPcapMaxComment {
+		note = note[:devPcapMaxComment]
+	}
+	block := pcapngEnhancedPacket(at, packet[:keep], len(packet), note)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.closed {
 		return
 	}
-	if p.written+int64(len(block)) > devPcapMaxBytes {
-		p.full = true
-		logging.Info("[dev] IMS inner pcap reached its size cap; capture stopped",
-			"path", p.path, "bytes", p.written, "packets", p.packets)
-		return
+	select {
+	case p.queue <- block:
+	default:
+		p.dropped.Add(1)
 	}
-	if _, err := p.file.Write(block); err != nil {
-		logging.Info("[dev] IMS inner pcap write failed; capture stopped", "path", p.path, "err", err)
-		_ = p.file.Close()
-		p.file = nil
-		return
+}
+
+func (p *devPcap) writeLoop() {
+	defer close(p.done)
+	for block := range p.queue {
+		if p.file == nil {
+			continue
+		}
+		if p.written+int64(len(block)) > devPcapMaxBytes {
+			if !p.full.Swap(true) {
+				logging.Info("[dev] IMS inner pcap reached its size cap; capture stopped",
+					"path", p.path, "bytes", p.written, "packets", p.packets)
+			}
+			continue
+		}
+		if _, err := p.file.Write(block); err != nil {
+			logging.Info("[dev] IMS inner pcap write failed; capture stopped", "path", p.path, "err", err)
+			_ = p.file.Close()
+			p.file = nil
+			p.full.Store(true)
+			continue
+		}
+		p.written += int64(len(block))
+		p.packets++
 	}
-	p.written += int64(len(block))
-	p.packets++
 }
 
 func (p *devPcap) Close() {
@@ -109,27 +144,40 @@ func (p *devPcap) Close() {
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.file == nil {
+	if p.closed {
+		p.mu.Unlock()
 		return
 	}
-	err := p.file.Close()
-	p.file = nil
-	logging.Info("[dev] IMS inner pcap closed", "path", p.path, "bytes", p.written, "packets", p.packets, "err", err)
+	p.closed = true
+	close(p.queue)
+	p.mu.Unlock()
+	<-p.done
+	var err error
+	if p.file != nil {
+		err = p.file.Close()
+		p.file = nil
+	}
+	logging.Info("[dev] IMS inner pcap closed", "path", p.path, "bytes", p.written,
+		"packets", p.packets, "dropped", p.dropped.Load(), "err", err)
 }
 
-// devPcapCut returns how many leading bytes to keep (headers only) and a
-// summary of the dropped payload.
+// devPcapCut returns how many leading bytes to keep and a summary of what was
+// cut. It keeps only headers it has parsed; anything it cannot place (a
+// non-first fragment, an unknown protocol, a malformed packet) keeps no bytes
+// past the last header it is sure of.
 func devPcapCut(packet []byte) (int, string) {
-	ipLen, protocol, ok := devIPHeader(packet)
+	ipLen, protocol, laterFragment, ok := devIPHeader(packet, false)
 	if !ok {
-		return min(len(packet), 40), ""
+		return 0, "unparsed len=" + strconv.Itoa(len(packet))
 	}
 	rest := packet[ipLen:]
+	if laterFragment {
+		return ipLen, "fragment len=" + strconv.Itoa(len(rest))
+	}
 	switch protocol {
 	case 6: // TCP
 		if len(rest) < 20 {
-			return len(packet), ""
+			return ipLen, ""
 		}
 		header := int(rest[12]>>4) * 4
 		if header < 20 || header > len(rest) {
@@ -138,48 +186,118 @@ func devPcapCut(packet []byte) (int, string) {
 		return ipLen + header, devPayloadSummary(rest[header:])
 	case 17: // UDP
 		if len(rest) < 8 {
-			return len(packet), ""
+			return ipLen, ""
 		}
 		return ipLen + 8, devPayloadSummary(rest[8:])
 	case 50: // ESP: SPI and sequence number only
 		return ipLen + min(len(rest), 8), ""
-	case 1: // ICMP errors quote the IP header and 8 bytes of the original
-		return ipLen + min(len(rest), 8+20+8), ""
-	case 58: // ICMPv6 quotes the original IPv6 and TCP headers; cut before any payload
-		return ipLen + min(len(rest), 8+40+20), ""
+	case 1, 58:
+		return ipLen + devICMPKeep(protocol, rest), ""
 	default:
 		return ipLen, ""
 	}
 }
 
-func devIPHeader(packet []byte) (int, byte, bool) {
+// devICMPKeep keeps the ICMP header and, for an error, the headers of the
+// packet it quotes but none of that packet's payload.
+func devICMPKeep(protocol byte, icmp []byte) int {
+	if len(icmp) < 8 {
+		return 0
+	}
+	kind := icmp[0]
+	isError := kind < 128
+	if protocol == 1 {
+		isError = kind == 3 || kind == 4 || kind == 5 || kind == 11 || kind == 12
+	}
+	if !isError {
+		return 8
+	}
+	quoted := icmp[8:]
+	quotedLen, quotedProtocol, laterFragment, ok := devIPHeader(quoted, true)
+	if !ok {
+		return 8
+	}
+	if laterFragment {
+		return 8 + quotedLen
+	}
+	available := len(quoted) - quotedLen
+	switch quotedProtocol {
+	case 6:
+		return 8 + quotedLen + min(available, 20)
+	case 17, 50:
+		return 8 + quotedLen + min(available, 8)
+	default:
+		return 8 + quotedLen
+	}
+}
+
+// devIPHeader returns the IP header length including IPv6 extension headers,
+// the upper-layer protocol, and whether this is a non-first fragment. A
+// quoted packet (inside an ICMP error) may be cut short; any other packet
+// must match its own length field.
+func devIPHeader(packet []byte, quoted bool) (int, byte, bool, bool) {
 	if len(packet) == 0 {
-		return 0, 0, false
+		return 0, 0, false, false
 	}
 	switch packet[0] >> 4 {
 	case 4:
 		if len(packet) < 20 {
-			return 0, 0, false
+			return 0, 0, false, false
 		}
 		ipLen := int(packet[0]&0x0f) * 4
-		if ipLen < 20 || ipLen > len(packet) {
-			return 0, 0, false
+		total := int(binary.BigEndian.Uint16(packet[2:4]))
+		if ipLen < 20 || ipLen > len(packet) || total < ipLen || (!quoted && total != len(packet)) {
+			return 0, 0, false, false
 		}
-		return ipLen, packet[9], true
+		laterFragment := binary.BigEndian.Uint16(packet[6:8])&0x1fff != 0
+		return ipLen, packet[9], laterFragment, true
 	case 6:
-		if len(packet) < 40 {
-			return 0, 0, false
+		if len(packet) < 40 || (!quoted && 40+int(binary.BigEndian.Uint16(packet[4:6])) != len(packet)) {
+			return 0, 0, false, false
 		}
-		return 40, packet[6], true
+		offset, next := 40, packet[6]
+		for {
+			switch next {
+			case 0, 43, 60: // hop-by-hop, routing, destination options
+				if len(packet) < offset+2 {
+					return 0, 0, false, false
+				}
+				length := (int(packet[offset+1]) + 1) * 8
+				if len(packet) < offset+length {
+					return 0, 0, false, false
+				}
+				next, offset = packet[offset], offset+length
+			case 44: // fragment
+				if len(packet) < offset+8 {
+					return 0, 0, false, false
+				}
+				laterFragment := binary.BigEndian.Uint16(packet[offset+2:offset+4])>>3 != 0
+				next, offset = packet[offset], offset+8
+				if laterFragment {
+					return offset, next, true, true
+				}
+			case 51: // AH
+				if len(packet) < offset+2 {
+					return 0, 0, false, false
+				}
+				length := (int(packet[offset+1]) + 2) * 4
+				if len(packet) < offset+length {
+					return 0, 0, false, false
+				}
+				next, offset = packet[offset], offset+length
+			default:
+				return offset, next, false, true
+			}
+		}
 	default:
-		return 0, 0, false
+		return 0, 0, false, false
 	}
 }
 
 // devESPNote names the SA of an ESP packet, or returns "" for anything else.
 func devESPNote(packet []byte) string {
-	ipLen, protocol, ok := devIPHeader(packet)
-	if !ok || protocol != 50 || len(packet) < ipLen+8 {
+	ipLen, protocol, laterFragment, ok := devIPHeader(packet, false)
+	if !ok || laterFragment || protocol != 50 || len(packet) < ipLen+8 {
 		return ""
 	}
 	esp := packet[ipLen:]
