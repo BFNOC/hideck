@@ -231,7 +231,7 @@ func (s *Service) readRegistrationResponses(conn net.PacketConn) {
 			return nil
 		})
 		if err != nil {
-			logging.WarnRate("ims-udp-inbound", "IMS UDP inbound handling failed", "err", err)
+			logging.WarnRate("ims-udp-inbound", "IMS UDP inbound handling failed", "device", s.DeviceID(), "err", err)
 		}
 	}
 }
@@ -1004,7 +1004,7 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 		if err := s.dispatchInboundSIPMessageWithPeer(message, message.String(), func(response string) error {
 			return s.writeSIPStream(conn, response)
 		}, conn); err != nil {
-			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "err", err)
+			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "device", s.DeviceID(), "err", err)
 		}
 	}
 }
