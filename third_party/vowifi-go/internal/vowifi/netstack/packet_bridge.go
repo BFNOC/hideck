@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -177,19 +178,22 @@ func (b *PacketBridge) writeOutboundPacket(packet *stack.PacketBuffer) error {
 		data, protected, err = transformer.TransformOutbound(data)
 		if err != nil {
 			b.outboundTransformErrors.Add(1)
-			b.devPcap.record(plain, "out drop: "+err.Error())
+			if b.devPcap != nil {
+				b.devPcap.record(time.Now(), plain, "out drop: "+err.Error())
+			}
 			return err
 		}
-		if protected {
+		if protected && b.devPcap != nil {
 			note = strings.TrimSpace("out " + devESPNote(data))
 		}
 	}
+	sentAt := time.Now()
 	if err := b.endpoint.WritePacket(b.ctx, data); err != nil {
 		b.outboundWriteErrors.Add(1)
-		b.devPcap.record(plain, note+" write-error: "+err.Error())
+		b.devPcap.record(sentAt, plain, note+" write-error: "+err.Error())
 		return err
 	}
-	b.devPcap.record(plain, note)
+	b.devPcap.record(sentAt, plain, note)
 	b.outboundPackets.Add(1)
 	if b.parent != nil {
 		b.parent.outboundPackets.Add(1)
@@ -221,9 +225,10 @@ func (b *PacketBridge) injectInboundPacket(data []byte) error {
 	if len(data) == 0 {
 		return errors.New("netstack: empty inbound packet")
 	}
+	receivedAt := time.Now()
 	if b.rejectsPlaintextUDP(data) {
 		b.inboundTransformErrors.Add(1)
-		b.devPcap.record(data, "in drop: plaintext udp on reserved IMS port")
+		b.devPcap.record(receivedAt, data, "in drop: plaintext udp on reserved IMS port")
 		return errors.New("netstack: unprotected datagram on reserved IMS UDP port")
 	}
 	note := "in plaintext"
@@ -234,14 +239,16 @@ func (b *PacketBridge) injectInboundPacket(data []byte) error {
 		data, protected, err = transformer.TransformInbound(data)
 		if err != nil {
 			b.inboundTransformErrors.Add(1)
-			b.devPcap.record(raw, strings.TrimSpace("in drop "+devESPNote(raw))+": "+err.Error())
+			if b.devPcap != nil {
+				b.devPcap.record(receivedAt, raw, strings.TrimSpace("in drop "+devESPNote(raw))+": "+err.Error())
+			}
 			return err
 		}
-		if protected {
+		if protected && b.devPcap != nil {
 			note = strings.TrimSpace("in " + devESPNote(raw))
 		}
 	}
-	b.devPcap.record(data, note)
+	b.devPcap.record(receivedAt, data, note)
 	if len(data) == 0 {
 		return errors.New("netstack: empty packet")
 	}
