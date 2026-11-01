@@ -13,7 +13,19 @@ import (
 // gonet flattens endpoint errors into strings, while its own timeoutError
 // represents a local read/write deadline. Restore that distinction only at
 // this adapter boundary, rather than guessing from arbitrary IMS errors.
-type imsTCPConn struct{ *gonet.TCPConn }
+type imsTCPConn struct {
+	*gonet.TCPConn
+	endpoint tcpip.Endpoint
+}
+
+// DisableKeepAlive is used by the [dev] hideck#90 port-s keepalive experiment.
+func (c *imsTCPConn) DisableKeepAlive() error {
+	if c == nil || c.endpoint == nil {
+		return errors.New("netstack: IMS TCP endpoint unavailable")
+	}
+	c.endpoint.SocketOptions().SetKeepAlive(false)
+	return nil
+}
 
 func (c *imsTCPConn) Read(buffer []byte) (int, error) {
 	n, err := c.TCPConn.Read(buffer)

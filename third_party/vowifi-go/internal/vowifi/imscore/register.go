@@ -228,7 +228,9 @@ func (s *Service) registerLocked(ctx context.Context) error {
 	s.startRegistrationSubscription()
 	s.startMWISubscription()
 	s.startIMSKeepalive()
-	s.schedulePeerCapabilityDiscovery()
+	if s.devExperiment() != devExperimentNoOptions {
+		s.schedulePeerCapabilityDiscovery()
+	}
 	s.startPendingPortSResetFailover()
 	return nil
 }
@@ -846,7 +848,8 @@ func (s *Service) buildRegisterRequest(
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	localAddress := s.registerLocalAddress(session, transport)
 	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;rport;branch=%s%s\r\n",
-		transportUpper(transport), localAddress, session.branch, registerViaAlias(protected)))
+		transportUpper(transport), localAddress, session.branch,
+		registerViaAlias(protected && s.devExperiment() != devExperimentNoAlias)))
 	publicIdentity := primaryPublicIdentity(cfg)
 	if options.anonymous {
 		publicIdentity = emergency.AnonymousIMPU
@@ -861,7 +864,11 @@ func (s *Service) buildRegisterRequest(
 	b.WriteString("Contact: " + contact + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
-	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeaderForSession(cfg, session)) + "\r\n")
+	supported := registerSupportedHeaderForSession(cfg, session)
+	if s.devExperiment() == devExperimentNoOutbound {
+		supported = removeHeaderToken(supported, "outbound")
+	}
+	b.WriteString("Supported: " + formatHeaderList(supported) + "\r\n")
 	if allow := registerConfiguredAllowHeader(cfg); allow != "" {
 		b.WriteString("Allow: " + allow + "\r\n")
 	}
@@ -1239,6 +1246,12 @@ func (s *Service) registerLocalAddress(session *registerSession, transport strin
 		// TCP after SA keeps cfg.LocalPort (24.229 5.1.1.2.2 (c) is UDP-only;
 		// K.2.1.2.2.2 TCP Via is IP/FQDN). UDP IPsec uses port-s.
 		port = protectedViaSentByPort(transport, int(session.security.client.PortS), s.cfg.LocalPort)
+		switch s.devExperiment() {
+		case devExperimentViaPortC:
+			port = int(session.security.client.PortC)
+		case devExperimentViaPortS:
+			port = int(session.security.client.PortS)
+		}
 	}
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(port))
 }

@@ -269,12 +269,16 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 			"device", s.DeviceID(), "remote", conn.RemoteAddr(), "local", conn.LocalAddr())
 		s.inboundTCPAccept.Add(1)
 		s.configureRegistrationTCPKeepalive(conn)
+		if s.devExperiment() == devExperimentNoPortSKeepalive {
+			s.devDisablePortSKeepalive(conn)
+		}
 		conn = s.newPortSInboundConn(conn)
 		if !s.trackProtectedPortSConnection(conn, time.Now()) {
 			_ = conn.Close()
 			return
 		}
 		s.resetPortSReadClock()
+		s.logDownlinkDiagnostics("port_s_opened")
 		s.networkDone.Add(1)
 		go s.serveProtectedSIPConnection(conn)
 	}
@@ -285,6 +289,7 @@ func (s *Service) serveProtectedSIPConnection(conn net.Conn) {
 	defer conn.Close()
 	err := s.readRegistrationStreamSync(conn)
 	recoverFlow := s.recordPortSClosed(conn, err, time.Now())
+	s.logDownlinkDiagnostics("port_s_closed")
 	s.untrackProtectedConnection(conn)
 	if err != nil && !s.stopped() {
 		logging.WarnRate("ims-protected-server-stream-"+s.DeviceID(),

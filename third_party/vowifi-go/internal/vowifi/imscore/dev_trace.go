@@ -58,6 +58,8 @@ type devTraceState struct {
 	trigger        string
 	// inboundCounts samples periodic inbound requests.
 	inboundCounts map[sip.RequestMethod]uint64
+	// experimentUnknown logs an unrecognised HIDECK_DEV90_EXPERIMENT once.
+	experimentUnknown sync.Once
 }
 
 func devSampled(count uint64) bool {
@@ -151,7 +153,7 @@ func (s *Service) devLogRegisterContext(session *registerSession) {
 		"since_register_ok", devSince(lastOK),
 		"port_s_connected", portS.connected, "port_s_generation", portS.generation,
 		"port_s_close_kind", portS.lastCloseKind, "since_port_s_close", devSince(portS.closedAt),
-		"carrier_preset", s.devCarrierPreset())
+		"carrier_preset", s.devCarrierPreset(), "experiment", s.devExperimentName())
 }
 
 // devLogRegisterRequest logs the REGISTER and, within one Call-ID, the
