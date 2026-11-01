@@ -3,6 +3,7 @@ package netstack
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -60,6 +61,7 @@ type PacketBridge struct {
 	protectedUDPPorts map[string]int
 	parent            *Network
 	wg                sync.WaitGroup
+	devPcap           *devPcap
 
 	outboundPackets         atomic.Uint64
 	inboundPackets          atomic.Uint64
@@ -85,7 +87,7 @@ func NewPacketBridge(
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	b := &PacketBridge{
 		ctx: bridgeCtx, cancel: cancel, link: link, endpoint: endpoint,
-		transform: transformer, parent: parent,
+		transform: transformer, parent: parent, devPcap: openDevPcap(),
 	}
 	b.wg.Add(2)
 	go b.outboundLoop()
@@ -102,6 +104,7 @@ func (b *PacketBridge) Close() {
 		_ = b.endpoint.Close()
 	}
 	b.wg.Wait()
+	b.devPcap.Close()
 }
 
 func (b *PacketBridge) Stats() PacketBridgeStats {
@@ -166,18 +169,27 @@ func (b *PacketBridge) writeOutboundPacket(packet *stack.PacketBuffer) error {
 	view := packet.ToView()
 	defer view.Release()
 	data := append([]byte(nil), view.AsSlice()...)
+	plain := data
+	note := "out plaintext"
 	if transformer := b.currentTransformer(); transformer != nil {
 		var err error
-		data, _, err = transformer.TransformOutbound(data)
+		var protected bool
+		data, protected, err = transformer.TransformOutbound(data)
 		if err != nil {
 			b.outboundTransformErrors.Add(1)
+			b.devPcap.record(plain, "out drop: "+err.Error())
 			return err
+		}
+		if protected {
+			note = strings.TrimSpace("out " + devESPNote(data))
 		}
 	}
 	if err := b.endpoint.WritePacket(b.ctx, data); err != nil {
 		b.outboundWriteErrors.Add(1)
+		b.devPcap.record(plain, note+" write-error: "+err.Error())
 		return err
 	}
+	b.devPcap.record(plain, note)
 	b.outboundPackets.Add(1)
 	if b.parent != nil {
 		b.parent.outboundPackets.Add(1)
@@ -211,16 +223,25 @@ func (b *PacketBridge) injectInboundPacket(data []byte) error {
 	}
 	if b.rejectsPlaintextUDP(data) {
 		b.inboundTransformErrors.Add(1)
+		b.devPcap.record(data, "in drop: plaintext udp on reserved IMS port")
 		return errors.New("netstack: unprotected datagram on reserved IMS UDP port")
 	}
+	note := "in plaintext"
 	if transformer := b.currentTransformer(); transformer != nil {
+		raw := data
 		var err error
-		data, _, err = transformer.TransformInbound(data)
+		var protected bool
+		data, protected, err = transformer.TransformInbound(data)
 		if err != nil {
 			b.inboundTransformErrors.Add(1)
+			b.devPcap.record(raw, strings.TrimSpace("in drop "+devESPNote(raw))+": "+err.Error())
 			return err
 		}
+		if protected {
+			note = strings.TrimSpace("in " + devESPNote(raw))
+		}
 	}
+	b.devPcap.record(data, note)
 	if len(data) == 0 {
 		return errors.New("netstack: empty packet")
 	}
