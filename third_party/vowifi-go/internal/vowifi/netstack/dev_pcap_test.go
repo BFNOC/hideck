@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type devPcapPacket struct {
@@ -157,20 +158,69 @@ func TestDevPayloadSummaryKeepsOnlyMethodStatusAndCSeq(t *testing.T) {
 	}
 }
 
-func TestDevPcapCutDropsTCPPayload(t *testing.T) {
-	packet := make([]byte, 40+32+10)
-	packet[0] = 0x60
-	packet[6] = 6
-	packet[40+12] = 8 << 4 // 32-byte TCP header with options
-	copy(packet[72:], "SIP/2.0 2")
-	keep, _ := devPcapCut(packet)
-	if keep != 72 {
-		t.Fatalf("kept %d bytes, want IPv6 + TCP headers (72)", keep)
+func devTestIPv6(next byte, rest []byte) []byte {
+	packet := make([]byte, 40, 40+len(rest))
+	packet[0], packet[6] = 0x60, next
+	binary.BigEndian.PutUint16(packet[4:], uint16(len(rest)))
+	return append(packet, rest...)
+}
+
+func devTestIPv4(protocol byte, fragmentOffset uint16, rest []byte) []byte {
+	packet := make([]byte, 20, 20+len(rest))
+	packet[0], packet[9] = 0x45, protocol
+	binary.BigEndian.PutUint16(packet[2:], uint16(20+len(rest)))
+	binary.BigEndian.PutUint16(packet[6:], fragmentOffset)
+	return append(packet, rest...)
+}
+
+func TestDevPcapCutKeepsNoPayload(t *testing.T) {
+	secret := []byte("NOTIFY sip:+4915112345678@ims.example SIP/2.0\r\nimei:35000011112222\r\n")
+	tcp := make([]byte, 32)
+	tcp[12] = 8 << 4 // 32-byte TCP header with options
+	udp := make([]byte, 8)
+	destinationOptions := []byte{6, 0, 1, 4, 0, 0, 0, 0} // next header TCP, 8 bytes
+	fragment := func(next byte, offset uint16) []byte {
+		header := []byte{next, 0, 0, 0, 0, 0, 0, 1}
+		binary.BigEndian.PutUint16(header[2:], offset<<3)
+		return header
 	}
-	icmp := make([]byte, 40+8+40+20+100)
-	icmp[0] = 0x60
-	icmp[6] = 58
-	if keep, _ := devPcapCut(icmp); keep != 40+8+40+20 {
-		t.Fatalf("ICMPv6 kept %d bytes", keep)
+	echo := append([]byte{128, 0, 0, 0, 0, 1, 0, 1}, secret...)
+	unreachable := append([]byte{1, 4, 0, 0, 0, 0, 0, 0}, devTestIPv6(17, append(udp, secret...))...)
+	cases := []struct {
+		name   string
+		packet []byte
+		keep   int
+	}{
+		{"IPv6 TCP", devTestIPv6(6, append(tcp, secret...)), 40 + 32},
+		{"IPv6 UDP", devTestIPv6(17, append(udp, secret...)), 40 + 8},
+		{"IPv6 destination options then TCP", devTestIPv6(60, append(append(destinationOptions, tcp...), secret...)), 40 + 8 + 32},
+		{"IPv6 first fragment", devTestIPv6(44, append(append(fragment(6, 0), tcp...), secret...)), 40 + 8 + 32},
+		{"IPv6 later fragment", devTestIPv6(44, append(fragment(6, 100), secret...)), 40 + 8},
+		{"IPv4 later fragment", devTestIPv4(6, 100, secret), 20},
+		{"ICMPv6 echo", devTestIPv6(58, echo), 40 + 8},
+		{"ICMPv6 error quoting UDP", devTestIPv6(58, unreachable), 40 + 8 + 40 + 8},
+		{"ICMPv4 echo", devTestIPv4(1, 0, append([]byte{8, 0, 0, 0, 0, 1, 0, 1}, secret...)), 20 + 8},
+		{"unknown protocol", devTestIPv6(99, secret), 40},
+		{"not IP", secret, 0},
+		{"IPv6 length mismatch", append(devTestIPv6(6, tcp), secret...), 0},
 	}
+	for _, tc := range cases {
+		keep, summary := devPcapCut(tc.packet)
+		if keep != tc.keep {
+			t.Errorf("%s: kept %d bytes, want %d", tc.name, keep, tc.keep)
+		}
+		for _, leak := range []string{"4915112345678", "35000011112222", "ims.example"} {
+			if bytes.Contains(tc.packet[:keep], []byte(leak)) || strings.Contains(summary, leak) {
+				t.Errorf("%s: kept %q (summary %q)", tc.name, leak, summary)
+			}
+		}
+	}
+}
+
+func TestDevPcapRecordAfterCloseIsDropped(t *testing.T) {
+	t.Setenv(devPcapDirEnv, t.TempDir())
+	p := openDevPcap()
+	p.Close()
+	p.record(time.Now(), devTestIPv6(17, make([]byte, 8)), "in plaintext")
+	p.Close()
 }
