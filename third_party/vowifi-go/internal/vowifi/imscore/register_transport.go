@@ -333,7 +333,6 @@ func (s *Service) handleProtectedServerPushClosed() {
 			"close_kind", s.capturePortSSession().lastCloseKind,
 			"peer_reconnect_observed", s.portSOnDemandObserved.Load(),
 			"carrier_preset", strings.TrimSpace(s.cfg.CarrierPresetID))
-		s.scheduleVodafoneDEPortSAwaitCap()
 		return
 	}
 	now := time.Now()
@@ -483,16 +482,14 @@ func (s *Service) canAwaitOnDemandPortS() bool {
 		preset = strings.TrimSpace(s.cfg.CarrierPresetID)
 	}
 	observed := s.portSOnDemandObserved.Load()
-	session := s.capturePortSSession()
-	switch session.lastCloseKind {
+	switch s.capturePortSSession().lastCloseKind {
 	case portSCloseEOF:
 		// 2degrees closes an idle port-s after about 2 minutes and has been
 		// seen reopening it for a later MT request.
 		return observed || preset == globePHCarrierPresetID || preset == ditoPHCarrierPresetID ||
 			preset == twoDegreesNZCarrierPresetID
 	case portSClosePeerReset:
-		return preset == oneNZCarrierPresetID ||
-			vodafoneDEPortSResetAwaiting(preset, session, s.sipOutboundFlow.Load(), time.Now())
+		return preset == oneNZCarrierPresetID
 	case portSCloseSARetired:
 		// The P-CSCF sends further requests to port_us over the new SAs,
 		// opening a new port-s flow (TS 24.229 5.2.2.2).
@@ -624,7 +621,6 @@ const (
 	ditoPHCarrierPresetID       = "dito_51566"
 	twoDegreesNZCarrierPresetID = "2degrees_nz_53024"
 	lebaraUKCarrierPresetID     = "lebara_uk_23487"
-	vodafoneDECarrierPresetID   = "vodafone_de_26202"
 )
 
 func (s *Service) consumePortSReconnectWatch(generation uint64, registrar string) bool {

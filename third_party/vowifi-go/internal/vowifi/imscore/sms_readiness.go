@@ -117,8 +117,7 @@ func smsReceiverHealthReady(input smsHealthInput) bool {
 }
 
 func (s *Service) protectedSMSPushRequiredLocked() bool {
-	awaitCountsReady := s.canAwaitOnDemandPortS() && !s.vodafoneDEPortSAwaitActive()
-	return !s.externalTransport && !awaitCountsReady && !s.portSTimeoutDownlinkProven() &&
+	return !s.externalTransport && !s.canAwaitOnDemandPortS() && !s.portSTimeoutDownlinkProven() &&
 		!s.awaitingPeerAfterTimeout() &&
 		s.regSession != nil &&
 		s.regSession.security != nil &&
