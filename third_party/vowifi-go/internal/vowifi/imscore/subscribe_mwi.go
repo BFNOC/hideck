@@ -66,6 +66,10 @@ func (s *Service) reportMWISubscriptionRuntimeError(err error) {
 }
 
 func (s *Service) sendSubscribeMWI(ctx context.Context) error {
+	if s.devExperimentHas(devExperimentNoMWI) {
+		devLog("IMS experiment skips SUBSCRIBE(mwi)", "device", s.DeviceID())
+		return nil
+	}
 	return s.sendMWISubscription(ctx, registerExpires(s.cfg), false)
 }
 
@@ -168,10 +172,12 @@ func (s *Service) exchangeMWISubscription(
 	}
 	request := result.request
 	logging.Debug("IMS SUBSCRIBE(mwi) outbound", "device", s.DeviceID(), "sip", logging.RedactSIPRaw(request.String()))
+	started := time.Now()
 	response, _, err := s.dispatchOutboundRequestWithCallbacks(outboundDispatchOptions{
 		Context: ctx, Flow: mwiSubscriptionFlow, Request: request, Timeout: mwiSubscriptionTimeout,
 		Callbacks: sipTransactionCallbacks{onBeforeSend: func() error { return s.subscriptionSent(result, true) }},
 	}, true)
+	s.devLogSubscribeExchange("mwi", request, response, err, time.Since(started))
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE transaction: %w", err)
 	}

@@ -1000,7 +1000,9 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 	decoder.onPong = s.signalTCPKeepalivePong
 	defer decoder.Close()
 	for {
-		message, err := decoder.ReadMessage()
+		// [dev] hideck#90: dispatch the wire text, as protected UDP already
+		// does, so notify-dialog can copy Record-Route verbatim.
+		message, wire, err := decoder.ReadFrame()
 		if err != nil {
 			// The netstack gives up on unacknowledged data after 45 s and the
 			// old retransmit limit after about 15 minutes, both as "connection
@@ -1008,7 +1010,7 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 			return fmt.Errorf("%w (last read %s ago)", err, time.Since(reads.lastRead).Round(time.Second))
 		}
 		s.noteInboundOverNewSA(tcpPortFromAddr(conn.LocalAddr()), tcpPortFromAddr(conn.RemoteAddr()))
-		if err := s.dispatchInboundSIPMessageWithPeer(message, message.String(), func(response string) error {
+		if err := s.dispatchInboundSIPMessageWithPeer(message, wire, func(response string) error {
 			return s.writeSIPStream(conn, response)
 		}, conn); err != nil {
 			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "device", s.DeviceID(), "err", err)

@@ -62,10 +62,12 @@ func (s *Service) prepareInboundNotification(raw string) (inboundSIPResult, erro
 	if event != registrationEventPackage && event != mwiEventPackage {
 		// Other event packages retain their existing dispatch ownership.
 		response, err := buildSIPRequestResponse(raw, 200)
+		response = s.devNotifyDialogResponse(raw, response)
 		return inboundSIPResult{response: response, afterReply: func() { s.handleInboundNotification(raw) }}, err
 	}
 	notification, status := s.acceptSubscriptionNotification(raw)
 	response, err := buildSIPRequestResponse(raw, status)
+	response = s.devNotifyDialogResponse(raw, response)
 	result := inboundSIPResult{response: response}
 	if status == 200 && notification.version != 0 {
 		result.afterReply = func() { s.applySubscriptionNotificationBody(notification) }

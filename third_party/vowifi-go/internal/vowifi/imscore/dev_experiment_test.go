@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"context"
 	"net"
 	"strings"
 	"testing"
@@ -137,5 +138,97 @@ func TestDevRecoveryJitterOnlyAfterPeerReset(t *testing.T) {
 		if !ok || delay < devRecoveryJitterMin || delay >= devRecoveryJitterMax {
 			t.Fatalf("jitter = %v, %v", delay, ok)
 		}
+	}
+}
+
+const devTestNotify = "NOTIFY sip:contact-1@[2001:db8::10]:40696;transport=tcp;ob SIP/2.0\r\n" +
+	"Via: SIP/2.0/TCP [2001:db8::5]:6000;branch=z9hG4bK-1\r\n" +
+	"From: <sip:user@ims.example>;tag=remote\r\n" +
+	"To: <sip:user@ims.example>;tag=local\r\n" +
+	"Call-ID: call-n\r\n" +
+	"CSeq: 1 NOTIFY\r\n" +
+	"Event: reg\r\n" +
+	"Subscription-State: active\r\n" +
+	"Record-Route: <sip:[2001:db8::5]:6000;lr;lsstag=a>;x-hdr=1\r\n" +
+	"Record-Route: <sip:scscf.ims.example;lr>\r\n" +
+	"Content-Length: 0\r\n\r\n"
+
+func TestDevAddDialogHeadersCopiesRecordRouteInOrder(t *testing.T) {
+	response, err := buildSIPRequestResponse(devTestNotify, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := devAddDialogHeaders(devTestNotify, response, "sip:contact-1@[2001:db8::10]:40696;ob;transport=tcp")
+	want := "Contact: <sip:contact-1@[2001:db8::10]:40696;ob;transport=tcp>\r\n" +
+		"Record-Route: <sip:[2001:db8::5]:6000;lr;lsstag=a>;x-hdr=1\r\n" +
+		"Record-Route: <sip:scscf.ims.example;lr>\r\n" +
+		"Content-Length: 0\r\n\r\n"
+	if !strings.HasSuffix(got, want) || !strings.HasPrefix(got, "SIP/2.0 200 OK\r\n") {
+		t.Fatalf("response =\n%s", got)
+	}
+	folded := strings.Replace(devTestNotify, "Record-Route: <sip:scscf", "Record-Route:\r\n <sip:scscf", 1)
+	if got := devAddDialogHeaders(folded, response, ""); !strings.Contains(got, "Record-Route: <sip:scscf.ims.example;lr>\r\n") {
+		t.Fatalf("folded Record-Route not unfolded:\n%s", got)
+	}
+	if bare := strings.Replace(devTestNotify, "Record-Route", "X-Route", -1); devAddDialogHeaders(bare, response, "") != response {
+		t.Fatal("a response with nothing to add changed")
+	}
+}
+
+func TestDevNotifyDialogResponseOnlyWhenSelected(t *testing.T) {
+	response, err := buildSIPRequestResponse(devTestNotify, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}}
+	if got := service.devNotifyDialogResponse(devTestNotify, response); got != response {
+		t.Fatalf("baseline changed the response:\n%s", got)
+	}
+	t.Setenv(devExperimentEnv, devExperimentNotifyDialog)
+	// Without a registration only Record-Route can be copied.
+	if got := service.devNotifyDialogResponse(devTestNotify, response); !strings.Contains(got, "Record-Route: <sip:scscf.ims.example;lr>\r\n") ||
+		strings.Contains(got, "Contact:") {
+		t.Fatalf("notify-dialog response =\n%s", got)
+	}
+	rejected, err := buildSIPRequestResponse(devTestNotify, 481)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := service.devNotifyDialogResponse(devTestNotify, rejected); got != rejected {
+		t.Fatalf("a 481 changed:\n%s", got)
+	}
+}
+
+func TestDevNoMWISkipsTheSubscription(t *testing.T) {
+	t.Setenv(devExperimentEnv, devExperimentNoMWI)
+	service := &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}}
+	if err := service.sendSubscribeMWI(context.Background()); err != nil {
+		t.Fatalf("sendSubscribeMWI = %v", err)
+	}
+}
+
+func TestDevNotifyDialogKeepsWireRecordRouteThroughTheStreamDecoder(t *testing.T) {
+	decoder := newSIPStreamDecoder(strings.NewReader(devTestNotify))
+	_, wire, err := decoder.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := buildSIPRequestResponse(wire, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contact, copied := devDialogHeadersPresent(wire, response); contact || copied {
+		t.Fatalf("plain 200: contact=%v copied=%v", contact, copied)
+	}
+	completed := devAddDialogHeaders(wire, response, "sip:contact-1@[2001:db8::10]:40696;ob;transport=tcp")
+	if !strings.Contains(completed, "Record-Route: <sip:[2001:db8::5]:6000;lr;lsstag=a>;x-hdr=1\r\n") {
+		t.Fatalf("wire Record-Route parameter lost:\n%s", completed)
+	}
+	if contact, copied := devDialogHeadersPresent(wire, completed); !contact || !copied {
+		t.Fatalf("completed 200: contact=%v copied=%v", contact, copied)
+	}
+	partial := strings.Replace(completed, "Record-Route: <sip:scscf.ims.example;lr>\r\n", "", 1)
+	if _, copied := devDialogHeadersPresent(wire, partial); copied {
+		t.Fatal("a partial Record-Route copy counted as complete")
 	}
 }

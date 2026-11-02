@@ -260,6 +260,57 @@ func (s *Service) devLogInboundRequest(request *sip.Request, raw string, peer ne
 	devLog("IMS inbound request", fields...)
 }
 
+// devLogInboundResponse logs every response we write to a P-CSCF request,
+// with the write result. MESSAGE responses keep their headers only. For
+// NOTIFY it also says whether the response carries Contact and exactly the
+// request's Record-Route lines, so the run summary need not pair log lines.
+func (s *Service) devLogInboundResponse(request *sip.Request, raw, response string, writeErr error, peer net.Conn) {
+	if s == nil || request == nil || response == "" {
+		return
+	}
+	var dialog []any
+	if request.Method == sip.NOTIFY {
+		contact, copied := devDialogHeadersPresent(raw, response)
+		dialog = []any{"contact", contact, "record_route_copied", copied}
+	}
+	if request.Method == sip.MESSAGE {
+		if end := devBodySeparator.FindStringIndex(response); end != nil {
+			response = response[:end[0]]
+		}
+	}
+	portS := s.capturePortSSession()
+	fields := []any{"device", s.DeviceID(), "method", string(request.Method), "err", writeErr,
+		"port_s_generation", portS.generation, "since_port_s_opened", devSince(portS.openedAt),
+		"experiment", s.devExperimentName(), "sip", devRedactSIP(response)}
+	fields = append(fields, dialog...)
+	if peer != nil {
+		fields = append(fields, "remote", peer.RemoteAddr(), "local", peer.LocalAddr())
+	}
+	devLog("IMS inbound response", fields...)
+}
+
+// devDialogHeadersPresent reports whether a response carries Contact and the
+// request's Record-Route lines verbatim and in order (none for none).
+func devDialogHeadersPresent(request, response string) (contact, recordRouteCopied bool) {
+	requestHeaders := devSIPHeaders(string(unfoldSIPHeaders([]byte(request))))
+	responseHeaders := devSIPHeaders(string(unfoldSIPHeaders([]byte(response))))
+	return responseHeaders["contact"] != "", requestHeaders["record-route"] == responseHeaders["record-route"]
+}
+
+// devLogSubscribeExchange logs a SUBSCRIBE and its final response, or the
+// transaction error when none arrived.
+func (s *Service) devLogSubscribeExchange(event string, request *sip.Request, response *sip.Response, err error, elapsed time.Duration) {
+	if s == nil || request == nil {
+		return
+	}
+	fields := []any{"device", s.DeviceID(), "event", event, "elapsed_ms", elapsed.Milliseconds(),
+		"err", err, "request", devRedactSIP(request.String())}
+	if response != nil {
+		fields = append(fields, "status", response.StatusCode, "response", devRedactSIP(response.String()))
+	}
+	devLog("IMS SUBSCRIBE exchange", fields...)
+}
+
 func (s *Service) devCarrierPreset() string {
 	if s == nil || s.cfg == nil {
 		return ""

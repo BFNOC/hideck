@@ -230,11 +230,17 @@ func newSIPStreamDecoder(reader io.Reader) *sipStreamDecoder {
 func (d *sipStreamDecoder) Close() {}
 
 func (d *sipStreamDecoder) ReadMessage() (sip.Message, error) {
-	if d == nil || d.reader == nil {
-		return nil, errors.New("imscore: nil SIP stream decoder")
-	}
-	message, _, err := readSIPStreamFrame(d.reader, d.keepalive, d.onPong)
+	message, _, err := d.ReadFrame()
 	return message, err
+}
+
+// ReadFrame also returns the unfolded wire text, which keeps what sipgo drops
+// on re-serialising (for example Record-Route parameters after the '>').
+func (d *sipStreamDecoder) ReadFrame() (sip.Message, string, error) {
+	if d == nil || d.reader == nil {
+		return nil, "", errors.New("imscore: nil SIP stream decoder")
+	}
+	return readSIPStreamFrame(d.reader, d.keepalive, d.onPong)
 }
 
 func readSIPResponse(reader io.Reader) (*sip.Response, error) {

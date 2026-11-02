@@ -264,6 +264,7 @@ func (s *Service) dispatchInboundSIPRequest(
 		return responseErr
 	}
 	responseErr := responseWriter(result.response)
+	s.devLogInboundResponse(request, raw, result.response, responseErr, peer)
 	if request.Method == sip.MESSAGE {
 		s.logInboundSMSResponseTrace(raw, result.response, responseErr)
 	}

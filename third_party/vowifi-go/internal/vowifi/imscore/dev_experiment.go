@@ -29,6 +29,8 @@ const (
 	devExperimentNoRegisterRoute  = "no-register-route"
 	devExperimentNoFeatureCaps    = "no-feature-caps"
 	devExperimentRecoveryJitter   = "recovery-jitter"
+	devExperimentNotifyDialog     = "notify-dialog"
+	devExperimentNoMWI            = "no-mwi"
 	devExperimentBaseline         = "baseline"
 
 	// recovery-jitter delays the port-s recovery REGISTER after a peer reset
@@ -43,7 +45,7 @@ const (
 var devKnownExperiments = []string{
 	devExperimentNoOptions, devExperimentNoAlias, devExperimentViaPortC, devExperimentViaPortS,
 	devExperimentNoOutbound, devExperimentNoPortSKeepalive, devExperimentNoRegisterRoute,
-	devExperimentNoFeatureCaps, devExperimentRecoveryJitter,
+	devExperimentNoFeatureCaps, devExperimentRecoveryJitter, devExperimentNotifyDialog, devExperimentNoMWI,
 }
 
 // devExperiments returns the active experiments, sorted, or nil for the
@@ -95,6 +97,54 @@ func (s *Service) devRecoveryJitter() (time.Duration, bool) {
 	devLog("IMS experiment delays the port-s recovery REGISTER", "device", s.DeviceID(),
 		"delay", delay.Round(time.Millisecond), "port_s_generation", s.capturePortSSession().generation)
 	return delay, true
+}
+
+// devNotifyDialogResponse is the notify-dialog experiment. RFC 6665 §4.4.1
+// creates the subscription dialog when the NOTIFY transaction completes, and
+// RFC 3261 §12.1.1 says a response that establishes a dialog MUST copy every
+// Record-Route of the request in order and MUST add a Contact. Our 200 to
+// NOTIFY carries neither, while Vodafone DE record-routes every NOTIFY.
+func (s *Service) devNotifyDialogResponse(raw, response string) string {
+	if !strings.HasPrefix(response, "SIP/2.0 2") || !s.devExperimentHas(devExperimentNotifyDialog) {
+		return response
+	}
+	contact := ""
+	s.mu.Lock()
+	route := s.registeredSIPRouteLocked()
+	registered := s.regSession != nil
+	if registered && route.serverAddress != "" {
+		if user := firstNonBlank(s.regSession.contactUser, contactUser(s.cfg)); user != "" {
+			uri, _ := registeredVoiceContact(s.cfg, user, route.serverAddress)
+			contact = uri + ";transport=tcp"
+		}
+	}
+	s.mu.Unlock()
+	if contact == "" {
+		devLog("IMS experiment has no registered Contact for the NOTIFY 200", "device", s.DeviceID(),
+			"server_address", route.serverAddress, "registered", registered)
+	}
+	return devAddDialogHeaders(raw, response, contact)
+}
+
+// devAddDialogHeaders inserts Contact and the request's Record-Route lines,
+// verbatim and in order, ahead of Content-Length. The raw text is copied
+// because sipgo's parsed Record-Route drops parameters after the '>', which
+// §12.1.1 says must be kept.
+func devAddDialogHeaders(request, response, contact string) string {
+	var extra strings.Builder
+	if contact != "" {
+		fmt.Fprintf(&extra, "Contact: <%s>\r\n", contact)
+	}
+	if routes := devSIPHeaders(string(unfoldSIPHeaders([]byte(request))))["record-route"]; routes != "" {
+		for _, value := range strings.Split(routes, "\n") {
+			fmt.Fprintf(&extra, "Record-Route: %s\r\n", value)
+		}
+	}
+	at := strings.Index(response, "\r\nContent-Length:")
+	if extra.Len() == 0 || at < 0 {
+		return response
+	}
+	return response[:at+2] + extra.String() + response[at+2:]
 }
 
 type devKeepaliveDisabler interface{ DisableKeepAlive() error }

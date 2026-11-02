@@ -237,10 +237,12 @@ func (s *Service) exchangeRegistrationSubscription(
 	}
 	request := result.request
 	logging.Debug("IMS SUBSCRIBE(reg) outbound", "device", s.DeviceID(), "sip", logging.RedactSIPRaw(request.String()))
+	started := time.Now()
 	response, _, err := s.dispatchOutboundRequestWithCallbacks(outboundDispatchOptions{
 		Context: ctx, Flow: registrationSubscriptionFlow, Request: request, Timeout: registrationSubscriptionTimeout,
 		Callbacks: sipTransactionCallbacks{onBeforeSend: func() error { return s.subscriptionSent(result, false) }},
 	}, true)
+	s.devLogSubscribeExchange("reg", request, response, err, time.Since(started))
 	if err != nil {
 		return nil, fmt.Errorf("SUBSCRIBE transaction: %w", err)
 	}

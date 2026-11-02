@@ -7,12 +7,12 @@
 #
 # Settings (environment):
 #   DEVICE       log tag of the Vodafone DE card, as in "[wwan0] IMS ..." (required)
-#   MINUTES      minutes per experiment (default 25)
+#   MINUTES      minutes per experiment (default 10)
 #   SERVICE      systemd unit (default hideck)
 #   OUT          output directory (default ./issue90-out-<time>)
 #   EXPERIMENTS  space-separated list of runs; a run is one switch or a comma-separated
-#                set (default: baseline, no-register-route with and without each other
-#                change, baseline again)
+#                set (default: baseline, notify-dialog and no-mwi alternating with
+#                baseline, then both together)
 #   OUTER_IFACE  interface for the outer IKE/ESP header capture (default any; "off" disables)
 #
 # Each run keeps the lines tagged with DEVICE plus the capture status lines,
@@ -21,11 +21,11 @@
 set -eu
 
 : "${DEVICE:?set DEVICE to the Vodafone DE log tag, e.g. DEVICE=wwan0}"
-MINUTES=${MINUTES:-25}
+MINUTES=${MINUTES:-10}
 SERVICE=${SERVICE:-hideck}
 OUT=${OUT:-issue90-out-$(date +%Y%m%d-%H%M%S)}
-EXPERIMENTS=${EXPERIMENTS:-"baseline no-register-route no-register-route,recovery-jitter no-feature-caps,no-register-route no-register-route no-feature-caps,no-register-route baseline"}
-KNOWN="baseline no-options no-alias via-port-c via-port-s no-outbound no-port-s-keepalive no-register-route no-feature-caps recovery-jitter"
+EXPERIMENTS=${EXPERIMENTS:-"baseline notify-dialog no-mwi baseline notify-dialog no-mwi,notify-dialog"}
+KNOWN="baseline no-options no-alias via-port-c via-port-s no-outbound no-port-s-keepalive no-register-route no-feature-caps recovery-jitter notify-dialog no-mwi"
 OUTER_IFACE=${OUTER_IFACE:-any}
 PREFLIGHT_SECONDS=120
 DROPIN_DIR=/etc/systemd/system/$SERVICE.service.d
@@ -160,7 +160,17 @@ summarise() {
 		if (status == "401" || status == "407") challenged = 1
 		else refresh_done(status)
 	}
-	index($0, device) && /User not registered/ { not_registered++ }
+	# One [dev] exchange line per SUBSCRIBE(reg); the WARN line is rate-limited.
+	index($0, device " [dev] IMS SUBSCRIBE exchange") && index($0, "\"event\": \"reg\"") &&
+		index($0, "\"status\": 480") && /User not registered/ { not_registered++ }
+	index($0, device " [dev] IMS SUBSCRIBE exchange") && index($0, "\"event\": \"mwi\"") { mwi_sent++ }
+	# notify-dialog: the response log says whether each NOTIFY 2xx carried
+	# Contact and exactly the Record-Route lines of the NOTIFY.
+	index($0, device " [dev] IMS inbound response") && index($0, "\"method\": \"NOTIFY\"") && index($0, "SIP/2.0 2") {
+		if (!/err=<nil>|"err": null/) notify_write_failed++
+		else if (index($0, "\"contact\": true") && index($0, "\"record_route_copied\": true")) notify_dialog++
+		else notify_plain++
+	}
 	index($0, device " IMS runtime reconnect requested") { reconnects++ }
 	index($0, device) && index($0, "\"experiment\": \"" experiment "\"") { active++ }
 	index($0, "[dev] IMS inner pcap opened") { pcaps++ }
@@ -177,10 +187,13 @@ summarise() {
 		valid = (active > 0 && pcaps > 0 && pcap_problem == 0) ? "yes" : "no"
 		if (index(experiment, "no-port-s-keepalive") && (ka_off == 0 || ka_fail > 0)) valid = "no"
 		if (index(experiment, "recovery-jitter") && resets > 0 && jitters == 0) valid = "no"
+		if (index(experiment, "notify-dialog") && nopened > 0 && (notify_dialog == 0 || notify_plain > 0)) valid = "no"
+		if (index(experiment, "no-mwi") && mwi_sent > 0) valid = "no"
 		# A run with no port-s for minutes says nothing about how long port-s lives.
 		warn = ""
 		if (nopened == 0 || max_gap > 300) warn = warn " no-port-s-" int(max_gap) "s"
 		if (not_registered > 0) warn = warn " user-not-registered-" not_registered
+		if (notify_write_failed > 0) warn = warn " notify-200-write-failed-" notify_write_failed
 		printf "%s valid=%s warn=[%s ] opened=%d peer_reset=%d survived_to_end=[%s ] other_close=[%s ] unclosed=%d reset_lifetimes=[%s ] cycle_s=[%s ] refresh_after_reset=[%s ] jitter_refresh=[%s ] pcscf=[%s ] sbc=[%s ] user_not_registered=%d runtime_reconnects=%d max_port_s_gap_s=%d register_lines=%d pcap_files=%d pcap_problems=%d keepalive_off=%d keepalive_fail=%d jitter_delays=%d\n",
 			experiment, valid, warn, nopened, resets, survived, other, unclosed, reset_lives, cycles, list(refresh), jitter_refresh, list(pcscf), list(sbc),
 			not_registered, reconnects, max_gap, active, pcaps, pcap_problem, ka_off, ka_fail, jitters
