@@ -1,57 +1,50 @@
-# hideck#90 Vodafone DE 测试分支说明（port-s 抓包与单变量实验）
+# hideck#90 Vodafone DE 测试分支说明（刷新 Route 与 RST 节拍）
 
 本分支只用于找出 Vodafone DE（262/02，预设 `vodafone_de_26202`）下 port-s 被对端 RST 的原因。它不是正式版本，测试完请换回正式版本。
 
-## 一、为什么要再跑一轮
+## 一、上一轮看到了什么
 
-上一轮日志里，TCP/ESP 层只有注册成功那一刻的一次计数快照（`IMS downlink path diagnostics`），port-s 建立之后没有任何包级记录。能看到 NOTIFY 进来、我们回了 200、几十秒后 RST，但看不到中间发生了什么：
+上一轮（`test-vodafone-de-port-s-trace`，8 轮）的内层抓包和日志说明：
 
-- 我们的 200 和 TCP ACK 有没有真正发出去，对方有没有在重传
-- 那个 RST 是经过 IMS SA 解密进来的，还是明文进来被放行的
-- RST 之前我们有没有发过 keepalive 探测或别的包
-
-这些需要包级别的记录。内层流量有 SWu 和 IMS IPsec 两层加密，外部抓包解不开，所以这一版让 HiDeck 自己在加解密的位置写包头。抓包能看到我们发出和收到的每个包，但看不到对方实际收到了什么，所以它能缩小范围，不一定能单独证明原因。
+- port-s 上没有任何数据重传，NOTIFY 的 200 都被对方 TCP 确认；每个 RST 都经 IMS SA 进来。
+- RST 时长和实验无关，跟分到的 P-CSCF 有关：NOTIFY `Contact` 里是 `*.vodafone.com` 的约 30 秒，是 `*.nokia.com` 的约 55 秒。三个改 Via 的实验恰好都分到了后一种。
+- 同一轮里两次 RST 的间隔大多是整数秒加约 0.07 秒（31.07、32.07、56.1、60.1 秒），同一节点上也会混着出现 55.1、56.1 秒。看起来像 SBC 按自己的周期发 RST，但还没排除和注册有关的计时器，这一轮专门验证。
+- RST 之后的刷新 REGISTER 全部收到 403。这个刷新把 200 OK 里的 `Path`（`…;ottag=ue_term;…`）当成 `Route` 发了回去：Vodafone DE 的 200 OK 没有 `Service-Route`，代码就退回用 `Path`。TS 24.229（V19.7.0）附录 A 的 Table A.119 里，REGISTER 的 Route 头在 profile 一栏是 `x`（禁止）；§5.1.1.4.1 NOTE 5 也说存下的 Service-Route 用于 REGISTER 以外的请求。所以 403 可能是在拒绝这个 Route，不能据此说注册已被删掉。
+- 首次注册不带 Route（还没有 Path），而每条隧道的第一次 RST 都发生在第一次刷新之前，所以 Route 解释不了第一次 RST。
+- 有 4 次在 REGISTER 200 之后，SUBSCRIBE(reg) 收到 `480 User not registered`，随后 port-c 不再被确认，HiDeck 的 TCP 栈要重传约 15 分钟才放弃、重连，期间没有 port-s。
 
 ## 二、相对上一版改了什么
 
-1. **撤掉"RST 后等 3 分钟"**（上一版第 3 条，29/29 没有等到重连）。保留"刷新收到 403 后在隧道内做初始注册"和"403 不再换模板重试"。
-2. **内层包头抓包**（`HIDECK_DEV90_PCAP_DIR`）。设置后，每条 IMS 隧道写一个 `ims-inner-<时间>-<序号>.pcapng`，Wireshark 或 tcpdump 可以直接打开。
-   - 只保留能完整解析出的头：IP 头（含 IPv6 扩展头）、TCP/UDP 头、ESP 的 SPI 和序号；ICMP 只保留 ICMP 头，差错报文再加上被引用包的 IP 头和传输层头。**载荷一律不保留**；解析不了的包（非首片分片、长度字段对不上、未知格式）只保留已确认的部分或什么都不留。这些规则都有测试。
-   - 每个包带一条注释，说明它是经 SA 收发的（`in esp spi=… seq=…` / `out esp spi=… seq=…`）、明文收发的（`in plaintext` / `out plaintext`），还是被丢弃的及原因（`in drop …: <错误>`）；有载荷时附长度，SIP 只附方法或状态码和 CSeq（例如 `len=2834 sip=NOTIFY cseq=1_NOTIFY`），CRLF 保活标成 `crlf-ping` / `crlf-pong`。
-   - 写文件在单独的协程里做，不阻塞收发；队列满时丢掉这条记录，关闭时日志里的 `dropped` 会报告丢了多少。单个文件最多 64 MB，到上限后停止写入并记一条日志。
-   - 抓包对这台机器上所有卡生效，实验开关只对 Vodafone DE 生效。
-3. **port-s 打开和关闭时各打一次 `IMS downlink path diagnostics`**（`event=port_s_opened` / `port_s_closed`），带 port-c、port-s 两路 ESP 的收发计数、RST 计数、明文放行计数。
-4. **单变量实验开关**（`HIDECK_DEV90_EXPERIMENT`），一次只能选一个，只对 `vodafone_de_26202` 生效，其他卡不受影响：
+1. **实验开关可以组合**：`HIDECK_DEV90_EXPERIMENT` 可以写一个值，也可以用逗号连接多个，例如 `no-register-route,recovery-jitter`。日志里按字母序记录。只要有一个值写错，整轮按 `baseline` 运行，并记一条 `[dev] IMS experiment not recognised`。新增三个值：
 
 | 值 | 改动 |
 |---|---|
-| `baseline`（或不设） | 不改行为（相对于本测试版） |
-| `no-options` | 注册后不发能力查询 OPTIONS |
-| `no-alias` | 受保护 REGISTER 的 Via 去掉 `;alias` |
-| `via-port-c` | 受保护 REGISTER 的 Via 端口改为 port-c |
-| `via-port-s` | 受保护 REGISTER 的 Via 端口改为 port-s |
-| `no-outbound` | REGISTER 的 Supported 去掉 `outbound` |
-| `no-port-s-keepalive` | 关掉 port-s 连接上的 TCP keepalive 探测 |
+| `no-register-route` | REGISTER 不带 `Route` 头（不再把 `Path` 当 `Route`） |
+| `no-feature-caps` | REGISTER 不带 `Feature-Caps` 头。RFC 6809 §1 说它用于代理、注册服务器、B2BUA 这类不由 Contact URI 代表的节点；TS 24.229 §5.1.1.2.1 列出的 UE REGISTER 头里没有它，P-CSCF 还应删掉普通 UE 发来的 Feature-Caps（§5.2.2.1）。所以它是触发条件的可能性不大，但首次注册就带着它，这个实验能直接用第一次 RST 检验 |
+| `recovery-jitter` | port-s 被 RST 后，随机等 2–60 秒再发恢复 REGISTER，每次记一条 `[dev] IMS experiment delays the port-s recovery REGISTER`。用来判断下一次 RST 是跟着我们的 REGISTER 还是按 SBC 自己的周期，并看 RST 后多久 P-CSCF 还会应答（上一轮立刻刷新回 403，await 版 180 秒后刷新没有应答）。普通刷新或其他故障可能抢在延迟结束前发出 REGISTER，summary 只统计由 port-s 恢复触发的那次 |
 
-   当前生效的值会出现在每条 `[dev] IMS REGISTER attempt context` 的 `experiment` 字段里。写错的值按 `baseline` 运行，并记一条 `[dev] IMS experiment not recognised`。
+   上一版的 `no-options`、`no-alias`、`via-port-c`、`via-port-s`、`no-outbound`、`no-port-s-keepalive` 仍然可用。
+
+2. **IMS TCP 连接加 45 秒 user timeout**（所有卡、所有轮次都生效）。原来连接空闲时 keepalive 约 45 秒能发现对方不在，但一旦有数据没被确认，就改走重传，要退避约 15 分钟才放弃。现在未确认的数据超过 45 秒没有被确认就断开连接，随后 HiDeck 重建隧道和注册。按上一轮 03 轮的时序推算，从最后一次成功收发到断开约 1.5 分钟，之前是约 15 分钟；总空窗还要加上重连时间。旧 port-c 连接关闭后反复重传的 FIN 也会在 45 秒后停止（这些 FIN 不经过 IMS SA 的问题另外修）。连接关闭的错误里会带上 `(last read … ago)`，表示关闭前多久没收到对方的数据，用来分辨是哪种超时。
+3. **`[dev] IMS port-s timing` 加了 `at` 字段**（毫秒时间），summary 用它算 RST 节拍。
+4. **summary 加了字段，修了计数**，见第五节。
 
 改动的文件：
 
-- `third_party/vowifi-go/internal/vowifi/netstack/dev_pcap.go`、`packet_bridge.go`：抓包
-- `third_party/vowifi-go/internal/vowifi/imscore/dev_experiment.go`，以及 `register.go`、`register_transport.go`、`dev_trace.go` 里调用它的地方：实验开关和 port-s 诊断
-- `third_party/vowifi-go/internal/vowifi/netstack/gvisor_tcp.go`、`gvisor_tcp_errors.go`：关闭 keepalive 用的接口
-- 对应的 `_test.go`
+- `third_party/vowifi-go/internal/vowifi/imscore/dev_experiment.go`，以及 `register.go`、`register_transport.go`、`dev_trace.go` 里调用它的地方
+- `third_party/vowifi-go/internal/vowifi/netstack/gvisor_tcp.go`：TCP user timeout；`imscore/register_transport.go`：连接关闭错误里的 `last read`
+- 对应的 `_test.go`，`issues/90-vodafone-de/run-experiments.sh`
 
 ## 三、构建、部署、回滚
 
 ```sh
-git fetch https://github.com/BFNOC/hideck.git test-vodafone-de-port-s-trace
+git fetch https://github.com/BFNOC/hideck.git test-vodafone-de-port-s-route
 git checkout FETCH_HEAD
 git log -1 --oneline   # 应为本说明文件所在的提交
 make frontend-dist
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
   -tags "with_utls nomsgpack" \
-  -ldflags "-X 'github.com/yibaiba/hideck/internal/global.Version=v2.1.38-issue90-trace'" \
+  -ldflags "-X 'github.com/yibaiba/hideck/internal/global.Version=v2.1.38-issue90-route'" \
   -o hideck-issue90 ./cmd/hideck
 ```
 
@@ -68,46 +61,61 @@ systemctl start hideck
 
 ## 四、运行
 
-用 `issues/90-vodafone-de/run-experiments.sh`，**启动一次即可**。它会先跑一轮 baseline，再依次跑每个实验，最后再跑一轮 baseline 作对照，每轮 25 分钟（共 8 轮，约 3 小时 20 分钟）。每轮结束时会停一下服务，好把这一轮的连接关闭也记进去；全部跑完后自动去掉实验设置并重启服务：
+和上一版一样，**启动一次即可**：
 
 ```sh
 sudo DEVICE=wwan0 sh issues/90-vodafone-de/run-experiments.sh
 ```
 
-- `DEVICE` 是 Vodafone DE 那张卡在日志里的前缀，例如 `[wwan0] IMS ...` 就填 `wwan0`。
-- 脚本通过 systemd drop-in（`/etc/systemd/system/hideck.service.d/issue90.conf`）设置环境变量，中途按 Ctrl+C 也会清理掉。如果这个文件已经存在，脚本会拒绝运行，不会覆盖。
-- 只想跑其中几项：`EXPERIMENTS="baseline no-options"`；改每轮时长：`MINUTES=30`。
-- 日志按每轮的 systemd invocation 从 journald 取，不会混进上一轮的记录。
-- 每轮启动 2 分钟后会检查实验是否生效、抓包是否打开，任一项不满足就直接停止并说明原因，不用白等 25 分钟。
-- 如果装了 `tcpdump`，脚本会同时抓外层的 IKE/ESP 包头（UDP 500、4500 和 ESP，每包只留前 96 字节）。用来分辨"对方的包到了这台机器但在 SWu 层被丢"和"对方根本没发"。默认抓所有接口，可以用 `OUTER_IFACE=eth0` 指定，`OUTER_IFACE=off` 关闭。
-- 抓包文件不带卡的名字。多张卡同时在跑时，用文件里的内层地址对照日志里的 `inner_ip` 区分。
+默认跑 7 轮，每轮 25 分钟，共约 2 小时 55 分钟：
 
-运行期间正常使用即可。如果能在某个实验运行时给这张卡发一条短信，记下时间和当时的实验名，会更有用，但不是必须的。
+| 轮 | 实验 | 要回答的问题 |
+|---|---|---|
+| 01 | `baseline` | 对照 |
+| 02 | `no-register-route` | RST 后不带 Route 的刷新是 200 还是 403；每条隧道第一次 RST 之后还会不会再 RST |
+| 03 | `no-register-route,recovery-jitter` | 恢复 REGISTER 推迟后，RST 间隔是否仍是同一个周期；推迟多久后 P-CSCF 不再应答 |
+| 04 | `no-feature-caps,no-register-route` | 去掉 Feature-Caps 后第一次 RST 还在不在 |
+| 05 | `no-register-route` | 重复 02 |
+| 06 | `no-feature-caps,no-register-route` | 重复 04 |
+| 07 | `baseline` | 对照 |
+
+- `DEVICE` 是 Vodafone DE 那张卡在日志里的前缀，例如 `[wwan0] IMS ...` 就填 `wwan0`。
+- 只跑其中几轮：`EXPERIMENTS="baseline no-register-route"`；组合用逗号，不加空格。改每轮时长：`MINUTES=30`。写错实验名时脚本在开始前就会退出。
+- 每轮启动 2 分钟后检查实验是否生效、抓包是否打开，不满足就停止并说明原因。
+- 其余（systemd drop-in、按 invocation 取日志、外层包头抓包、`OUTER_IFACE`）和上一版相同。
+
+每轮重启服务都会建新隧道，可能分到不同的 P-CSCF，summary 会把每轮实际分到的 P-CSCF 和 SBC 列出来。
+
+如果能在 02 或 05 轮运行时给这张卡发一条短信（或申请一次验证码），记下发送和收到的时间，会很有用。
 
 ## 五、回传
 
-脚本最后会打印输出目录，里面有：
+输出目录里有：
 
-- `summary.txt`：每轮一行。`valid=no` 表示这一轮的数据不能用（没看到实验生效、抓包没打开或丢了记录、keepalive 没关掉、读不到日志）。其余字段：port-s 打开次数、RST 次数和每次 RST 前的存活时长、一直活到本轮结束的连接（`survived_to_end`）、其他方式关闭的连接、没有记录到关闭的连接数
-- `<序号>-<实验名>.log`：这一轮里带 `[wwan0]` 这类卡前缀（即 `DEVICE`）的全部日志，加上抓包状态行。11 位以上的连续数字（IMSI、ICCID、IMEI、号码）已替换成 `<masked>`，10 位的 SPI 保留
-- `pcap-<序号>-<实验名>/`：内层包头抓包
-- `outer-<序号>-<实验名>.pcap`：外层包头抓包（装了 tcpdump 时）
+- `summary.txt`：每轮一行，字段：
+  - `valid`：`no` 表示这一轮数据不能用（实验没生效、抓包没打开或丢了记录、该关的 keepalive 没关、`recovery-jitter` 轮里有 RST 却没有延迟记录、读不到日志）
+  - `warn`：数据能用但要注意。`no-port-s-<秒>` 表示有一段超过 5 分钟一条 port-s 都没有；`user-not-registered-<次>` 表示出现过 `480 User not registered`
+  - `opened`、`peer_reset`、`reset_lifetimes`、`survived_to_end`、`other_close`、`unclosed`：port-s 打开、RST、存活时长等。按"隧道 + generation"计数，服务内部重连后不会再漏算
+  - `cycle_s`：同一条隧道里相邻两次 RST 的间隔（秒）
+  - `refresh_after_reset`：RST 后由 port-s 恢复触发的那次 REGISTER 的最终状态码和次数。401/407 挑战不算最终结果；`challenged` 表示收到挑战后没有最终应答，`none` 表示什么都没收到就开始了下一次注册
+  - `jitter_refresh`：`recovery-jitter` 轮里每次的延迟和对应的最终状态码，例如 `41.2s:200`
+  - `pcscf`、`sbc`：分到的 P-CSCF 和 NOTIFY `Contact` 里的 SBC 主机名
+  - `user_not_registered`、`runtime_reconnects`、`max_port_s_gap_s`：480 次数、隧道重连次数、最长一段一条 port-s 都没有的时间
+- `<序号>-<实验名>.log`、`pcap-<序号>-<实验名>/`、`outer-<序号>-<实验名>.pcap`：同上一版。组合实验名里的逗号换成 `+`
 
-请把 **`summary.txt` 直接贴出来**，把整个输出目录打包作为附件。**外层抓包里有你的公网 IP 和 ePDG 地址**，如果不想公开，就不要把 `outer-*.pcap` 放进附件，我们需要时再请你从里面数具体的包。
-
-隐私：
-
-- `[dev]` 日志的打码规则和上一版相同（SIP URI 用户部分、IMEI、号码、Authorization、AP MAC 都会遮掉）。非 `[dev]` 的基础日志行里有明文 IMSI、ICCID、IMEI，例如设备启动时的"SIM 身份已同步到数据库"，脚本会把 11 位以上的数字统一遮掉。打包前仍请人工看一遍：这条规则遮不掉字母形式的身份（例如 SIP URI 里的用户名），也遮不掉 10 位以下的号码。
-- 抓包文件里只有包头：内层 IP 地址、P-CSCF 地址、端口、TCP 序号、ESP 的 SPI 和序号。按上面的规则不保留载荷。上面的 `grep` 只能查出长数字串，查不出短号码或字母形式的身份，只能当辅助检查。
+请把 **`summary.txt` 直接贴出来**，把整个输出目录打包作为附件。外层抓包里有你的公网 IP 和 ePDG 地址，不想公开就不要放进附件。隐私规则和打码方式同上一版，打包前请再人工看一遍。
 
 ## 六、结果怎么看
 
+下面每条只说明结果支持或不支持哪个假设，不单独定结论；判断时要同时看节点（`sbc`）、port-s 打开次数和空窗。
+
 | 看到的 | 说明 |
 |---|---|
-| 某个实验的 `peer_reset` 明显少于前后两轮 baseline、存活时长明显变长 | 支持"这个实验去掉的东西是触发条件"，需要再重复确认 |
-| 抓包里 RST 的注释是 `in plaintext` | 这个 RST 没有经过 IMS SA，要查是谁发的 |
-| RST 之前，对方带数据的同一个 seq 出现多次 | 对方在重传，说明它没收到我们的 ACK，或者没有按时收到 |
-| RST 之前，**我们**发的同一段（例如 NOTIFY 的 200）出现多次，对方的 ACK 不前进 | 我们的包没到对方。如果 RST 总在 NOTIFY 之后 32 秒左右，和 P-CSCF 那边 NOTIFY 事务的超时（RFC 3261 Timer F = 64×T1）对得上 |
-| 内层抓包里看不到对方的回应，外层抓包里却有对方发来的 ESP 包，或者 `port_s_closed` 的 `inner_endpoint` 里 `DecapsulationErrors`、`SAMisses` 增加了 | 对方的包到了这台机器，但在 SWu 层被丢了 |
-| RST 紧跟在我们的 keepalive 探测之后 | 说明探测和 RST 有关，可能是对方已经丢了这条连接的状态，需要更多样本 |
-| 以上都没有，双方的数据都已被确认，对方仍然 RST | 更像是对方主动断开，原因要看实验结果 |
+| `no-register-route` 轮的 `refresh_after_reset` 是 200 | 刷新在 RST 后仍被接受，支持"403 是 Route 造成的"。接下来看刷新成功后 P-CSCF 会不会再连 port-s、短信能不能收到 |
+| `no-register-route` 轮每条隧道只剩第一次 RST | 支持"后续反复 RST 和反复重注册有关"。第一次 RST 发生在任何刷新之前，这个实验去不掉它 |
+| `no-register-route` 轮刷新仍是 403 | 不支持"403 是 Route 造成的"，RST 时 P-CSCF 那边的状态可能已经变了，原因要在 RST 之前找 |
+| `no-feature-caps` 轮第一次 RST 也没有了 | 支持"Feature-Caps 和 RST 有关"，要再重复确认 |
+| `recovery-jitter` 轮的 `cycle_s` 仍集中在同一个值或它的整数倍 | 支持"RST 按 SBC 自己的周期来"。刷新晚于下一个周期点时，那一拍没有 port-s 可断，会出现整数倍 |
+| `recovery-jitter` 轮的 `cycle_s` 跟着延迟变化 | 支持"RST 跟着我们的 REGISTER 走" |
+| `jitter_refresh` 里延迟短的是 200/403、长的是 `none` | 给出 RST 后 P-CSCF 还应答的大致时限 |
+| 出现 `user-not-registered`，且对应的 `connection timed out` 错误里 `last read` 约 1.5 分钟 | 45 秒 user timeout 起作用了 |
