@@ -27,6 +27,15 @@ const (
 	imsTCPKeepaliveIdle     = 30 * time.Second
 	imsTCPKeepaliveInterval = 5 * time.Second
 	imsTCPKeepaliveProbes   = 3
+	// Keepalive probes stop once data is in flight, and the retransmit timer
+	// then backs off for about 15 minutes before giving up. Vodafone DE
+	// stopped acknowledging port-c after a registration went stale (hideck#90,
+	// 11-02): three probes went unanswered, the next CRLF was retransmitted
+	// for 14 minutes and SMS could not arrive meanwhile. Give unacknowledged
+	// data the same 45 s an idle flow gets from the probes. A carrier preset
+	// may lengthen the idle time (configureTCPKeepalive in imscore); this
+	// stays 45 s.
+	imsTCPUserTimeout = imsTCPKeepaliveIdle + imsTCPKeepaliveProbes*imsTCPKeepaliveInterval
 )
 
 type tcpDialConfig struct {
@@ -86,6 +95,10 @@ func configureIMSTCPKeepalive(endpoint tcpip.Endpoint) error {
 	}
 	if err := endpoint.SetSockOptInt(tcpip.KeepaliveCountOption, imsTCPKeepaliveProbes); err != nil {
 		return fmt.Errorf("set IMS TCP keepalive probes: %s", err)
+	}
+	userTimeout := tcpip.TCPUserTimeoutOption(imsTCPUserTimeout)
+	if err := endpoint.SetSockOpt(&userTimeout); err != nil {
+		return fmt.Errorf("set IMS TCP user timeout: %s", err)
 	}
 	return nil
 }
