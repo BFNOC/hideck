@@ -82,3 +82,60 @@ func TestDevDisablePortSKeepaliveUnwrapsCountingConn(t *testing.T) {
 		t.Fatal("keepalive was not disabled on the wrapped connection")
 	}
 }
+
+func TestDevExperimentRefreshRouteAndFeatureCaps(t *testing.T) {
+	refresh := func(experiment string) string {
+		t.Setenv(devExperimentEnv, experiment)
+		service := &Service{cfg: &IMSConfig{
+			IMPI: "user@ims.example", IMPU: "sip:user@ims.example", Domain: "ims.example",
+			LocalIP: net.ParseIP("192.0.2.10"), LocalPort: 5060, Transport: "udp",
+			CarrierPresetID: devExperimentPreset,
+		}}
+		return service.buildRegister(&registerSession{
+			callID: "call-1", fromTag: "tag-1", contactUser: "contact-1", cseq: 4,
+			path: "<sip:[2001:db8::5]:6000;lr;ottag=ue_term>",
+		}, "Digest response")
+	}
+	cases := []struct {
+		experiment         string
+		route, featureCaps bool
+	}{
+		{"", true, true},
+		{devExperimentNoRegisterRoute, false, true},
+		{devExperimentNoFeatureCaps, true, false},
+		{devExperimentNoRegisterRoute + ", " + devExperimentNoFeatureCaps, false, false},
+		{devExperimentNoRegisterRoute + ",not-an-experiment", true, true},
+	}
+	for _, tc := range cases {
+		request := refresh(tc.experiment)
+		if got := sipHeaderValue(request, "Route") != ""; got != tc.route {
+			t.Errorf("%q: Route present = %v, want %v", tc.experiment, got, tc.route)
+		}
+		if got := sipHeaderValue(request, "Feature-Caps") != ""; got != tc.featureCaps {
+			t.Errorf("%q: Feature-Caps present = %v, want %v", tc.experiment, got, tc.featureCaps)
+		}
+	}
+}
+
+func TestDevExperimentNameSortsAndDedupes(t *testing.T) {
+	t.Setenv(devExperimentEnv, "recovery-jitter, no-register-route,recovery-jitter,baseline")
+	service := &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}}
+	if got := service.devExperimentName(); got != "no-register-route,recovery-jitter" {
+		t.Fatalf("experiment name = %q", got)
+	}
+}
+
+func TestDevRecoveryJitterOnlyAfterPeerReset(t *testing.T) {
+	t.Setenv(devExperimentEnv, devExperimentRecoveryJitter)
+	service := &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}}
+	if _, ok := service.devRecoveryJitter(); ok {
+		t.Fatal("jitter applied without a peer reset")
+	}
+	service.portSSession.lastCloseKind = portSClosePeerReset
+	for range 50 {
+		delay, ok := service.devRecoveryJitter()
+		if !ok || delay < devRecoveryJitterMin || delay >= devRecoveryJitterMax {
+			t.Fatalf("jitter = %v, %v", delay, ok)
+		}
+	}
+}

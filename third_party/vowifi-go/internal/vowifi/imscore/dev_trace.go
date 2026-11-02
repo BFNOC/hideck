@@ -216,7 +216,9 @@ func (s *Service) devLogPortSEvent(event string, generation uint64, conn net.Con
 	portS := s.capturePortSSession()
 	fields := []any{"device", s.DeviceID(), "event", event, "generation", generation,
 		"since_register_ok", devSince(lastOK), "since_last_inbound", devSince(portS.lastInboundAt),
-		"since_opened", devSince(portS.openedAt), "carrier_preset", s.devCarrierPreset()}
+		"since_opened", devSince(portS.openedAt), "carrier_preset", s.devCarrierPreset(),
+		// Millisecond wall time: the summary measures the reset-to-reset cycle.
+		"at", time.Now().Format("15:04:05.000")}
 	if conn != nil {
 		fields = append(fields, "remote", conn.RemoteAddr(), "local", conn.LocalAddr())
 	}

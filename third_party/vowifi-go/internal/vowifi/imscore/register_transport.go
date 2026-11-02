@@ -269,7 +269,7 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 			"device", s.DeviceID(), "remote", conn.RemoteAddr(), "local", conn.LocalAddr())
 		s.inboundTCPAccept.Add(1)
 		s.configureRegistrationTCPKeepalive(conn)
-		if s.devExperiment() == devExperimentNoPortSKeepalive {
+		if s.devExperimentHas(devExperimentNoPortSKeepalive) {
 			s.devDisablePortSKeepalive(conn)
 		}
 		conn = s.newPortSInboundConn(conn)
@@ -353,6 +353,9 @@ func (s *Service) handleProtectedServerPushClosed() {
 		return
 	}
 	grace := s.portSReconnectWait()
+	if delay, ok := s.devRecoveryJitter(); ok {
+		grace = delay
+	}
 	logging.Info("IMS protected server push closed; schedule port-s recovery",
 		"device", s.DeviceID(), "grace", grace,
 		"since_last_read", s.portSSinceLastRead())

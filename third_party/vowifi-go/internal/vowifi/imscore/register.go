@@ -228,7 +228,7 @@ func (s *Service) registerLocked(ctx context.Context) error {
 	s.startRegistrationSubscription()
 	s.startMWISubscription()
 	s.startIMSKeepalive()
-	if s.devExperiment() != devExperimentNoOptions {
+	if !s.devExperimentHas(devExperimentNoOptions) {
 		s.schedulePeerCapabilityDiscovery()
 	}
 	s.startPendingPortSResetFailover()
@@ -849,7 +849,7 @@ func (s *Service) buildRegisterRequest(
 	localAddress := s.registerLocalAddress(session, transport)
 	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;rport;branch=%s%s\r\n",
 		transportUpper(transport), localAddress, session.branch,
-		registerViaAlias(protected && s.devExperiment() != devExperimentNoAlias)))
+		registerViaAlias(protected && !s.devExperimentHas(devExperimentNoAlias))))
 	publicIdentity := primaryPublicIdentity(cfg)
 	if options.anonymous {
 		publicIdentity = emergency.AnonymousIMPU
@@ -865,7 +865,7 @@ func (s *Service) buildRegisterRequest(
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	supported := registerSupportedHeaderForSession(cfg, session)
-	if s.devExperiment() == devExperimentNoOutbound {
+	if s.devExperimentHas(devExperimentNoOutbound) {
 		supported = removeHeaderToken(supported, "outbound")
 	}
 	b.WriteString("Supported: " + formatHeaderList(supported) + "\r\n")
@@ -880,7 +880,11 @@ func (s *Service) buildRegisterRequest(
 		b.WriteString("Cellular-Network-Info: " + cellular + "\r\n")
 	}
 	b.WriteString(registerSecurityHeaders(session))
-	if route := registerRequestRoute(session); route != "" {
+	// [dev] hideck#90 no-register-route: Vodafone DE returns Path without
+	// Service-Route, so every refresh carried the P-CSCF's own ue_term Path
+	// URI as Route and got 403. TS 24.229 5.1.1.4.1 NOTE 5 keeps Service-Route
+	// for requests other than REGISTER; RFC 3327 5.1 has the UA ignore Path.
+	if route := registerRequestRoute(session); route != "" && !s.devExperimentHas(devExperimentNoRegisterRoute) {
 		b.WriteString("Route: " + route + "\r\n")
 	}
 	if !options.anonymous {
@@ -892,7 +896,12 @@ func (s *Service) buildRegisterRequest(
 	if strings.TrimSpace(cfg.UserAgent) != "" {
 		b.WriteString("User-Agent: " + strings.TrimSpace(cfg.UserAgent) + "\r\n")
 	}
-	b.WriteString("Feature-Caps: " + registerFeatureCapsHeader + "\r\n")
+	// [dev] hideck#90 no-feature-caps: RFC 6809 1 defines Feature-Caps for
+	// entities not represented by the Contact URI; the UE's REGISTER header
+	// list in TS 24.229 5.1.1.2.1 does not include it.
+	if !s.devExperimentHas(devExperimentNoFeatureCaps) {
+		b.WriteString("Feature-Caps: " + registerFeatureCapsHeader + "\r\n")
+	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
 }
@@ -1246,10 +1255,10 @@ func (s *Service) registerLocalAddress(session *registerSession, transport strin
 		// TCP after SA keeps cfg.LocalPort (24.229 5.1.1.2.2 (c) is UDP-only;
 		// K.2.1.2.2.2 TCP Via is IP/FQDN). UDP IPsec uses port-s.
 		port = protectedViaSentByPort(transport, int(session.security.client.PortS), s.cfg.LocalPort)
-		switch s.devExperiment() {
-		case devExperimentViaPortC:
+		switch {
+		case s.devExperimentHas(devExperimentViaPortC):
 			port = int(session.security.client.PortC)
-		case devExperimentViaPortS:
+		case s.devExperimentHas(devExperimentViaPortS):
 			port = int(session.security.client.PortS)
 		}
 	}
