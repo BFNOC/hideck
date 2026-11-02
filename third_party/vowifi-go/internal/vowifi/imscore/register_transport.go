@@ -995,13 +995,17 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 }
 
 func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
-	decoder := newSIPStreamDecoder(conn)
+	reads := &lastReadConn{Conn: conn, lastRead: time.Now()}
+	decoder := newSIPStreamDecoder(reads)
 	decoder.onPong = s.signalTCPKeepalivePong
 	defer decoder.Close()
 	for {
 		message, err := decoder.ReadMessage()
 		if err != nil {
-			return err
+			// The netstack gives up on unacknowledged data after 45 s and the
+			// old retransmit limit after about 15 minutes, both as "connection
+			// timed out"; the silence before the close tells them apart.
+			return fmt.Errorf("%w (last read %s ago)", err, time.Since(reads.lastRead).Round(time.Second))
 		}
 		s.noteInboundOverNewSA(tcpPortFromAddr(conn.LocalAddr()), tcpPortFromAddr(conn.RemoteAddr()))
 		if err := s.dispatchInboundSIPMessageWithPeer(message, message.String(), func(response string) error {
@@ -1010,6 +1014,21 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "device", s.DeviceID(), "err", err)
 		}
 	}
+}
+
+// lastReadConn records when the peer last delivered bytes, CRLF pongs
+// included. Only the stream reader goroutine touches lastRead.
+type lastReadConn struct {
+	net.Conn
+	lastRead time.Time
+}
+
+func (c *lastReadConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.lastRead = time.Now()
+	}
+	return n, err
 }
 
 type tcpKeepaliveConn interface {
