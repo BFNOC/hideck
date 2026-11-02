@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
 type networkInboundVoiceResponder struct {
@@ -117,6 +119,21 @@ func inboundResponseHeaders(request, localTag string) (string, error) {
 	if !strings.Contains(strings.ToLower(to), ";tag=") {
 		to += ";tag=" + localTag
 	}
-	return fmt.Sprintf("Via: %s\r\nFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n",
-		values["Via"], values["From"], to, values["Call-ID"], values["CSeq"]), nil
+	return fmt.Sprintf("%sFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n",
+		inboundResponseVias(request), values["From"], to, values["Call-ID"], values["CSeq"]), nil
+}
+
+// inboundResponseVias copies every Via of the request in order: RFC 3261
+// §8.2.6.2 requires all of them, and a proxy that added one needs it to route
+// the response back.
+func inboundResponseVias(request string) string {
+	message, err := parseSIPMessage(request)
+	if err != nil {
+		return ""
+	}
+	var out strings.Builder
+	for _, header := range message.GetHeaders("Via") {
+		fmt.Fprintf(&out, "Via: %s\r\n", sipkit.HeaderValue(header, true))
+	}
+	return out.String()
 }
