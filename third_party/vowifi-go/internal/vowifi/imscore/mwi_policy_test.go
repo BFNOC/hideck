@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
@@ -226,5 +227,65 @@ func TestRegistrationStopsAnActiveMWIUsageTurnedOff(t *testing.T) {
 	defer s.mu.RUnlock()
 	if s.mwiSubscriptionLifecycle.started || !s.mwiSubscriptionClosed || !s.mwiSubscriptionRefreshAt.IsZero() {
 		t.Fatal("registration kept an MWI usage the SIM setting turned off")
+	}
+}
+
+// The check must run when the dispatch worker sends, not when the request is
+// queued: a setting saved while the request waits in the queue still applies.
+func TestMWIPolicyIsCheckedAfterTheDispatchQueue(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	store := &fakeMWIPolicyStore{mode: MWISubscriptionAuto}
+	service.cfg.MWIPolicyStore = store
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+	sent := make(chan string, 1)
+	go func() {
+		request, err := readSIPStreamMessage(bufio.NewReader(server))
+		if err == nil {
+			sent <- request
+		}
+	}()
+	queue := make(chan outboundRequestTask, 1)
+	service.outboundMu.Lock()
+	service.outboundReqShards = []chan outboundRequestTask{queue}
+	service.outboundMu.Unlock()
+
+	result := make(chan error, 1)
+	go func() { result <- service.sendSubscribeMWI(context.Background()) }()
+	var task outboundRequestTask
+	select {
+	case task = <-queue:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SUBSCRIBE(mwi) never reached the dispatch queue")
+	}
+	store.mode = MWISubscriptionOff
+	service.runOutboundRequestTask(0, task)
+	if err := <-result; err != nil {
+		t.Fatalf("sendSubscribeMWI: %v", err)
+	}
+	select {
+	case request := <-sent:
+		t.Fatalf("queued SUBSCRIBE(mwi) was sent after the setting turned off:\n%s", request)
+	case <-time.After(200 * time.Millisecond):
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	if service.mwiSubscriptionLifecycle.started || !service.mwiSubscriptionClosed {
+		t.Fatal("queued block left the MWI usage running")
+	}
+}
+
+func TestMWIPolicyBlockDoesNotKillSignaling(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+	blocked := &mwiPolicyBlockedError{reason: "MWI policy unavailable: dial tcp 127.0.0.1:5432: connect: connection refused"}
+	service.handleOutboundRequestError(outboundModeContext{}, nil, fmt.Errorf("SUBSCRIBE transaction: %w", blocked))
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	if service.registrationTCP == nil {
+		t.Fatal("a policy block was treated as a dead signaling connection")
 	}
 }

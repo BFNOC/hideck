@@ -165,3 +165,23 @@ test('a saved policy whose follow-up failed is reloaded instead of rolled back',
   assert.equal(fields.mwiMode.value, 'on')
   assert.equal(fields.errorField.value, 'mwi_mode')
 })
+
+test('after a saved-then-failed change, changing back is sent', async () => {
+  const source = ref<CardPolicy | null>({ ...policy(), mwi_mode: 'off' })
+  const patches: Array<Record<string, unknown>> = []
+  let first = true
+  const fields = useCardPolicyFields(source, async (patch) => {
+    patches.push(patch)
+    if (first) {
+      first = false
+      return { ok: false, error: { message: '清除失败', code: 'card_policy_saved_mwi_clear_failed' } }
+    }
+    return { ok: true }
+  })
+  await nextTick()
+  fields.mwiMode.value = 'on'
+  await fields.saveMWIMode()
+  fields.mwiMode.value = 'off'
+  await fields.saveMWIMode()
+  assert.deepEqual(patches, [{ mwi_mode: 'on' }, { mwi_mode: 'off' }])
+})

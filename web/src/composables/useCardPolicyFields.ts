@@ -75,8 +75,11 @@ export function useCardPolicyFields(
     pending.value = null
     if (!result.ok) {
       const code = result.error?.code || ''
-      if (code.startsWith(CARD_POLICY_SAVED_PREFIX)) onChanged?.()
-      else restore(field)
+      if (code.startsWith(CARD_POLICY_SAVED_PREFIX)) {
+        // The server stored the value; move the baseline so the next change is sent.
+        persisted.value = { ...persisted.value, [field]: value }
+        onChanged?.()
+      } else restore(field)
       error.value = result.error?.message || '策略保存失败'
       errorCode.value = code
       errorField.value = field
