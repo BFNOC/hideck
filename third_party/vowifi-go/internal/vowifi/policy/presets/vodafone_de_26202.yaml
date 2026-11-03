@@ -24,6 +24,9 @@ ims_register_template:
   include_pani_authenticated: true
   strict_security_server_offer: true
   enable_initial_reject_fallback: true
+  # Every SUBSCRIBE(mwi) got 480 with Restoration-Info: noresponse, and the
+  # P-CSCF then reset port-s; without MWI port-s stayed up (hideck#90, #97).
+  disable_mwi_subscription: true
   contact_param_order:
     - access_type
     - sip_instance

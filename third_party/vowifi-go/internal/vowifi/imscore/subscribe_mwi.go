@@ -20,6 +20,14 @@ const (
 )
 
 func (s *Service) startMWISubscription() {
+	// Every later MWI send (refresh, retry, unsubscribe) needs a subscription
+	// started here, and the carrier template does not change at runtime.
+	if s.cfg.IMSRegisterTemplate.DisableMWISubscription {
+		logging.Info("IMS SUBSCRIBE(mwi) skipped",
+			"device", s.DeviceID(), "reason", "carrier policy disables MWI subscription",
+			"preset", s.cfg.CarrierPresetID)
+		return
+	}
 	eligible, skipReason := s.prepareSubscriptionStart(true)
 	if !eligible {
 		logging.Info("IMS SUBSCRIBE(mwi) skipped",
