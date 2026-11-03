@@ -24,7 +24,8 @@ type CardPolicy struct {
 	DataStrategy          string    `gorm:"column:data_strategy;default:on_demand" json:"data_strategy"` // always | on_demand
 	VowifiUpstreamProxyID string    `gorm:"column:vowifi_upstream_proxy_id" json:"vowifi_upstream_proxy_id"`
 	LocalPhoneOverride    string    `gorm:"column:local_phone_override" json:"local_phone_override"`
-	Source                string    `gorm:"column:source" json:"source"` // auto | user
+	MWIMode               string    `gorm:"column:mwi_mode;default:auto" json:"mwi_mode"` // auto | on | off，见 hideck#97
+	Source                string    `gorm:"column:source" json:"source"`                  // auto | user
 	CreatedAt             time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt             time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
@@ -53,6 +54,7 @@ func DefaultCardPolicy(iccid string) CardPolicy {
 		APN:             "",
 		PhoneMode:       "wifi",
 		DataStrategy:    "on_demand",
+		MWIMode:         MWIModeAuto,
 		Source:          "auto",
 	}
 }
@@ -86,6 +88,24 @@ func NormalizeCardPolicy(p *CardPolicy) {
 		p.DataStrategy = "on_demand"
 	}
 	p.VowifiUpstreamProxyID = NormalizeVoWiFiUpstreamProxyID(p.VowifiUpstreamProxyID)
+	p.MWIMode = NormalizeMWIMode(p.MWIMode)
+}
+
+// 语音信箱提示（MWI 订阅）：auto 按运营商预设，on 主动订阅，off 不订阅。
+const (
+	MWIModeAuto = "auto"
+	MWIModeOn   = "on"
+	MWIModeOff  = "off"
+)
+
+// NormalizeMWIMode 把未知值归为 auto。
+func NormalizeMWIMode(mode string) string {
+	switch mode = strings.ToLower(strings.TrimSpace(mode)); mode {
+	case MWIModeOn, MWIModeOff:
+		return mode
+	default:
+		return MWIModeAuto
+	}
 }
 
 func NormalizeVoWiFiUpstreamProxyID(id string) string {
@@ -144,6 +164,7 @@ func UpsertCardPolicy(p CardPolicy) error {
 			"data_strategy":            p.DataStrategy,
 			"vowifi_upstream_proxy_id": p.VowifiUpstreamProxyID,
 			"local_phone_override":     p.LocalPhoneOverride,
+			"mwi_mode":                 p.MWIMode,
 			"source":                   p.Source,
 			"updated_at":               p.UpdatedAt,
 		}),

@@ -120,3 +120,21 @@ test('failed manual local number save restores the persisted value', async () =>
   assert.equal(fields.localPhoneOverride.value, '+447700900123')
   assert.equal(fields.errorField.value, 'local_phone_override')
 })
+
+test('voicemail indication defaults to auto and saves the selected mode', async () => {
+  const source = ref<CardPolicy | null>(policy())
+  const patches: Array<Record<string, unknown>> = []
+  const fields = useCardPolicyFields(source, async (patch) => {
+    patches.push(patch)
+    return { ok: true }
+  })
+  await nextTick()
+  assert.equal(fields.mwiMode.value, 'auto')
+
+  fields.mwiMode.value = 'off'
+  await fields.saveMWIMode()
+  fields.mwiMode.value = 'off'
+  await fields.saveMWIMode()
+
+  assert.deepEqual(patches, [{ mwi_mode: 'off' }])
+})
