@@ -209,3 +209,22 @@ func TestCarrierMWISwitchReachesTheLegacyTemplate(t *testing.T) {
 		t.Fatal("carrier MWI switch did not reach the register template")
 	}
 }
+
+func TestRegistrationStopsAnActiveMWIUsageTurnedOff(t *testing.T) {
+	store := &fakeMWIPolicyStore{mode: MWISubscriptionAuto}
+	s := newMWIPolicyTestService(t, store, false)
+	if start, reason := s.prepareSubscriptionStart(true); !start {
+		t.Fatal(reason)
+	}
+	s.mu.Lock()
+	s.mwiSubscriptionDialog = registrationSubscriptionDialog{callID: "call", localTag: "local", remoteTag: "remote"}
+	s.mwiSubscriptionRefreshAt = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+	store.mode = MWISubscriptionOff
+	s.startMWISubscription()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.mwiSubscriptionLifecycle.started || !s.mwiSubscriptionClosed || !s.mwiSubscriptionRefreshAt.IsZero() {
+		t.Fatal("registration kept an MWI usage the SIM setting turned off")
+	}
+}

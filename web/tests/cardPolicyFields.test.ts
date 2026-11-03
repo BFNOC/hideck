@@ -148,7 +148,7 @@ test('redetecting MWI resends on even when the setting is already on', async () 
   })
   await nextTick()
   await fields.redetectMWI()
-  assert.deepEqual(patches, [{ mwi_mode: 'on' }])
+  assert.deepEqual(patches, [{ mwi_mode: 'on', redetect_mwi: true }])
 })
 
 test('a saved policy whose follow-up failed is reloaded instead of rolled back', async () => {

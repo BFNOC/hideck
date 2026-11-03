@@ -47,6 +47,11 @@ func (s *Service) mwiSubscriptionBlockedReason() string {
 	return ""
 }
 
+// mwiPolicyBlockedError aborts a SUBSCRIBE(mwi) in its before-send hook.
+type mwiPolicyBlockedError struct{ reason string }
+
+func (e *mwiPolicyBlockedError) Error() string { return "imscore: MWI blocked by policy: " + e.reason }
+
 // stopBlockedMWIUsage ends an MWI usage the policy no longer allows. It sends
 // no unsubscribe, and clears started so maintenance does not pick it again;
 // the next registration re-checks the policy.

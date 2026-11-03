@@ -666,12 +666,16 @@ watch(
   { deep: true }
 )
 
-async function fetchCardPolicy(iccid: string | undefined) {
+// background：保存后的刷新。保留已显示的面板，不切到骨架屏，免得面板重建丢掉保存后的错误提示。
+async function fetchCardPolicy(iccid: string | undefined, background = false) {
   const cardID = String(iccid || '').trim()
   const requestToken = cardPolicyRequestScope.begin(cardID)
-  cardPolicy.value = null
-  cardPolicyError.value = null
-  cardPolicyLoading.value = Boolean(cardID)
+  const keepPanel = background && cardPolicy.value !== null
+  if (!keepPanel) {
+    cardPolicy.value = null
+    cardPolicyError.value = null
+    cardPolicyLoading.value = Boolean(cardID)
+  }
   if (!cardID) return
 
   try {
@@ -679,13 +683,13 @@ async function fetchCardPolicy(iccid: string | undefined) {
     const currentCardID = String(selectedDetail.value?.modem?.iccid || '').trim()
     if (!cardPolicyRequestScope.isCurrent(requestToken, currentCardID)) return
     if (!result.ok) {
-      cardPolicyError.value = result.error
+      if (!keepPanel) cardPolicyError.value = result.error
       return
     }
     cardPolicy.value = result.data
   } catch (error: unknown) {
     const currentCardID = String(selectedDetail.value?.modem?.iccid || '').trim()
-    if (cardPolicyRequestScope.isCurrent(requestToken, currentCardID)) {
+    if (cardPolicyRequestScope.isCurrent(requestToken, currentCardID) && !keepPanel) {
       cardPolicyError.value = toAppError(error)
     }
   } finally {
@@ -699,7 +703,7 @@ async function fetchCardPolicy(iccid: string | undefined) {
 // 卡策略热切换后：刷新卡策略 + 概览详情（让概览即时反映网络/VoWiFi/飞行模式面板切换）
 async function onCardPolicyChanged() {
   await Promise.all([
-    fetchCardPolicy(selectedDetail.value?.modem?.iccid),
+    fetchCardPolicy(selectedDetail.value?.modem?.iccid, true),
     refreshSelectedDetailOnly()
   ])
 }

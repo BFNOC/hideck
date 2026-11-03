@@ -759,3 +759,19 @@ func TestPutCardPolicyMWIClearFailureReportsSavedPolicy(t *testing.T) {
 		t.Fatalf("code=%d mode=%q body=%s", w.Code, store.policy.MWIMode, w.Body.String())
 	}
 }
+
+func TestPutCardPolicyExplicitMWIRedetectReconnectsWithoutARecord(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &cardPolicyStoreStub{policy: db.CardPolicy{ICCID: "8986005", MWIMode: "on", VoWiFiEnabled: true, Source: "user"}}
+	restarter := &cardPolicyRestarterStub{}
+	s := &Server{cardPolicies: store, cardPolicyRestarter: restarter}
+	r := gin.New()
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/cards/8986005/policy", strings.NewReader(`{"mwi_mode":"on","redetect_mwi":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || restarter.iccid != "8986005" {
+		t.Fatalf("code=%d restarted=%q body=%s", w.Code, restarter.iccid, w.Body.String())
+	}
+}

@@ -10,7 +10,7 @@ const CARD_POLICY_SAVED_PREFIX = 'card_policy_saved_'
 
 export function useCardPolicyFields(
   source: Ref<CardPolicy | null>,
-  save: (patch: Partial<EditablePolicyFields>) => Promise<SaveResult>,
+  save: (patch: Partial<EditablePolicyFields> & { redetect_mwi?: boolean }) => Promise<SaveResult>,
   onChanged?: () => void
 ) {
   const ipVersion = ref<CardPolicy['ip_version']>('v4')
@@ -93,7 +93,7 @@ export function useCardPolicyFields(
     error.value = ''
     errorCode.value = ''
     errorField.value = null
-    const result = await save({ mwi_mode: 'on' })
+    const result = await save({ mwi_mode: 'on', redetect_mwi: true })
     pending.value = null
     if (!result.ok) {
       error.value = result.error?.message || '重新检测失败'

@@ -13,6 +13,7 @@ type PutCardPolicyRequest = {
   vowifi_upstream_proxy_id?: string
   local_phone_override?: string
   mwi_mode?: 'auto' | 'on' | 'off'
+  redetect_mwi?: boolean
 }
 
 export const cardsService = {

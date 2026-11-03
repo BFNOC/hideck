@@ -123,6 +123,7 @@ type cardPolicyPatchRequest struct {
 	VowifiUpstreamProxyID *string `json:"vowifi_upstream_proxy_id"`
 	LocalPhoneOverride    *string `json:"local_phone_override"`
 	MWIMode               *string `json:"mwi_mode"`
+	RedetectMWI           bool    `json:"redetect_mwi"`
 }
 
 func (s *Server) handlePutCardPolicy(c *gin.Context) {
@@ -248,7 +249,9 @@ func (s *Server) usePutCardPolicy(c businessContext) {
 			})
 			return
 		}
-		redetectMWI = cleared && pol.VoWiFiEnabled
+		// 「重新检测」按钮总是重连：上一次清掉记录后重连失败时，记录已经没了，
+		// 只看 cleared 就不会再试。
+		redetectMWI = (cleared || req.RedetectMWI) && pol.VoWiFiEnabled
 		if cleared {
 			logger.Info("已清除 MWI 拒绝记录，重新检测语音信箱提示", "iccid", pol.ICCID, "reconnect", redetectMWI)
 		}
