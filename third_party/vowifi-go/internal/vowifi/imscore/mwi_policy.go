@@ -41,10 +41,23 @@ func (s *Service) mwiSubscriptionBlockedReason() string {
 		return "SIM setting disables MWI subscription"
 	case rejected != 0:
 		return fmt.Sprintf("network rejected MWI with status %d", rejected)
-	case mode != MWISubscriptionOn && s.cfg.IMSRegisterTemplate.DisableMWISubscription:
+	case mode != MWISubscriptionOn && s.cfg.RegisterTemplate.DisableMWISubscription:
 		return "carrier policy disables MWI subscription"
 	}
 	return ""
+}
+
+// stopBlockedMWIUsage ends an MWI usage the policy no longer allows. It sends
+// no unsubscribe, and clears started so maintenance does not pick it again;
+// the next registration re-checks the policy.
+func (s *Service) stopBlockedMWIUsage(reason string) {
+	s.mu.Lock()
+	f := s.subscriptionFieldsLocked(true)
+	f.terminate(reason)
+	f.lifecycle.started = false
+	s.mu.Unlock()
+	logging.Info("IMS SUBSCRIBE(mwi) stopped by policy",
+		"device", s.DeviceID(), "reason", reason, "preset", s.cfg.CarrierPresetID)
 }
 
 func (s *Service) mwiPolicyIdentity() string {

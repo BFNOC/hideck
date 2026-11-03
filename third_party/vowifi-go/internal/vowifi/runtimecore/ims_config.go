@@ -111,5 +111,6 @@ func convertRegisterTemplate(
 		ContactOrder:              append([]string(nil), template.ContactOrder...),
 		IncludePANIAuthenticated:  template.IncludePANIAuthenticated,
 		StrictSecurityServerOffer: template.StrictSecurityServerOffer,
+		DisableMWISubscription:    template.DisableMWISubscription,
 	}
 }

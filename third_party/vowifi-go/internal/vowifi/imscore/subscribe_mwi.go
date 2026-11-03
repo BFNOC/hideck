@@ -119,6 +119,14 @@ func (s *Service) sendMWISubscription(ctx context.Context, expires time.Duration
 		return nil
 	}
 
+	// Re-check after waiting for subscribeMu: the setting may have changed
+	// while this attempt was queued.
+	if !unsubscribe {
+		if reason := s.mwiSubscriptionBlockedReason(); reason != "" {
+			s.stopBlockedMWIUsage(reason)
+			return nil
+		}
+	}
 	attempt, err := s.beginSubscriptionAttempt(true, unsubscribe)
 	if err != nil {
 		return err
@@ -135,6 +143,12 @@ func (s *Service) sendMWISubscription(ctx context.Context, expires time.Duration
 		return s.recordMWISubscriptionResult(result)
 	}
 	if retry, ok := s.retrySubscriptionAfter481(result, true); ok {
+		if !unsubscribe {
+			if reason := s.mwiSubscriptionBlockedReason(); reason != "" {
+				s.stopBlockedMWIUsage(reason)
+				return nil
+			}
+		}
 		result = retry
 		logging.Info("IMS SUBSCRIBE(mwi) dialog gone; retrying as initial",
 			"device", s.DeviceID())
@@ -196,14 +210,6 @@ func (s *Service) learnMWISubscriptionDialogLocked(request *sip.Request, respons
 }
 
 func (s *Service) refreshMWISubscription() {
-	if reason := s.mwiSubscriptionBlockedReason(); reason != "" {
-		s.mu.Lock()
-		s.subscriptionFieldsLocked(true).terminate(reason)
-		s.mu.Unlock()
-		logging.Info("IMS SUBSCRIBE(mwi) refresh stopped",
-			"device", s.DeviceID(), "reason", reason, "preset", s.cfg.CarrierPresetID)
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), mwiSubscriptionTimeout)
 	defer cancel()
 	if err := s.sendSubscribeMWI(ctx); err != nil {

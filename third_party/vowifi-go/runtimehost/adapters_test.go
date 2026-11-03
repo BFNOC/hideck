@@ -16,6 +16,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
+	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
@@ -781,6 +782,20 @@ func TestCoreRequestCarriesMWIPolicyStore(t *testing.T) {
 	request.DeliveryStore = &memDeliveryStore{}
 	if request.coreRequest().MWIPolicyStore != nil {
 		t.Fatal("core request invented an MWI policy store")
+	}
+}
+
+func TestCustomTunnelStartWiresMWIPolicy(t *testing.T) {
+	cfg := &imscore.IMSConfig{}
+	applyDeliveryStores(cfg, &mwiPolicyDeliveryStore{DeliveryStore: &memDeliveryStore{}})
+	if cfg.MWIPolicyStore == nil || cfg.SubscriptionRegistrations == nil || cfg.DeliveryStore == nil {
+		t.Fatalf("custom tunnel IMS config = %+v", cfg)
+	}
+	template, _, err := imsRegisterConfigForPrepared(&identity.PreparedSession{
+		Profile: identity.Profile{MCC: "262", MNC: "02"},
+	})
+	if err != nil || !template.DisableMWISubscription {
+		t.Fatalf("Vodafone DE custom tunnel template = %+v err=%v", template, err)
 	}
 }
 

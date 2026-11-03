@@ -740,3 +740,22 @@ func TestPutCardPolicyMWIRedetectReconnectsOnlyWhenARejectionWasCleared(t *testi
 		}
 	}
 }
+
+func TestPutCardPolicyMWIClearFailureReportsSavedPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &cardPolicyStoreStub{
+		policy:   db.CardPolicy{ICCID: "8986005", MWIMode: "off", Source: "user"},
+		clearErr: errors.New("database is locked"),
+	}
+	s := &Server{cardPolicies: store}
+	r := gin.New()
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/cards/8986005/policy", strings.NewReader(`{"mwi_mode":"on"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError || store.policy.MWIMode != "on" ||
+		!strings.Contains(w.Body.String(), cardPolicySavedMWIClearFailedCode) {
+		t.Fatalf("code=%d mode=%q body=%s", w.Code, store.policy.MWIMode, w.Body.String())
+	}
+}

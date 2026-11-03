@@ -1,11 +1,17 @@
 package imscore
 
 import (
+	"bufio"
+	"context"
 	"errors"
+	"io"
+	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
 type fakeMWIPolicyStore struct {
@@ -30,7 +36,7 @@ func newMWIPolicyTestService(t *testing.T, store *fakeMWIPolicyStore, carrierDis
 	t.Helper()
 	s := newSubscriptionLifecycleTestService(t, nil)
 	s.cfg.ICCID = "8949020000000000001"
-	s.cfg.IMSRegisterTemplate.DisableMWISubscription = carrierDisabled
+	s.cfg.RegisterTemplate.DisableMWISubscription = carrierDisabled
 	if store != nil {
 		s.cfg.MWIPolicyStore = store
 	}
@@ -92,6 +98,9 @@ func TestBlockedMWIRefreshStopsTheUsage(t *testing.T) {
 	if !s.mwiSubscriptionClosed || !s.mwiSubscriptionRefreshAt.IsZero() || s.mwiSubscriptionDialog.ready() {
 		t.Fatal("blocked refresh left the MWI usage scheduled")
 	}
+	if s.mwiSubscriptionLifecycle.started || s.subscriptionDueLocked(true, time.Now().Add(time.Hour)) {
+		t.Fatal("maintenance would pick the blocked MWI usage again")
+	}
 	if s.mwiSubscriptionInFlight.Load() {
 		t.Fatal("blocked refresh still sent SUBSCRIBE(mwi)")
 	}
@@ -139,5 +148,64 @@ func recordMWIStatusForTest(t *testing.T, s *Service, status int, selfRouted boo
 	result := subscriptionResult{context: attempt, response: &sip.Response{StatusCode: status}, err: errors.New("subscription failed")}
 	if err := s.recordMWISubscriptionResult(result); err == nil {
 		t.Fatal("failure was hidden")
+	}
+}
+
+type flippingMWIPolicyStore struct {
+	loads atomic.Int32
+}
+
+// The first load allows MWI, every later load reports the setting turned off.
+func (f *flippingMWIPolicyStore) LoadMWISubscriptionPolicy(string, string) (string, int, error) {
+	if f.loads.Add(1) == 1 {
+		return MWISubscriptionAuto, 0, nil
+	}
+	return MWISubscriptionOff, 0, nil
+}
+
+func (f *flippingMWIPolicyStore) SaveMWISubscriptionRejection(string, string, int) error { return nil }
+
+func TestMWI481RetryRechecksPolicy(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	service.cfg.MWIPolicyStore = &flippingMWIPolicyStore{}
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+	service.mwiSubscriptionDialog = registrationSubscriptionDialog{
+		callID: "mwi-old", localTag: "local", remoteTag: "remote", cseq: 4,
+	}
+	requests := make(chan string, 2)
+	go func() {
+		reader := bufio.NewReader(server)
+		for {
+			request, err := readSIPStreamMessage(reader)
+			if err != nil {
+				return
+			}
+			requests <- request
+			if _, err = io.WriteString(server, subscriptionWireResponse(request, 481, "")); err != nil {
+				return
+			}
+		}
+	}()
+	if err := service.sendSubscribeMWI(context.Background()); err != nil {
+		t.Fatalf("sendSubscribeMWI: %v", err)
+	}
+	_ = server.Close()
+	if got := len(requests); got != 1 {
+		t.Fatalf("SUBSCRIBE(mwi) sent %d times; the 481 retry ignored the policy", got)
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	if !service.mwiSubscriptionClosed || service.mwiSubscriptionLifecycle.started {
+		t.Fatal("blocked 481 retry left the MWI usage running")
+	}
+}
+
+func TestCarrierMWISwitchReachesTheLegacyTemplate(t *testing.T) {
+	cfg := &IMSConfig{IMSRegisterTemplate: policy.IMSRegisterTemplate{ID: "vodafone_de_26202", DisableMWISubscription: true}}
+	mergeOriginalRegisterTemplate(cfg)
+	if !cfg.RegisterTemplate.DisableMWISubscription {
+		t.Fatal("carrier MWI switch did not reach the register template")
 	}
 }

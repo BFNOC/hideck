@@ -16,6 +16,7 @@ import (
 var errCardPolicyIdentityUnavailable = errors.New("SIM 身份未就绪，无法保存卡策略")
 
 const cardPolicySavedRestartFailedCode = "card_policy_saved_restart_failed"
+const cardPolicySavedMWIClearFailedCode = "card_policy_saved_mwi_clear_failed"
 
 type cardPolicyStore interface {
 	Get(string) (db.CardPolicy, error)
@@ -232,14 +233,18 @@ func (s *Server) usePutCardPolicy(c businessContext) {
 
 	// 选「开启」即重新检测：清掉网络明确拒绝（405/489）留下的记录。运行中的
 	// 注册还在内存里记着这次拒绝，所以有记录被清掉时重连 WiFi calling。
+	// 只认 ims_mwi_rejections 里记过的身份；升级前通用表里残留的 message-summary
+	// 489 找不到对应身份，要等它随注册有效期过期。
 	redetectMWI := false
 	if req.MWIMode != nil && pol.MWIMode == db.MWIModeOn {
 		cleared, err := s.cardPolicyStore().ClearMWIRejections(pol.ICCID)
 		if err != nil {
 			logger.Warn("卡策略已保存，但清除 MWI 拒绝记录失败", "iccid", pol.ICCID, "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":  "卡策略已保存，但清除语音信箱不支持记录失败: " + err.Error(),
-				"policy": pol,
+				"status":  "error",
+				"code":    cardPolicySavedMWIClearFailedCode,
+				"message": "卡策略已保存，但清除语音信箱不支持记录失败: " + err.Error(),
+				"policy":  pol,
 			})
 			return
 		}

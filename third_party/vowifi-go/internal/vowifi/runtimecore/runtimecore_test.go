@@ -1019,3 +1019,9 @@ func (mwiPolicyStoreStub) LoadMWISubscriptionPolicy(string, string) (string, int
 }
 
 func (mwiPolicyStoreStub) SaveMWISubscriptionRejection(string, string, int) error { return nil }
+
+func TestConvertRegisterTemplateCarriesMWISwitch(t *testing.T) {
+	if !convertRegisterTemplate(policy.IMSRegisterTemplate{DisableMWISubscription: true}, "tcp").DisableMWISubscription {
+		t.Fatal("runtimecore dropped the carrier MWI switch")
+	}
+}

@@ -123,7 +123,7 @@ func TestSubscriptionRejectionExpiryAllowsRetryWithoutServiceRestart(t *testing.
 
 func TestCarrierPolicySkipsMWISubscription(t *testing.T) {
 	s := newSubscriptionLifecycleTestService(t, nil)
-	s.cfg.IMSRegisterTemplate.DisableMWISubscription = true
+	s.cfg.RegisterTemplate.DisableMWISubscription = true
 	s.startMWISubscription()
 	s.mu.RLock()
 	started := s.mwiSubscriptionLifecycle.started

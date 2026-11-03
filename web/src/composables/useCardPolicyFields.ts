@@ -5,6 +5,8 @@ type EditablePolicyFields = Pick<CardPolicy, 'ip_version' | 'apn' | 'vowifi_upst
 type SaveResult = { ok: boolean; error?: { message?: string; code?: string } }
 
 export const CARD_POLICY_SAVED_RESTART_FAILED = 'card_policy_saved_restart_failed'
+// 服务端已保存、后续动作失败的错误码都以此开头，界面要重新读取而不是回退。
+const CARD_POLICY_SAVED_PREFIX = 'card_policy_saved_'
 
 export function useCardPolicyFields(
   source: Ref<CardPolicy | null>,
@@ -73,7 +75,7 @@ export function useCardPolicyFields(
     pending.value = null
     if (!result.ok) {
       const code = result.error?.code || ''
-      if (code === CARD_POLICY_SAVED_RESTART_FAILED) onChanged?.()
+      if (code.startsWith(CARD_POLICY_SAVED_PREFIX)) onChanged?.()
       else restore(field)
       error.value = result.error?.message || '策略保存失败'
       errorCode.value = code
@@ -84,7 +86,29 @@ export function useCardPolicyFields(
     onChanged?.()
   }
 
+  // 已经是「开启」时再次检测：绕过相同值判断，服务端会清除拒绝记录。
+  async function redetectMWI() {
+    if (!source.value || pending.value) return
+    pending.value = 'mwi_mode'
+    error.value = ''
+    errorCode.value = ''
+    errorField.value = null
+    const result = await save({ mwi_mode: 'on' })
+    pending.value = null
+    if (!result.ok) {
+      error.value = result.error?.message || '重新检测失败'
+      errorCode.value = result.error?.code || ''
+      errorField.value = 'mwi_mode'
+      if (errorCode.value.startsWith(CARD_POLICY_SAVED_PREFIX)) onChanged?.()
+      return
+    }
+    mwiMode.value = 'on'
+    persisted.value = { ...persisted.value, mwi_mode: 'on' }
+    onChanged?.()
+  }
+
   return {
+    redetectMWI,
     ipVersion, apn, vowifiUpstreamProxyID, localPhoneOverride, mwiMode, pending, error, errorCode, errorField,
     saveIPVersion: () => persist('ip_version'),
     saveAPN: () => persist('apn'),

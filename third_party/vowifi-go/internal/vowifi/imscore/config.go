@@ -160,4 +160,5 @@ func mergeOriginalRegisterTemplate(cfg *IMSConfig) {
 	}
 	current.IncludePANIAuthenticated = current.IncludePANIAuthenticated || template.IncludePANIAuthenticated
 	current.StrictSecurityServerOffer = current.StrictSecurityServerOffer || template.StrictSecurityServerOffer
+	current.DisableMWISubscription = current.DisableMWISubscription || template.DisableMWISubscription
 }
