@@ -751,6 +751,39 @@ func TestRuntimeCoreAdapterPreservesSubscriptionRejectionStore(t *testing.T) {
 	}
 }
 
+type mwiPolicyDeliveryStore struct {
+	messaging.DeliveryStore
+	rejected int
+}
+
+func (store *mwiPolicyDeliveryStore) LoadMWISubscriptionPolicy(string, string) (string, int, error) {
+	return "on", store.rejected, nil
+}
+
+func (store *mwiPolicyDeliveryStore) SaveMWISubscriptionRejection(_, _ string, status int) error {
+	store.rejected = status
+	return nil
+}
+
+func TestCoreRequestCarriesMWIPolicyStore(t *testing.T) {
+	request := restoredRuntimeRequest()
+	request.DeliveryStore = &mwiPolicyDeliveryStore{DeliveryStore: &memDeliveryStore{}}
+	policy := request.coreRequest().MWIPolicyStore
+	if policy == nil {
+		t.Fatal("core request dropped the MWI policy store")
+	}
+	if err := policy.SaveMWISubscriptionRejection("iccid", "identity", 405); err != nil {
+		t.Fatal(err)
+	}
+	if mode, rejected, err := policy.LoadMWISubscriptionPolicy("iccid", "identity"); err != nil || mode != "on" || rejected != 405 {
+		t.Fatalf("mode=%q rejected=%d err=%v", mode, rejected, err)
+	}
+	request.DeliveryStore = &memDeliveryStore{}
+	if request.coreRequest().MWIPolicyStore != nil {
+		t.Fatal("core request invented an MWI policy store")
+	}
+}
+
 func TestDeliveryStoreAdaptersDoNotInventFragmentLifecycleCapability(t *testing.T) {
 	underlying := &memDeliveryStore{}
 	store := fragmentOnlyDeliveryStore{DeliveryStore: underlying, fragments: underlying}

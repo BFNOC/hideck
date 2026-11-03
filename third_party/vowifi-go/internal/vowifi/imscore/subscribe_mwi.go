@@ -20,12 +20,9 @@ const (
 )
 
 func (s *Service) startMWISubscription() {
-	// Every later MWI send (refresh, retry, unsubscribe) needs a subscription
-	// started here, and the carrier template does not change at runtime.
-	if s.cfg.IMSRegisterTemplate.DisableMWISubscription {
+	if reason := s.mwiSubscriptionBlockedReason(); reason != "" {
 		logging.Info("IMS SUBSCRIBE(mwi) skipped",
-			"device", s.DeviceID(), "reason", "carrier policy disables MWI subscription",
-			"preset", s.cfg.CarrierPresetID)
+			"device", s.DeviceID(), "reason", reason, "preset", s.cfg.CarrierPresetID)
 		return
 	}
 	eligible, skipReason := s.prepareSubscriptionStart(true)
@@ -199,6 +196,14 @@ func (s *Service) learnMWISubscriptionDialogLocked(request *sip.Request, respons
 }
 
 func (s *Service) refreshMWISubscription() {
+	if reason := s.mwiSubscriptionBlockedReason(); reason != "" {
+		s.mu.Lock()
+		s.subscriptionFieldsLocked(true).terminate(reason)
+		s.mu.Unlock()
+		logging.Info("IMS SUBSCRIBE(mwi) refresh stopped",
+			"device", s.DeviceID(), "reason", reason, "preset", s.cfg.CarrierPresetID)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), mwiSubscriptionTimeout)
 	defer cancel()
 	if err := s.sendSubscribeMWI(ctx); err != nil {

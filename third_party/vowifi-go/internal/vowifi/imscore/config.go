@@ -58,6 +58,7 @@ type IMSConfig struct {
 	RegisterTemplate           IMSRegisterTemplate
 	RegistrarPenalties         *RegistrarPenaltyStore
 	SubscriptionRegistrations  *SubscriptionRegistrationStore
+	MWIPolicyStore             MWISubscriptionPolicyStore
 	AllowEmergencyRegistration bool
 	OnLocalAddressChange       func(oldIP, newIP net.IP) error
 }
