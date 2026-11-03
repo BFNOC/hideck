@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func devExperimentRegister(t *testing.T, preset, experiment string) string {
@@ -204,6 +205,41 @@ func TestDevNoMWISkipsTheSubscription(t *testing.T) {
 	service := &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}}
 	if err := service.sendSubscribeMWI(context.Background()); err != nil {
 		t.Fatalf("sendSubscribeMWI = %v", err)
+	}
+}
+
+func TestDevDelayMWIWaitsAndDropsAStaleRegistration(t *testing.T) {
+	defer func(old time.Duration) { devMWIDelay = old }(devMWIDelay)
+	devMWIDelay = 400 * time.Millisecond
+	newService := func() *Service {
+		return &Service{cfg: &IMSConfig{CarrierPresetID: devExperimentPreset}, stop: make(chan struct{})}
+	}
+
+	t.Setenv(devExperimentEnv, devExperimentBaseline)
+	if start := time.Now(); !newService().devAwaitMWI() || time.Since(start) >= devMWIDelay {
+		t.Fatal("baseline must send at once")
+	}
+
+	t.Setenv(devExperimentEnv, devExperimentDelayMWI)
+	if start := time.Now(); !newService().devAwaitMWI() || time.Since(start) < devMWIDelay {
+		t.Fatal("delay-mwi must send after the delay on an unchanged registration")
+	}
+
+	changed := newService()
+	go func() {
+		time.Sleep(devMWIDelay / 2)
+		changed.mu.Lock()
+		changed.subscriptionGeneration++
+		changed.mu.Unlock()
+	}()
+	if changed.devAwaitMWI() {
+		t.Fatal("delay-mwi sent for a registration that changed during the wait")
+	}
+
+	stopped := newService()
+	close(stopped.stop)
+	if stopped.devAwaitMWI() {
+		t.Fatal("delay-mwi sent after the service stopped")
 	}
 }
 

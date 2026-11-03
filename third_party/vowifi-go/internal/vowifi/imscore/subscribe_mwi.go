@@ -30,6 +30,9 @@ func (s *Service) startMWISubscription() {
 	s.networkDone.Add(1)
 	go func() {
 		defer s.networkDone.Done()
+		if !s.devAwaitMWI() {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), mwiSubscriptionTimeout)
 		defer cancel()
 		if err := s.sendSubscribeMWI(ctx); err != nil {

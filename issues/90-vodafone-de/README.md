@@ -1,58 +1,44 @@
-# hideck#90 Vodafone DE 测试分支说明（NOTIFY 的 200 与 MWI）
+# hideck#90 Vodafone DE 测试分支说明（延迟 MWI）
 
 本分支只用于找出 Vodafone DE（262/02，预设 `vodafone_de_26202`）下 port-s 被对端 RST 的原因。它不是正式版本，测试完请换回正式版本。
 
 ## 一、上一轮看到了什么
 
-上一轮（`test-vodafone-de-port-s-route`，7 轮）：
+上一轮（`test-vodafone-de-notify-dialog`，6 轮 × 10 分钟）：
 
-- REGISTER 去掉 `Route`，以及同时去掉 `Route` 和 `Feature-Caps`，RST 照旧，RST 后的刷新仍没有 200。
-- RST 按节点固定节拍出现，`*.vodafone.com` 约 30–35 秒；同一张卡在同一个 P-CSCF 地址（`954::5`）上，VoHive 连续 97 分钟没有 RST。这支持"触发条件和 HiDeck 的行为有关"，但同一个地址后面不一定是同一个 SBC 实例，所以还不是定论。
-- 改过、没有效果的：Via 的几种改法、`alias`、`Supported: outbound`、port-s 的 TCP keepalive、能力查询 OPTIONS、REGISTER 去掉 Route，以及同时去掉 Route 和 Feature-Caps（Feature-Caps 没有单独测过）。第一次 RST 之前我们发出的另外几样：REGISTER 本身、SUBSCRIBE(reg)、SUBSCRIBE(mwi)、回 NOTIFY 的 200，还没单独测过。
+- `no-mwi` 两轮 port-s 零 RST，活到轮末；其余 4 轮共 RST 54 次。SUBSCRIBE(mwi) 每次注册后都收到 480，`no-mwi` 两轮为 0。
+- 但两轮各只开过 1 条 port-s，P-CSCF 也不同，只能说相关。
+- `notify-dialog` 生效后 RST 照旧，这一项放下。
 
-回 NOTIFY 的 200 有不合规的地方：
-
-- TS 24.229 附录 A Table A.66：NOTIFY 的 2xx 里 `Record-Route` 为 c3（支持 SIP 事件通知时为 m，必须带），`Contact` 为 o（可选）。
-- RFC 6665 §4.4.1：新订阅（`Subscription-State` 不是 `terminated`）的对话在 NOTIFY 事务完成时建立；RFC 3261 §12.1.1：建立对话的响应 MUST 原样按序复制请求里的全部 `Record-Route`，并 MUST 带 `Contact`。所以至少新订阅的第一个 NOTIFY，它的 200 应该两样都带。
-
-Vodafone DE 的每个 NOTIFY 都带 `Record-Route`，我们的 200 两样都没有。另外 SUBSCRIBE(mwi) 每个周期都收到 480。
+本轮要分清两种情况：RST 是 SUBSCRIBE(mwi) 触发的，还是注册后不论发什么都会出现。
 
 ## 二、相对上一版改了什么
 
-1. **两个新实验开关**（仍用 `HIDECK_DEV90_EXPERIMENT`，可以逗号组合）：
+新实验开关 `delay-mwi`（仍用 `HIDECK_DEV90_EXPERIMENT`）：每次注册后先等 120 秒再发 SUBSCRIBE(mwi)。等待期间注册变了（例如 RST 后重新注册），这次就不发，由新注册重新计时。日志：
 
-| 值 | 改动 |
-|---|---|
-| `notify-dialog` | 回 NOTIFY 的 2xx 带上 `Contact`（与 SUBSCRIBE 的 Contact 相同的地址，加 `transport=tcp`），并按原样、原顺序复制 NOTIFY 的全部 `Record-Route` 行。每个 2xx 都加，不只第一个 |
-| `no-mwi` | 不发 SUBSCRIBE(mwi)，每次跳过记一条 `[dev] IMS experiment skips SUBSCRIBE(mwi)` |
+- `[dev] IMS experiment delays SUBSCRIBE(mwi)`：开始等
+- `[dev] IMS experiment sends the delayed SUBSCRIBE(mwi)`：等完照发
+- `[dev] IMS experiment drops the delayed SUBSCRIBE(mwi)`：注册变了或服务停了，没发
 
-   上一版的开关仍然可用。
-
-2. **补全 SIP 日志**（所有轮次）：
-   - `[dev] IMS inbound response`：我们回给网络的每个响应全文，带写入结果，以及距离 port-s 打开多久。MESSAGE 的响应只记头部。回 NOTIFY 的响应另带 `contact` 和 `record_route_copied` 两个字段，表示有没有 Contact、Record-Route 是否与 NOTIFY 逐行一致。
-   - IMS TCP 收到的报文改为按原始字节交给后续处理，和受保护 UDP 一致；之前交的是 sipgo 解析后重新拼出的文本，会丢掉 `>` 后面的头参数，日志里看到的 NOTIFY 也是拼出来的。
-   - `[dev] IMS SUBSCRIBE exchange`：SUBSCRIBE(reg/mwi) 的请求和最终响应全文、耗时；没收到响应时记错误。
-   - 打码规则和 REGISTER 日志相同。
-
-改动的文件：`third_party/vowifi-go/internal/vowifi/imscore/` 下的 `dev_experiment.go`、`dev_trace.go`，以及 `subscription_notify.go`、`subscribe_mwi.go`、`subscribe_reg.go`、`transport_runtime.go`、`register_transport.go`、`sip_parser.go` 里调用它们的地方；对应的 `_test.go`；`issues/90-vodafone-de/run-experiments.sh`。
+上一版的开关仍然可用。改动的文件：`third_party/vowifi-go/internal/vowifi/imscore/` 下的 `dev_experiment.go`、`subscribe_mwi.go`，以及本目录的 `run-experiments.sh`。
 
 ## 三、构建、部署、回滚
 
 ```sh
-git fetch https://github.com/BFNOC/hideck.git test-vodafone-de-notify-dialog
+git fetch https://github.com/BFNOC/hideck.git test-vodafone-de-delay-mwi
 git checkout FETCH_HEAD
 git log -1 --oneline   # 应为本说明文件所在的提交
 make frontend-dist
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
   -tags "with_utls nomsgpack" \
-  -ldflags "-X 'github.com/yibaiba/hideck/internal/global.Version=v2.1.38-issue90-notify'" \
+  -ldflags "-X 'github.com/yibaiba/hideck/internal/global.Version=v2.1.38-issue90-mwi'" \
   -o hideck-issue90 ./cmd/hideck
 ```
 
-部署（需要 root，在构建目录里执行；`/root/hideck/hideck` 换成实际路径）。整段任何一步失败都会停下；备份文件名带时间，不会覆盖之前的 `hideck.v2.1.38.bak`（它可能已经被前几轮的测试版覆盖，不要把它当正式版）：
+部署（需要 root，在构建目录里执行；`/root/hideck/hideck` 换成实际路径）。任何一步失败都会停下；备份文件名带时间，不会覆盖之前的备份：
 
 ```sh
-BIN=/root/hideck/hideck; BAK="$BIN.before-notify-$(date +%Y%m%d-%H%M%S)"; \
+BIN=/root/hideck/hideck; BAK="$BIN.before-mwi-$(date +%Y%m%d-%H%M%S)"; \
 test -x hideck-issue90 && cp "$BIN" "$BAK" && echo "backup: $BAK" && \
 systemctl stop hideck && install -m 755 hideck-issue90 "$BIN" && systemctl start hideck
 ```
@@ -61,52 +47,60 @@ systemctl stop hideck && install -m 755 hideck-issue90 "$BIN" && systemctl start
 
 ## 四、运行
 
-和上一版一样，**启动一次即可**：
+**启动一次即可**：
 
 ```sh
 sudo DEVICE=wwan0 sh issues/90-vodafone-de/run-experiments.sh
 ```
 
-默认跑 6 轮，每轮 10 分钟，共约 1 小时。RST 约 30 秒一次，扣掉每轮开头 2 分钟的检查，每轮还能看到十几个周期：
+默认 6 轮，每轮 15 分钟，共约 1.5 小时：
 
 | 轮 | 实验 | 要回答的问题 |
 |---|---|---|
 | 01 | `baseline` | 对照 |
-| 02 | `notify-dialog` | 200 补全后，port-s 能不能跨过几个 RST 周期 |
-| 03 | `no-mwi` | 不发 SUBSCRIBE(mwi) 后 RST 还在不在 |
-| 04 | `baseline` | 对照，排除换节点的影响 |
-| 05 | `notify-dialog` | 重复 02 |
-| 06 | `no-mwi,notify-dialog` | 两项一起 |
+| 02 | `delay-mwi` | RST 是跟着推迟后的 SUBSCRIBE(mwi) 出现，还是照旧在 port-s 打开后一分钟内出现（上一轮有 MWI 的 4 轮为 17–58 秒） |
+| 03 | `no-mwi` | 复现上一轮的零 RST |
+| 04–06 | 同 01–03 | 重复一遍，排除换节点的影响 |
 
-- `DEVICE` 是 Vodafone DE 那张卡在日志里的前缀，例如 `[wwan0] IMS ...` 就填 `wwan0`。
-- 只跑其中几轮：`EXPERIMENTS="baseline notify-dialog"`；组合用逗号，不加空格。改每轮时长：`MINUTES=15`。写错实验名时脚本在开始前就会退出。
-- 其余（每轮 2 分钟后的检查、systemd drop-in、按 invocation 取日志、抓包、`OUTER_IFACE`）和上一版相同。
-
-如果 02 或 05 轮里 port-s 一直没断，请在那一轮给这张卡发一条短信或申请一次验证码，记下发送和收到的时间。
+- `DEVICE`、`EXPERIMENTS`、`MINUTES`、`OUTER_IFACE` 的用法和上一版相同。
+- **短信**：请在 02、03、05、06 轮各申请一次验证码或发一条短信，在每轮开始 5 分钟后发（前 2 分钟是检查，`delay-mwi` 还要等 2 分钟），记下发送时间、是否收到、收到时间。port-s 不断时短信能不能进来，是这个 issue 最终要的答案。
 
 ## 五、回传
 
-输出目录里有：
+`summary.txt` 在上一版的字段之后新增：
 
-- `summary.txt`：每轮一行，字段：
-  - `valid`：`no` 表示这一轮数据不能用（实验没生效、抓包没打开或丢了记录、该关的 keepalive 没关、`recovery-jitter` 轮里有 RST 却没有延迟记录、`notify-dialog` 轮写出的 NOTIFY 2xx 没带 Contact、或 Record-Route 与 NOTIFY 不一致、`no-mwi` 轮仍发了 SUBSCRIBE(mwi)、读不到日志）
-  - `warn`：数据能用但要注意。`no-port-s-<秒>` 表示有一段超过 5 分钟一条 port-s 都没有；`user-not-registered-<次>` 表示出现过 `480 User not registered`；`notify-200-write-failed-<次>` 表示有回 NOTIFY 的 2xx 没写出去
-  - `opened`、`peer_reset`、`reset_lifetimes`、`survived_to_end`、`other_close`、`unclosed`：port-s 打开、RST、存活时长等。按"隧道 + generation"计数，服务内部重连后不会再漏算
-  - `cycle_s`：同一条隧道里相邻两次 RST 的间隔（秒）
-  - `refresh_after_reset`：RST 后由 port-s 恢复触发的那次 REGISTER 的最终状态码和次数。401/407 挑战不算最终结果；`challenged` 表示收到挑战后没有最终应答，`none` 表示什么都没收到就开始了下一次注册
-  - `jitter_refresh`：`recovery-jitter` 轮里每次的延迟和对应的最终状态码，例如 `41.2s:200`
-  - `pcscf`、`sbc`：分到的 P-CSCF 和 NOTIFY `Contact` 里的 SBC 主机名
-  - `user_not_registered`、`runtime_reconnects`、`max_port_s_gap_s`：SUBSCRIBE(reg) 收到 `480 User not registered` 的次数、隧道重连次数、最长一段一条 port-s 都没有的时间
-- `<序号>-<实验名>.log`、`pcap-<序号>-<实验名>/`、`outer-<序号>-<实验名>.pcap`：同上一版。组合实验名里的逗号换成 `+`
+- `mwi_sent`：SUBSCRIBE(mwi) 事务结束（收到最终响应或超时）的次数
+- `mwi_to_reset_s`：`delay-mwi` 轮里每次发出推迟的 SUBSCRIBE(mwi) 到同一条隧道里下一次 RST 的秒数
+- `mwi_delayed`、`mwi_delayed_sent`、`mwi_delayed_dropped`：`delay-mwi` 开始等、等完照发、因注册变了没发的次数（每轮结束停服务时丢掉的不算）。`warn` 里的 `mwi-sent-<a>-of-<b>` 表示照发了 b 次、实际只有 a 次 SUBSCRIBE(mwi)
+- `sms_in`、`sms_in_at`：收到的 MESSAGE 条数和时间，用来对照你的短信记录
 
-请把 **`summary.txt` 直接贴出来**，把整个输出目录打包作为附件。外层抓包里有你的公网 IP 和 ePDG 地址，不想公开就不要放进附件。隐私规则和打码方式同上一版，打包前请再人工看一遍。
+`delay-mwi` 轮里一次都没开始等，`valid` 为 `no`。
+
+请把 **`summary.txt` 和短信记录直接贴出来**，整个输出目录打包作为附件。外层抓包里有你的公网 IP 和 ePDG 地址，不想公开就不要放进附件。打包前请再人工看一遍。
 
 ## 六、结果怎么看
 
 | 看到的 | 说明 |
 |---|---|
-| `notify-dialog` 轮 port-s 跨过多个周期不断（`peer_reset` 很少、`survived_to_end` 有值），两次都这样 | 强烈支持"200 缺 Contact/Record-Route 和 RST 有关"，会整理成正式修复，再确认短信能收到 |
-| `notify-dialog` 轮 RST 间隔明显变长但仍有 RST | 方向可能对，但还有别的条件；看 `IMS inbound response` 和网络后续有没有在这个对话里发请求 |
-| `notify-dialog` 轮网络开始回别的状态码，或 NOTIFY 变了 | 说明网络对这个改动有反应，原因待查，把对应的日志行贴出来 |
-| `no-mwi` 轮 RST 消失 | 支持"MWI 订阅和 RST 有关" |
-| 几轮都和 `baseline` 一样 | 不支持这两项是触发条件。剩下还没单独测过的主要是 REGISTER 本身和 SUBSCRIBE(reg)，最好拿到能正常工作的客户端的报文来对照 |
+| `delay-mwi` 轮 `reset_lifetimes` 都在 120 秒以上，`mwi_to_reset_s` 稳定在几十秒内；`no-mwi` 轮再次零 RST | 支持"SUBSCRIBE(mwi) 触发 RST"，再看 RST 前后的报文找原因 |
+| `delay-mwi` 轮 `mwi_delayed_sent=0`，RST 照旧在 port-s 打开后一分钟内出现 | 削弱"MWI 触发 RST"。若 `no-mwi` 轮仍零 RST，差别要从别处找，请贴出这两轮的日志 |
+| `delay-mwi` 轮第一个 `reset_lifetimes` 在 120 秒以上，之后的都在一分钟内 | 第一次 MWI 之后的影响延续到了后面的注册，同样支持"MWI 触发 RST" |
+| `delay-mwi` 轮发出了推迟的 MWI（`mwi_delayed_sent>0`）后 port-s 仍不断 | 只有紧跟注册的 MWI 会触发；推迟发送本身可能就是绕过办法，看这一轮短信是否收到 |
+| `no-mwi` 轮这次也有 RST | 上一轮零 RST 是偶然，MWI 这条线放下 |
+| `no-mwi` 轮零 RST 且短信收到 | 记下时间贴出来，这是最想要的结果 |
+
+## 七、跑完后可选：测试版继续不订阅 MWI
+
+脚本结束时会删掉自己的设置，测试版恢复成照常订阅 MWI。如果 `no-mwi` 轮零 RST、短信也能收到，可以让测试版继续不订阅 MWI，日常用一两天：
+
+```sh
+sudo mkdir -p /etc/systemd/system/hideck.service.d
+printf '[Service]\nEnvironment="HIDECK_DEV90_EXPERIMENT=no-mwi"\n' | sudo tee /etc/systemd/system/hideck.service.d/issue90.conf
+sudo systemctl daemon-reload && sudo systemctl restart hideck
+```
+
+- 只多打一些 `[dev]` 日志，SIP 内容已打码；不设 `HIDECK_DEV90_PCAP_DIR` 就不抓内层包。
+- 期间收没收到短信、来电通不通、有没有掉线，记下时间和现象贴出来。
+- 撤销：`sudo rm /etc/systemd/system/hideck.service.d/issue90.conf && sudo systemctl daemon-reload && sudo systemctl restart hideck`。
+- 再跑 `run-experiments.sh` 会覆盖并在结束时删掉这个文件，之后需要的话重新执行上面三行。
+- 这只是临时办法，正式修复会进正式版，届时换回正式版即可。

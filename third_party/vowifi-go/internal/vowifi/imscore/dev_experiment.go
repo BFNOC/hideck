@@ -31,6 +31,7 @@ const (
 	devExperimentRecoveryJitter   = "recovery-jitter"
 	devExperimentNotifyDialog     = "notify-dialog"
 	devExperimentNoMWI            = "no-mwi"
+	devExperimentDelayMWI         = "delay-mwi"
 	devExperimentBaseline         = "baseline"
 
 	// recovery-jitter delays the port-s recovery REGISTER after a peer reset
@@ -46,7 +47,14 @@ var devKnownExperiments = []string{
 	devExperimentNoOptions, devExperimentNoAlias, devExperimentViaPortC, devExperimentViaPortS,
 	devExperimentNoOutbound, devExperimentNoPortSKeepalive, devExperimentNoRegisterRoute,
 	devExperimentNoFeatureCaps, devExperimentRecoveryJitter, devExperimentNotifyDialog, devExperimentNoMWI,
+	devExperimentDelayMWI,
 }
+
+// devMWIDelay is how long delay-mwi holds SUBSCRIBE(mwi) back after a
+// registration. no-mwi had no port-s reset on 11-02, while baseline port-s
+// reset 14-28 s after opening: a reset right after a late SUBSCRIBE(mwi)
+// points at the subscription, one at the usual 14-28 s points elsewhere.
+var devMWIDelay = 120 * time.Second
 
 // devExperiments returns the active experiments, sorted, or nil for the
 // baseline.
@@ -97,6 +105,39 @@ func (s *Service) devRecoveryJitter() (time.Duration, bool) {
 	devLog("IMS experiment delays the port-s recovery REGISTER", "device", s.DeviceID(),
 		"delay", delay.Round(time.Millisecond), "port_s_generation", s.capturePortSSession().generation)
 	return delay, true
+}
+
+// devAwaitMWI is the delay-mwi experiment. It reports false, and the caller
+// sends nothing, when the service stops or the registration changes during the
+// wait; the new registration starts its own delayed SUBSCRIBE(mwi).
+func (s *Service) devAwaitMWI() bool {
+	if !s.devExperimentHas(devExperimentDelayMWI) {
+		return true
+	}
+	s.mu.Lock()
+	before := s.subscriptionContextLocked()
+	s.mu.Unlock()
+	devLog("IMS experiment delays SUBSCRIBE(mwi)", "device", s.DeviceID(),
+		"delay", devMWIDelay, "subscription_generation", before.generation)
+	timer := time.NewTimer(devMWIDelay)
+	defer timer.Stop()
+	select {
+	case <-s.stop:
+		devLog("IMS experiment drops the delayed SUBSCRIBE(mwi): service stopped", "device", s.DeviceID())
+		return false
+	case <-timer.C:
+	}
+	s.mu.Lock()
+	after := s.subscriptionContextLocked()
+	s.mu.Unlock()
+	if after != before {
+		devLog("IMS experiment drops the delayed SUBSCRIBE(mwi): registration changed", "device", s.DeviceID(),
+			"subscription_generation", before.generation, "now", after.generation)
+		return false
+	}
+	devLog("IMS experiment sends the delayed SUBSCRIBE(mwi)", "device", s.DeviceID(),
+		"subscription_generation", after.generation)
+	return true
 }
 
 // devNotifyDialogResponse is the notify-dialog experiment. RFC 6665 §4.4.1

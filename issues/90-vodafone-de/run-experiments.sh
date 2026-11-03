@@ -7,12 +7,11 @@
 #
 # Settings (environment):
 #   DEVICE       log tag of the Vodafone DE card, as in "[wwan0] IMS ..." (required)
-#   MINUTES      minutes per experiment (default 10)
+#   MINUTES      minutes per experiment (default 15)
 #   SERVICE      systemd unit (default hideck)
 #   OUT          output directory (default ./issue90-out-<time>)
 #   EXPERIMENTS  space-separated list of runs; a run is one switch or a comma-separated
-#                set (default: baseline, notify-dialog and no-mwi alternating with
-#                baseline, then both together)
+#                set (default: baseline, delay-mwi and no-mwi, twice)
 #   OUTER_IFACE  interface for the outer IKE/ESP header capture (default any; "off" disables)
 #
 # Each run keeps the lines tagged with DEVICE plus the capture status lines,
@@ -21,11 +20,11 @@
 set -eu
 
 : "${DEVICE:?set DEVICE to the Vodafone DE log tag, e.g. DEVICE=wwan0}"
-MINUTES=${MINUTES:-10}
+MINUTES=${MINUTES:-15}
 SERVICE=${SERVICE:-hideck}
 OUT=${OUT:-issue90-out-$(date +%Y%m%d-%H%M%S)}
-EXPERIMENTS=${EXPERIMENTS:-"baseline notify-dialog no-mwi baseline notify-dialog no-mwi,notify-dialog"}
-KNOWN="baseline no-options no-alias via-port-c via-port-s no-outbound no-port-s-keepalive no-register-route no-feature-caps recovery-jitter notify-dialog no-mwi"
+EXPERIMENTS=${EXPERIMENTS:-"baseline delay-mwi no-mwi baseline delay-mwi no-mwi"}
+KNOWN="baseline no-options no-alias via-port-c via-port-s no-outbound no-port-s-keepalive no-register-route no-feature-caps recovery-jitter notify-dialog no-mwi delay-mwi"
 OUTER_IFACE=${OUTER_IFACE:-any}
 PREFLIGHT_SECONDS=120
 DROPIN_DIR=/etc/systemd/system/$SERVICE.service.d
@@ -108,7 +107,7 @@ summarise() {
 	/^\[[0-9-]+ [0-9:]+\]/ { now = logsecs(); if (gap_start == "") gap_start = now }
 	# A new tunnel drops the old flows; a reset cycle never spans tunnels.
 	index($0, device " IMS P-CSCF configuration from new tunnel") {
-		tunnel++; last_reset = ""
+		tunnel++; last_reset = ""; last_mwi = ""
 		if (open_count > 0) { open_count = 0; gap_start = now }
 	}
 	index($0, device " IMS port-s lifecycle") {
@@ -134,6 +133,9 @@ summarise() {
 			if (gap >= 1) cycles = cycles " " sprintf("%.2f", gap)
 		}
 		last_reset = at
+		# delay-mwi: seconds from sending the delayed SUBSCRIBE(mwi) to this reset.
+		# The exchange line comes only when the transaction ends, so it is not used.
+		if (last_mwi != "") { mwi_to_reset = mwi_to_reset " " (now - last_mwi); last_mwi = "" }
 	}
 	index($0, device " IMS REGISTER succeeded") { inc(pcscf, field("pcscf")) }
 	index($0, device " [dev] IMS inbound request") && index($0, "\"method\": \"NOTIFY\"") {
@@ -164,6 +166,12 @@ summarise() {
 	index($0, device " [dev] IMS SUBSCRIBE exchange") && index($0, "\"event\": \"reg\"") &&
 		index($0, "\"status\": 480") && /User not registered/ { not_registered++ }
 	index($0, device " [dev] IMS SUBSCRIBE exchange") && index($0, "\"event\": \"mwi\"") { mwi_sent++ }
+	index($0, device " [dev] IMS experiment delays SUBSCRIBE(mwi)") { mwi_delayed++ }
+	index($0, device " [dev] IMS experiment sends the delayed SUBSCRIBE(mwi)") { mwi_delayed_sent++; last_mwi = now }
+	# The stop at the end of each run also drops a pending wait; only a changed
+	# registration counts.
+	index($0, device " [dev] IMS experiment drops the delayed SUBSCRIBE(mwi): registration changed") { mwi_delayed_dropped++ }
+	index($0, device " [dev] IMS inbound request") && index($0, "\"method\": \"MESSAGE\"") { sms_in++; sms_in_at = sms_in_at " " substr($0, 13, 8) }
 	# notify-dialog: the response log says whether each NOTIFY 2xx carried
 	# Contact and exactly the Record-Route lines of the NOTIFY.
 	index($0, device " [dev] IMS inbound response") && index($0, "\"method\": \"NOTIFY\"") && index($0, "SIP/2.0 2") {
@@ -189,14 +197,19 @@ summarise() {
 		if (index(experiment, "recovery-jitter") && resets > 0 && jitters == 0) valid = "no"
 		if (index(experiment, "notify-dialog") && nopened > 0 && (notify_dialog == 0 || notify_plain > 0)) valid = "no"
 		if (index(experiment, "no-mwi") && mwi_sent > 0) valid = "no"
+		if (index(experiment, "delay-mwi") && mwi_delayed == 0) valid = "no"
 		# A run with no port-s for minutes says nothing about how long port-s lives.
 		warn = ""
 		if (nopened == 0 || max_gap > 300) warn = warn " no-port-s-" int(max_gap) "s"
 		if (not_registered > 0) warn = warn " user-not-registered-" not_registered
+		# A second wait for the same registration logs "sends" but is stopped
+		# before the wire.
+		if (index(experiment, "delay-mwi") && mwi_delayed_sent != mwi_sent) warn = warn " mwi-sent-" mwi_sent "-of-" mwi_delayed_sent
 		if (notify_write_failed > 0) warn = warn " notify-200-write-failed-" notify_write_failed
-		printf "%s valid=%s warn=[%s ] opened=%d peer_reset=%d survived_to_end=[%s ] other_close=[%s ] unclosed=%d reset_lifetimes=[%s ] cycle_s=[%s ] refresh_after_reset=[%s ] jitter_refresh=[%s ] pcscf=[%s ] sbc=[%s ] user_not_registered=%d runtime_reconnects=%d max_port_s_gap_s=%d register_lines=%d pcap_files=%d pcap_problems=%d keepalive_off=%d keepalive_fail=%d jitter_delays=%d\n",
+		printf "%s valid=%s warn=[%s ] opened=%d peer_reset=%d survived_to_end=[%s ] other_close=[%s ] unclosed=%d reset_lifetimes=[%s ] cycle_s=[%s ] refresh_after_reset=[%s ] jitter_refresh=[%s ] pcscf=[%s ] sbc=[%s ] user_not_registered=%d runtime_reconnects=%d max_port_s_gap_s=%d register_lines=%d pcap_files=%d pcap_problems=%d keepalive_off=%d keepalive_fail=%d jitter_delays=%d mwi_sent=%d mwi_to_reset_s=[%s ] mwi_delayed=%d mwi_delayed_sent=%d mwi_delayed_dropped=%d sms_in=%d sms_in_at=[%s ]\n",
 			experiment, valid, warn, nopened, resets, survived, other, unclosed, reset_lives, cycles, list(refresh), jitter_refresh, list(pcscf), list(sbc),
-			not_registered, reconnects, max_gap, active, pcaps, pcap_problem, ka_off, ka_fail, jitters
+			not_registered, reconnects, max_gap, active, pcaps, pcap_problem, ka_off, ka_fail, jitters,
+			mwi_sent, mwi_to_reset, mwi_delayed, mwi_delayed_sent, mwi_delayed_dropped, sms_in, sms_in_at
 	}' "$1"
 }
 
