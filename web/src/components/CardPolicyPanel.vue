@@ -282,25 +282,27 @@ const airplaneHint = computed(() => {
         <div class="policy-setting-row">
           <span>
             <strong>语音信箱提示</strong>
-            <small>自动按运营商默认，Vodafone DE 默认不订阅。关闭在下次订阅刷新或注册时生效；开启会清除不支持记录重新检测，必要时自动重连</small>
+            <small>自动按运营商默认，Vodafone DE 默认不订阅。关闭在下次订阅刷新或注册时生效；</small>
+            <small>开启会清除不支持记录重新检测，必要时自动重连</small>
           </span>
           <div class="policy-field-control">
-            <el-select
-              v-model="mwiMode"
-              class="w-full"
-              :disabled="!canEditPolicy || fieldPending !== null"
-              @change="saveMWIMode"
-            >
-              <el-option label="自动" value="auto" />
-              <el-option label="开启" value="on" />
-              <el-option label="关闭" value="off" />
-            </el-select>
-            <el-button
-              v-if="mwiMode === 'on'"
-              size="small"
-              :disabled="!canEditPolicy || fieldPending !== null"
-              @click="redetectMWI"
-            >重新检测</el-button>
+            <div class="flex items-center gap-3">
+              <el-select
+                v-model="mwiMode"
+                class="min-w-0 flex-1"
+                :disabled="!canEditPolicy || fieldPending !== null"
+                @change="saveMWIMode"
+              >
+                <el-option label="自动" value="auto" />
+                <el-option label="开启" value="on" />
+                <el-option label="关闭" value="off" />
+              </el-select>
+              <el-button
+                v-if="mwiMode === 'on'"
+                :disabled="!canEditPolicy || fieldPending !== null"
+                @click="redetectMWI"
+              >重新检测</el-button>
+            </div>
             <small v-if="fieldPending === 'mwi_mode'">正在保存...</small>
             <div v-if="fieldError && errorField === 'mwi_mode'" role="alert" class="text-xs text-red-600 dark:text-red-400">
               {{ fieldError }}，请重试
