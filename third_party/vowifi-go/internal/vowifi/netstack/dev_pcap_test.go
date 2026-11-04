@@ -237,7 +237,10 @@ func TestDevPcapRotatesAndKeepsTheNewestFiles(t *testing.T) {
 			t.Fatalf("rotation %d failed", i)
 		}
 	}
-	defer p.file.Close()
+	t.Cleanup(func() {
+		_ = p.file.Close()
+		devPcapReleased(p.path)
+	})
 	names, _ := filepath.Glob(filepath.Join(dir, "ims-inner-*.pcapng"))
 	if len(names) != devPcapKeepFiles {
 		t.Fatalf("kept %d files, want %d", len(names), devPcapKeepFiles)
@@ -250,7 +253,10 @@ func TestDevPcapRotatesAndKeepsTheNewestFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	t.Cleanup(func() {
+		_ = other.Close()
+		devPcapReleased(otherPath)
+	})
 	for i := 0; i < 3; i++ {
 		p.rotate()
 	}

@@ -147,12 +147,19 @@ var devIKEPayloadNames = map[ikev2.PayloadType]string{
 // before encryption.
 func (s *Session) devLogIKEPayloads(direction string, header *ikev2.IKEHeader, msgID uint32, payloads []ikev2.Payload) {
 	// An inbound response is opened twice (dispatch authentication, then the
-	// waiting exchange); log it once.
+	// waiting exchange), possibly with other messages in between; log each
+	// message once by remembering the last 16.
 	if direction == "rx" && header != nil {
 		key := fmt.Sprintf("%016x/%016x/%d/%d/%02x", header.SPIi, header.SPIr, msgID, header.ExchangeType, header.Flags)
 		s.devRxMu.Lock()
-		repeated := s.devLastRx == key
-		s.devLastRx = key
+		repeated := false
+		for _, seen := range s.devRecentRx {
+			repeated = repeated || seen == key
+		}
+		if !repeated {
+			s.devRecentRx[s.devRecentRxNext%len(s.devRecentRx)] = key
+			s.devRecentRxNext++
+		}
 		s.devRxMu.Unlock()
 		if repeated {
 			return

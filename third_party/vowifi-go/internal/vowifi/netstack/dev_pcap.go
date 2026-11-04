@@ -103,18 +103,22 @@ func createDevPcapFile(dir string) (*os.File, string, int64, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, path, 0, err
 	}
+	// Register before the file exists, so a prune by another tunnel can never
+	// see it unregistered.
+	devPcapActiveMu.Lock()
+	devPcapActive[path] = true
+	devPcapActiveMu.Unlock()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
+		devPcapReleased(path)
 		return nil, path, 0, err
 	}
 	header := append(pcapngSectionHeader(), pcapngInterfaceDescription()...)
 	if _, err := file.Write(header); err != nil {
 		_ = file.Close()
+		devPcapReleased(path)
 		return nil, path, 0, err
 	}
-	devPcapActiveMu.Lock()
-	devPcapActive[path] = true
-	devPcapActiveMu.Unlock()
 	pruneDevPcaps(dir)
 	return file, path, int64(len(header)), nil
 }

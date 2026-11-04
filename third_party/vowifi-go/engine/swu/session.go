@@ -416,8 +416,9 @@ type Session struct {
 	devESP devESPStats
 	// devLastRx suppresses the second [dev] summary of the same inbound
 	// IKE message.
-	devRxMu   sync.Mutex
-	devLastRx string
+	devRxMu         sync.Mutex
+	devRecentRx     [16]string
+	devRecentRxNext int
 
 	// --- IKE_SA_INIT proposal negotiation ---
 	ikeProfileOffset         int
@@ -1258,8 +1259,7 @@ func (s *Session) scheduleDPD(every, delay time.Duration) {
 			s.scheduleDPD(every, every-idle)
 			return
 		}
-		s.devLogDPDDue("timer", every)
-		if err := s.DPDProbe(); err != nil {
+		if err := s.dpdProbeFor("timer", every); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
 			return
 		}
@@ -1267,33 +1267,48 @@ func (s *Session) scheduleDPD(every, delay time.Duration) {
 	})
 }
 
-// devLogDPDDue records why a DPD probe is about to run; the probe may still
-// wait for the IKE exchange lock before "[dev] DPD probe sent".
-func (s *Session) devLogDPDDue(trigger string, interval time.Duration) {
-	s.devLogger().Info("[dev] DPD probe due", zap.String("session", fmt.Sprintf("%p", s)), zap.String("trigger", trigger),
-		zap.Duration("inbound_idle", s.inboundIdleDuration()), zap.Duration("interval", interval))
-}
+var devDPDProbeSeq atomic.Uint64
 
 // DPDProbe sends an INFORMATIONAL request to verify the peer is alive.
 func (s *Session) DPDProbe() error {
-	// [dev] one result line per probe, whichever path started it:
-	// answered, failed (no valid answer after all retries or a bad answer) or
-	// interrupted (the session was torn down while waiting).
+	return s.dpdProbeFor("direct", 0)
+}
+
+// dpdProbeFor runs one probe with [dev] lines sharing a probe id:
+// "due" before waiting for the IKE exchange lock, "locked" once it holds the
+// lock and hands the request to the exchange, then one result:
+//   - answered: an authenticated, empty INFORMATIONAL response arrived
+//   - timeout: no valid response after all retransmissions
+//   - interrupted: the session was being torn down while waiting
+//   - bad_response: a response arrived but could not be opened or carried payloads
+//   - error: a local failure before or while sending
+//
+// Only the timer and NAT keepalive triggers tear the session down on failure.
+func (s *Session) dpdProbeFor(trigger string, interval time.Duration) error {
+	probe := devDPDProbeSeq.Add(1)
+	fields := []zap.Field{zap.String("session", fmt.Sprintf("%p", s)), zap.Uint64("probe", probe), zap.String("trigger", trigger)}
+	s.devLogger().Info("[dev] DPD probe due", append(fields,
+		zap.Duration("inbound_idle", s.inboundIdleDuration()), zap.Duration("interval", interval))...)
 	started := time.Now()
-	err := s.dpdProbe()
+	err := s.dpdProbe(fields)
 	result := "answered"
 	switch {
-	case err != nil && s.ctx.Err() != nil:
+	case err == nil:
+	case s.ctx.Err() != nil:
 		result = "interrupted"
-	case err != nil:
-		result = "failed"
+	case errors.Is(err, ErrTaskTimeout):
+		result = "timeout"
+	case strings.Contains(err.Error(), "DPD response") || errors.Is(err, errUnauthenticatedIKE):
+		result = "bad_response"
+	default:
+		result = "error"
 	}
-	s.devLogger().Info("[dev] DPD probe "+result, zap.String("session", fmt.Sprintf("%p", s)),
-		zap.Duration("elapsed", time.Since(started)), zap.Error(err))
+	s.devLogger().Info("[dev] DPD probe "+result, append(fields,
+		zap.Duration("elapsed_including_lock_wait", time.Since(started)), zap.Error(err))...)
 	return err
 }
 
-func (s *Session) dpdProbe() error {
+func (s *Session) dpdProbe(devFields []zap.Field) error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
 	if s.transport() == nil {
@@ -1302,8 +1317,8 @@ func (s *Session) dpdProbe() error {
 	s.mu.Lock()
 	s.lastDPDAt = time.Now()
 	s.mu.Unlock()
-	s.devLogger().Info("[dev] DPD probe sent", zap.String("session", fmt.Sprintf("%p", s)),
-		zap.String("ike_spi_i", fmt.Sprintf("%016x", binary.BigEndian.Uint64(s.spiI[:]))))
+	s.devLogger().Info("[dev] DPD probe locked", append(devFields,
+		zap.String("ike_spi_i", fmt.Sprintf("%016x", binary.BigEndian.Uint64(s.spiI[:]))))...)
 	response, err := s.sendEncryptedWithRetry(nil, ikev2.INFORMATIONAL)
 	if err != nil {
 		return err
