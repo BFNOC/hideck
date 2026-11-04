@@ -3,7 +3,7 @@
 #
 #   sh debug/collect.sh --since "2026-11-04 08:00" [--logs /path/to/logs] [--service hideck]
 #
-# Packs the app logs and inner IMS captures written since --since, the
+# Packs the app logs written since --since, every retained inner IMS capture, the
 # kernel's USB/modem lines, carrier overrides, system info and a summary.
 # Every run of 11 or more digits is masked in every text file (IMSI, ICCID,
 # IMEI, MSISDN; 10-digit SPIs and timestamps stay), and the archive is not
@@ -122,6 +122,7 @@ fi
 	grep -h 'debug-field build' "$OUT"/logs/*.log | grep -oE '"server_debug": [a-z]+' | sort | uniq -c || true
 	grep -h 'carrier_overrides' "$OUT"/logs/*.log | grep -E '已加载|失败' | cut -c1-200 | tail -3 || true
 	echo "pcap files: $(ls "$OUT"/pcap | wc -l) ($(du -sh "$OUT"/pcap | cut -f1))"
+	ls "$OUT"/pcap | sed 's/^/  /'
 	[ "$(ls "$OUT"/pcap | wc -l)" -gt 0 ] || echo "WARNING: no pcap collected; check that logs/dev-pcap exists and is readable (run as root)"
 	echo "network events: $(grep -vc '^(host journal\|^journal earliest\|^active network' "$OUT/network.txt" 2>/dev/null || echo 0) lines (0 can mean no events or no journal records; see network.txt header)"
 	[ -f "$OUT/pcap-skipped.txt" ] && echo "pcap skipped (rotated during copy): $(wc -l <"$OUT/pcap-skipped.txt")"
@@ -131,9 +132,9 @@ fi
 	echo "transport_timeout since --since:"
 	grep -h 'port-s lifecycle' "$OUT"/logs/*.log | grep transport_timeout | grep -oE '^\[[^]]+\]' || true
 	echo "DPD results since --since:"
-	grep -h '\[dev\] DPD probe \(answered\|failed\|interrupted\)' "$OUT"/logs/*.log | grep -oE '^\[[^]]+\]|DPD probe [a-z]+' | paste - - | tail -20 || true
-	echo "CHILD_SA rekey failures since --since:"
-	grep -h 'CHILD_SA rekey attempt failed\|"notify": "3[5-9]\|"notify": "1[47]' "$OUT"/logs/*.log | cut -c1-200 | tail -10 || true
+	grep -hE '\[dev\] DPD probe (answered|timeout|interrupted|bad_response|error|failed)' "$OUT"/logs/*.log | grep -oE '^\[[^]]+\]|DPD probe [a-z]+' | paste - - | tail -20 || true
+	echo "rekey failures (CHILD_SA or IKE SA; rejected or timed out, see err) since --since:"
+	grep -hE 'rekey attempt failed|"notify": "([^"]* )?(3[5-9]|1[47]|43)\(' "$OUT"/logs/*.log | cut -c1-200 | tail -10 || true
 	echo
 	echo "== counts since $SINCE"
 	for pattern in \
@@ -145,7 +146,7 @@ fi
 		'[dev] CHILD_SA installed' '[dev] CHILD_SA peer delete' '[dev] CHILD_SA delete sending' \
 		'[dev] IKE open failed' 'transport_timeout' 'context deadline exceeded' \
 		'[dev] DPD probe due' '[dev] DPD probe sent' '[dev] DPD probe answered' '[dev] DPD probe failed' \
-		'[dev] DPD probe interrupted' 'CHILD_SA rekey attempt failed' \
+		'[dev] DPD probe interrupted' '[dev] DPD probe timeout' 'rekey attempt failed' \
 		'Timeout storm detected' 'USB 控制面' '清理 Worker' 'panic' ' ERROR '; do
 		printf '%8s  %s\n' "$(count "$pattern")" "$pattern"
 	done
@@ -157,7 +158,7 @@ fi
 	cat "$OUT"/logs/*.log | grep -oE 'IMS SIP [rt]x .*"first_line": "[A-Z]{3,10} ' | sed -E 's/.*IMS SIP ([rt]x) .*"first_line": "([A-Z]+) /\1 \2/' | sort | uniq -c | sort -rn
 	echo
 	echo "== timeline (connection failures, registrations, recoveries, DPD; last 400)"
-	cat "$OUT"/logs/*.log | grep -E 'IMS conn (read failed|closed)|REGISTER (succeeded|failed)|port-s lifecycle|peer deleted|\[dev\] CHILD_SA|\[dev\] DPD probe|CHILD_SA rekey attempt failed|IKE open failed|"delete": |transport_timeout|Timeout storm|USB 控制面|清理 Worker|panic| ERROR ' | cut -c1-400 | tail -400
+	cat "$OUT"/logs/*.log | grep -E 'IMS conn (read failed|closed)|REGISTER (succeeded|failed)|port-s lifecycle|peer deleted|\[dev\] CHILD_SA|\[dev\] DPD probe|rekey attempt failed|IKE open failed|"delete": |transport_timeout|Timeout storm|USB 控制面|清理 Worker|panic| ERROR ' | cut -c1-400 | tail -400
 } >"$OUT/summary.txt"
 
 # Refuse to pack anything that still looks like an identity.
