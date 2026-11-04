@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/device"
+	"github.com/yibaiba/hideck/internal/global"
 	"github.com/yibaiba/hideck/internal/mbn"
 	"github.com/yibaiba/hideck/internal/netprobe"
 	"github.com/yibaiba/hideck/internal/notify"
@@ -55,8 +57,10 @@ func main() {
 	cfg := config.GetConfig()
 
 	// 2. 初始化日志
+	// [dev] debug-field: always log at Debug, whatever server.debug says;
+	// server.debug keeps its other effects.
 	logger.Setup(logger.LogConfig{
-		Debug:    cfg.Server.Debug,
+		Debug:    true,
 		Filename: "logs/app.log",
 	})
 	// 将内置 slog 重定向到已就绪的系统日志框架
@@ -67,6 +71,8 @@ func main() {
 	// wrappers add theirs, so take one back to report the real caller.
 	enginelogger.Set(logger.ZapLogger().WithOptions(zap.AddCallerSkip(-1)))
 	logger.Info("HiDeck 模组管理器启动中...")
+	logger.Info("[dev] debug-field build", "version", global.Version, "go", runtime.Version(),
+		"server_debug", cfg.Server.Debug, "pcap_dir", os.Getenv("HIDECK_DEV_PCAP_DIR"))
 
 	go func() {
 		disclaimer := `
