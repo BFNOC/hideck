@@ -159,9 +159,7 @@ func (s *SocketManager) SendNATKeepalive() error {
 	if err != nil {
 		return err
 	}
-	if count := s.devKeepalives.Add(1); devSampled(count) {
-		logInfo("[dev] NAT-T keepalive attempted", zap.String("destination", destination.String()), zap.Uint64("count", count))
-	}
+	s.devKeepalives.Add(1)
 	return s.writeDatagram([]byte{0xff}, destination)
 }
 
@@ -182,9 +180,12 @@ func (s *SocketManager) writeDatagram(packet []byte, destination *net.UDPAddr) e
 	}
 	written, err := s.Conn.WriteToUDP(packet, destination)
 	if err != nil {
-		if count := s.devSendErrors.Add(1); devSampled(count) {
+		// [dev] edge-triggered: the first failure after a success, then every
+		// 100th while it keeps failing.
+		count := s.devSendErrors.Add(1)
+		if !s.devSendFailing.Swap(true) || count%100 == 0 {
 			logInfo("[dev] outer UDP send failed", zap.String("destination", destination.String()),
-				zap.Int("bytes", len(packet)), zap.Uint64("count", count), zap.Error(err))
+				zap.Int("bytes", len(packet)), zap.Uint64("failures_total", count), zap.Error(err))
 		}
 		if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
 			return err
@@ -194,5 +195,15 @@ func (s *SocketManager) writeDatagram(packet []byte, destination *net.UDPAddr) e
 	if written != len(packet) {
 		return io.ErrShortWrite
 	}
+	if s.devSendFailing.Swap(false) {
+		logInfo("[dev] outer UDP send recovered", zap.String("destination", destination.String()),
+			zap.Uint64("failures_total", s.devSendErrors.Load()))
+	}
 	return nil
+}
+
+// DevOuterCounters reports the [dev] outer-socket counters for the SWu
+// per-SA summary.
+func (s *SocketManager) DevOuterCounters() (keepalives, sendFailures, unknownSources uint64) {
+	return s.devKeepalives.Load(), s.devSendErrors.Load(), s.devUnknownSource.Load()
 }

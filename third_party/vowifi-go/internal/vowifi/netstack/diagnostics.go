@@ -13,6 +13,8 @@ func (n *Network) IMSNetworkDiagnostics() map[string]any {
 		"context_done":    n.ctx.Err() != nil,
 		"inner_endpoint":  n.bridge.endpoint.Snapshot(),
 		"ipsec_installed": false,
+		// [dev] debug-field: gVisor's own drop and TCP counters.
+		"stack": devStackStats(n),
 	}
 	n.bridge.mu.RLock()
 	defer n.bridge.mu.RUnlock()

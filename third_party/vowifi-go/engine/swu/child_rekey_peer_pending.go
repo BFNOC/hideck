@@ -2,6 +2,7 @@ package swu
 
 import (
 	"encoding/binary"
+	"fmt"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
@@ -105,6 +106,11 @@ func (s *Session) adoptPendingPeerRekey(trigger string, localSPI uint32) {
 	}
 	s.retiredChildSAs[pending.oldLocalSPI] = pending.oldRemoteSPI
 	s.childSAMu.Unlock()
+	s.devLogChildSA("installed", zap.String("path", "peer_pending"), zap.String("trigger", trigger),
+		zap.String("local_spi", fmt.Sprintf("%08x", pending.runtime.localSPI)),
+		zap.String("remote_spi", fmt.Sprintf("%08x", pending.runtime.remoteSPI)),
+		zap.String("replaced_local_spi", fmt.Sprintf("%08x", pending.oldLocalSPI)),
+		zap.String("replaced_remote_spi", fmt.Sprintf("%08x", pending.oldRemoteSPI)))
 	s.logChildKeys(childKeysFromRuntime(pending.runtime))
 	s.Logger.Info("peer CHILD_SA rekey installed",
 		zap.String("trigger", trigger), zap.Duration("since_answer", time.Since(pending.answeredAt)),

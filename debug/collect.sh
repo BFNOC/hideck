@@ -73,7 +73,7 @@ fi
 	echo "since: $SINCE"
 	echo "logs: $LOGS"
 	echo "host timezone: $(date +%Z%z)"
-	uname -a
+	uname -srvm
 	grep -h 'debug-field build' "$OUT"/logs/*.log | tail -1 || true
 	echo
 	command -v lsusb >/dev/null && lsusb
@@ -101,7 +101,7 @@ for overrides in "$(dirname "$LOGS")/config/carrier_overrides.yaml" ./config/car
 	if [ -f "$overrides" ]; then mask <"$overrides" >"$OUT/carrier_overrides.yaml"; break; fi
 done
 
-# Summary: counts and a timeline of the lines that usually matter.
+# Summary: coverage, counts and the last 400 timeline lines that usually matter.
 count() { cat "$OUT"/logs/*.log | grep -cF -- "$1" || true; }
 lines=$(cat "$OUT"/logs/*.log 2>/dev/null | wc -l)
 if [ "$lines" -eq 0 ]; then

@@ -112,7 +112,21 @@ func (s *Session) devLogESPSummary(kind string, totals dataPlaneStatsSnapshot) {
 		zap.String("current_local_spi", fmt.Sprintf("%08x", snapshot.localSPI)),
 		zap.String("current_remote_spi", fmt.Sprintf("%08x", snapshot.remoteSPI)),
 		zap.String("inbound_spis", snapshot.inboundSPIText()),
-		zap.String("in", s.devESP.summary(false)), zap.String("out", s.devESP.summary(true)))
+		zap.String("in", s.devESP.summary(false)), zap.String("out", s.devESP.summary(true)),
+		devOuterFields(s.transport()))
+}
+
+type devOuterCounters interface {
+	DevOuterCounters() (keepalives, sendFailures, unknownSources uint64)
+}
+
+func devOuterFields(transport any) zap.Field {
+	counters, ok := transport.(devOuterCounters)
+	if !ok {
+		return zap.Skip()
+	}
+	keepalives, failures, unknown := counters.DevOuterCounters()
+	return zap.String("outer", fmt.Sprintf("nat_keepalives=%d,send_failures=%d,unknown_sources=%d", keepalives, failures, unknown))
 }
 
 func (s *Session) devLogChildSA(event string, fields ...zap.Field) {
