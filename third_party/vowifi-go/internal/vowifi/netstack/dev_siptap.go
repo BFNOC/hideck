@@ -31,7 +31,8 @@ const devSIPStreamLimit = 256 << 10
 var (
 	devConnSeq          atomic.Uint64
 	devSIPStartLine     = regexp.MustCompile(`^(SIP/2\.0 [0-9]{3}|[A-Z]{3,10} \S+ SIP/2\.0)`)
-	devContentLengthHdr = regexp.MustCompile(`(?im)^(?:content-length|l)[ \t]*:([^\r\n]*)`)
+	devContentLengthHdr = regexp.MustCompile(`(?im)^(?:content-length|l)[ \t]*:([^\n]*)`)
+	devDigitsOnly       = regexp.MustCompile(`^[0-9]+$`)
 )
 
 type devConnTrace struct {
@@ -132,8 +133,7 @@ func devSIPMessageSize(buffer []byte) (size int, complete, valid bool) {
 	for _, match := range devContentLengthHdr.FindAllSubmatch(buffer[:end], -1) {
 		value := strings.TrimSpace(string(match[1]))
 		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 0 || parsed > devSIPStreamLimit || strings.HasPrefix(value, "+") ||
-			(seen && parsed != length) {
+		if err != nil || !devDigitsOnly.MatchString(value) || parsed > devSIPStreamLimit || (seen && parsed != length) {
 			return 0, false, false
 		}
 		length, seen = parsed, true

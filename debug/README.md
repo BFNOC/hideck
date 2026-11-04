@@ -12,7 +12,7 @@
 | 每个 IKE 包的头部，收发两个方向 | `[dev] IKE rx` / `tx` | 交换类型、请求/响应、消息 ID、SPI、长度 |
 | 每个 IKE 消息解密后的载荷摘要 | `[dev] IKE payloads rx` / `tx` | 载荷类型、notify 类型、Delete 的 SPI、SA 提议的 SPI、流量选择器；身份、EAP、密钥、nonce、配置内容不记 |
 | CHILD_SA 的建立、删除和退役 | `[dev] CHILD_SA installed` / `delete sending` / `peer delete` / `inbound retired` | 新旧 SPI、当前收发 SPI |
-| 每 30 秒一次，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 累计和本次新增的包数、字节数、错误数、最后一个包距今多久，以及 SA 查找失败、封装和解封装错误的总数；隧道拆掉前再打一次 `kind=final` |
+| 每 30 秒一次，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 累计和本次新增的包数、字节数、错误数、最后一个包距今多久，以及 SA 查找失败、封装和解封装错误的总数；隧道拆掉前再打一次 `kind=shutdown` |
 | IMS TCP 连接断开时 gVisor 的 TCP 状态 | 随 `[dev] IMS conn read failed` / `closed` 一起打 | 收发段数、重传、RTO 超时次数、RTT、RTO、拥塞窗口 |
 | 每条经 AT 口排队执行的 AT 命令 | `[dev] AT command` | 只记命令名（不含参数）、最终结果码、响应字节数、耗时 |
 | 每次 QMI 设置射频模式 | `[dev] QMI SetOperatingMode` | 请求的模式、结果、耗时 |

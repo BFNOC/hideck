@@ -123,8 +123,7 @@ func (s *Session) launchNetworkDPD() {
 	s.netEventMu.Unlock()
 	go func() {
 		defer s.netEventWG.Done()
-		s.devLogDPDDue("network_event", 0)
-		if err := s.DPDProbe(); err != nil && s.ctx.Err() == nil {
+		if err := s.dpdProbeFor("network_event", 0); err != nil && s.ctx.Err() == nil {
 			logger.Warn("SWu network-event DPD failed", zap.Error(err))
 		}
 	}()
