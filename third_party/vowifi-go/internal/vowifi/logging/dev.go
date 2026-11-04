@@ -100,6 +100,11 @@ func DevRedactSIP(raw string) string {
 	return out + devBodySeparator(head) + fmt.Sprintf("<body omitted: %q, %d bytes>", contentType, len(body))
 }
 
+// DevRedactText masks identities in free text such as a JSON status dump.
+func DevRedactText(text string) string {
+	return devRedactSIPLine(text, false)
+}
+
 func devRedactSIPLine(line string, address bool) string {
 	redacted := RedactSIPRaw(line)
 	redacted = devDigestParamPattern.ReplaceAllString(redacted, `${1}="<masked>"`)
