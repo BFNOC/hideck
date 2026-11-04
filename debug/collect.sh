@@ -48,8 +48,8 @@ for file in "$LOGS"/app-*.log; do
 	if expr "x$day" \< "x$SINCE_DAY" >/dev/null; then continue; fi
 	# Timestamped lines decide; untimestamped lines (stack traces, the startup
 	# banner) follow the line before them.
-	awk -v since="$(date -d "$SINCE" '+[%Y-%m-%d %H:%M:%S]')" '
-		/^\[[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { keep = substr($0, 1, 21) >= since }
+	awk -v since="$(date -d "$SINCE" '+%Y-%m-%d %H:%M:%S')" '
+		/^\[[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { keep = substr($0, 2, 19) >= since }
 		keep { print }' "$file" |
 		mask >"$OUT/logs/$(basename "$file")"
 done
@@ -84,6 +84,15 @@ else
 	dmesg 2>/dev/null
 fi | grep -iE 'usb|cdc|qmi|wwan|option|ttyUSB|qcserial' | mask >"$OUT/kernel.txt" || true
 
+# Host network events (Wi-Fi, DHCP, link up/down) that could explain a stall.
+# MAC addresses and SSIDs are masked.
+if command -v journalctl >/dev/null; then
+	{
+		journalctl --since "$SINCE" --no-pager -u NetworkManager -u wpa_supplicant -u systemd-networkd -u dhcpcd -u iwd 2>/dev/null
+		journalctl -k --since "$SINCE" --no-pager 2>/dev/null | grep -iE 'wlan|wifi|link (is )?(up|down)|carrier|deauth|disassoc|eth[0-9]|enp|wlp'
+	} | mask | sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/<mac>/g; s/(SSID|ssid)([=: ]+)("[^"]*"|'"'"'[^'"'"']*'"'"'|[^ ,]+)/\1\2<ssid>/g' >"$OUT/network.txt" || true
+fi
+
 for overrides in "$(dirname "$LOGS")/config/carrier_overrides.yaml" ./config/carrier_overrides.yaml; do
 	if [ -f "$overrides" ]; then mask <"$overrides" >"$OUT/carrier_overrides.yaml"; break; fi
 done
@@ -98,6 +107,8 @@ count() { cat "$OUT"/logs/*.log | grep -cF -- "$1" || true; }
 		'port-s lifecycle' 'peer_reset' 'SUBSCRIBE(reg)' 'SUBSCRIBE(mwi)' \
 		'peer deleted' 'IKE_SA' 'CHILD_SA' '[dev] IKE rx' '[dev] IKE tx' \
 		'[dev] AT command' '[dev] QMI SetOperatingMode' \
+		'[dev] CHILD_SA installed' '[dev] CHILD_SA peer delete' '[dev] CHILD_SA delete sending' \
+		'[dev] IKE open failed' 'transport_timeout' 'context deadline exceeded' \
 		'Timeout storm detected' 'USB 控制面' '清理 Worker' 'panic' ' ERROR '; do
 		printf '%8s  %s\n' "$(count "$pattern")" "$pattern"
 	done
@@ -109,7 +120,7 @@ count() { cat "$OUT"/logs/*.log | grep -cF -- "$1" || true; }
 	cat "$OUT"/logs/*.log | grep -oE 'IMS SIP [rt]x .*"first_line": "[A-Z]{3,10} ' | sed -E 's/.*IMS SIP ([rt]x) .*"first_line": "([A-Z]+) /\1 \2/' | sort | uniq -c | sort -rn
 	echo
 	echo "== timeline (connection failures, registrations, recoveries; last 200)"
-	cat "$OUT"/logs/*.log | grep -E 'IMS conn (read failed|closed)|REGISTER (succeeded|failed)|port-s lifecycle|peer deleted|Timeout storm|USB 控制面|清理 Worker|panic| ERROR ' | cut -c1-400 | tail -200
+	cat "$OUT"/logs/*.log | grep -E 'IMS conn (read failed|closed)|REGISTER (succeeded|failed)|port-s lifecycle|peer deleted|\[dev\] CHILD_SA|IKE open failed|"delete": |transport_timeout|Timeout storm|USB 控制面|清理 Worker|panic| ERROR ' | cut -c1-400 | tail -400
 } >"$OUT/summary.txt"
 
 # Refuse to pack anything that still looks like an identity.
