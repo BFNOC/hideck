@@ -13,7 +13,9 @@ import (
 )
 
 var (
-	devATCommandName = regexp.MustCompile(`^(?i)AT[+$^%&]?[A-Z0-9]*[?]?`)
+	// Extended commands keep their name (AT+CFUN); basic ones keep only the
+	// letter (ATD, never the dialled number). The suffix shows set, read or test.
+	devATCommandName = regexp.MustCompile(`^(?i)AT(?:[+$^%&][A-Z][A-Z0-9]*|[A-Z])(=\?|\?|=)?`)
 	devATLongDigits  = regexp.MustCompile(`[0-9]{8,}`)
 )
 

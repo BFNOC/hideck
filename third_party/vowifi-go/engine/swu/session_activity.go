@@ -28,6 +28,7 @@ func (s *Session) scheduleNATKeepalive(interval, delay time.Duration) {
 		idle := s.outboundIdleDuration()
 		next, sendKeepalive, sendDPD := natKeepaliveDecision(interval, idle)
 		if sendDPD {
+			s.devLogDPDDue("nat_keepalive", interval)
 			if err := s.DPDProbe(); err != nil {
 				s.failEstablishedControl(fmt.Errorf("swu: NAT keepalive DPD failed: %w", err))
 				return
