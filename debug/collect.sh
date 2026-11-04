@@ -95,7 +95,7 @@ fi | grep -iE 'usb|cdc|qmi|wwan|option|ttyUSB|qcserial' | mask >"$OUT/kernel.txt
 # MAC addresses and SSIDs are masked.
 if command -v journalctl >/dev/null; then
 	{
-		echo "journal earliest entry: $(journalctl -o short-iso --no-pager 2>/dev/null | head -1 | cut -c1-25)"
+		echo "journal earliest entry: $(journalctl -q -o short-iso --no-pager 2>/dev/null | head -1 | cut -c1-25)"
 		echo "active network services: $(for u in NetworkManager wpa_supplicant systemd-networkd dhcpcd iwd connman; do systemctl is-active -q "$u" 2>/dev/null && printf '%s ' "$u"; done; pgrep -x dhclient >/dev/null && printf 'dhclient')"
 		journalctl --since "$SINCE" --no-pager -u NetworkManager -u wpa_supplicant -u systemd-networkd -u dhcpcd -u iwd -u connman 2>/dev/null
 		journalctl --since "$SINCE" --no-pager -t dhclient 2>/dev/null
@@ -128,8 +128,9 @@ fi
 	ls "$OUT"/pcap | sed 's/^/  /'
 	[ "$(ls "$OUT"/pcap | wc -l)" -gt 0 ] || echo "WARNING: no pcap collected; check that logs/dev-pcap exists and is readable (run as root)"
 	events=$(grep -vc '^(host journal\|^journal earliest\|^active network' "$OUT/network.txt" 2>/dev/null) || true
+	grep -h '^journal earliest entry' "$OUT/network.txt" 2>/dev/null || true
 	echo "network events: ${events:-0} lines (best effort from the host journal; 0 can mean no events or no records, see the journal earliest entry at the top of network.txt)"
-	[ -f "$OUT/pcap-skipped.txt" ] && echo "pcap skipped (rotated during copy): $(wc -l <"$OUT/pcap-skipped.txt")"
+	[ -f "$OUT/pcap-skipped.txt" ] && echo "pcap skipped (see pcap-skipped.txt): $(wc -l <"$OUT/pcap-skipped.txt")"
 	echo "pcap health:"
 	grep -h '\[dev\] IMS inner pcap' "$OUT"/logs/*.log | grep -vE 'pcap (opened|closed)' | cut -c1-200 | tail -20 || true
 	grep -h '\[dev\] IMS inner pcap closed' "$OUT"/logs/*.log | grep -oE '"dropped": [1-9][0-9]*' | sort | uniq -c || true
