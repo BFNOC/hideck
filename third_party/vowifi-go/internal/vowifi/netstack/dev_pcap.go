@@ -1,8 +1,9 @@
 package netstack
 
-// [dev] hideck#90: header-only pcapng of the inner IMS packets as the packet
-// bridge sees them, plaintext side of the 3GPP IPsec transform. Enabled only
-// when HIDECK_DEV90_PCAP_DIR is set; remove before a PR.
+// [dev] header-only pcapng of the inner IMS packets as the packet bridge sees
+// them, plaintext side of the 3GPP IPsec transform. On by default in the
+// debug-field branch, written under logs/dev-pcap next to app.log;
+// HIDECK_DEV_PCAP_DIR moves it and "off" turns it off. Never part of a PR.
 //
 // Each packet keeps its IP and TCP/UDP headers and loses the payload, so no
 // SIP text (IMPU, IMEI, numbers) reaches the file. The packet comment says
@@ -21,14 +22,16 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const (
-	devPcapDirEnv   = "HIDECK_DEV90_PCAP_DIR"
-	devPcapMaxBytes = 64 << 20
+	devPcapDirEnv     = "HIDECK_DEV_PCAP_DIR"
+	devPcapDefaultDir = "logs/dev-pcap"
+	devPcapMaxBytes   = 64 << 20
 	// Queued blocks before record starts dropping instead of blocking.
 	devPcapQueueDepth = 4096
 	devPcapMaxComment = 512
@@ -59,7 +62,13 @@ type devPcap struct {
 
 func openDevPcap() *devPcap {
 	dir := strings.TrimSpace(os.Getenv(devPcapDirEnv))
-	if dir == "" {
+	switch strings.ToLower(dir) {
+	case "":
+		if testing.Testing() {
+			return nil
+		}
+		dir = devPcapDefaultDir
+	case "off":
 		return nil
 	}
 	name := fmt.Sprintf("ims-inner-%s-%d.pcapng", time.Now().Format("20060102-150405"), devPcapSeq.Add(1))
