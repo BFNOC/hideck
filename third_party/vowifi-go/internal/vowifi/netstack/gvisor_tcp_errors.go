@@ -20,8 +20,10 @@ type imsTCPConn struct {
 
 // newIMSTCPConn wraps a gonet connection; origin ("dial" or "accept") goes
 // into the [dev] trace.
-func newIMSTCPConn(conn *gonet.TCPConn, origin string) *imsTCPConn {
-	return &imsTCPConn{TCPConn: conn, dev: newDevConnTrace("tcp", origin, conn.LocalAddr(), conn.RemoteAddr())}
+func newIMSTCPConn(conn *gonet.TCPConn, endpoint tcpip.Endpoint, origin string) *imsTCPConn {
+	trace := newDevConnTrace("tcp", origin, conn.LocalAddr(), conn.RemoteAddr())
+	trace.endpoint = endpoint
+	return &imsTCPConn{TCPConn: conn, dev: trace}
 }
 
 func (c *imsTCPConn) Read(buffer []byte) (int, error) {
