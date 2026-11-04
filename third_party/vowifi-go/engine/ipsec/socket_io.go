@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"sync/atomic"
+
+	"go.uber.org/zap"
 )
 
 type packetDelivery struct {
@@ -22,9 +24,14 @@ func (s *SocketManager) readLoop() {
 	for {
 		length, source, err := s.Conn.ReadFromUDP(buffer)
 		if err != nil {
+			logInfo("[dev] outer UDP read loop ended", zap.String("local", s.LocalAddrString()), zap.Error(err))
 			return
 		}
 		if !s.acceptSource(source) {
+			if count := s.devUnknownSource.Add(1); devSampled(count) {
+				logInfo("[dev] outer UDP datagram from an unexpected source dropped",
+					zap.String("source", source.String()), zap.Int("bytes", length), zap.Uint64("count", count))
+			}
 			continue
 		}
 		packet := append([]byte(nil), buffer[:length]...)
@@ -152,6 +159,9 @@ func (s *SocketManager) SendNATKeepalive() error {
 	if err != nil {
 		return err
 	}
+	if count := s.devKeepalives.Add(1); devSampled(count) {
+		logInfo("[dev] NAT-T keepalive sent", zap.String("destination", destination.String()), zap.Uint64("count", count))
+	}
 	return s.writeDatagram([]byte{0xff}, destination)
 }
 
@@ -172,6 +182,10 @@ func (s *SocketManager) writeDatagram(packet []byte, destination *net.UDPAddr) e
 	}
 	written, err := s.Conn.WriteToUDP(packet, destination)
 	if err != nil {
+		if count := s.devSendErrors.Add(1); devSampled(count) {
+			logInfo("[dev] outer UDP send failed", zap.String("destination", destination.String()),
+				zap.Int("bytes", len(packet)), zap.Uint64("count", count), zap.Error(err))
+		}
 		if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
 			return err
 		}

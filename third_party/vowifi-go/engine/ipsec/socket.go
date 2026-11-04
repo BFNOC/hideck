@@ -54,6 +54,9 @@ type SocketManager struct {
 	stopped   bool
 	startErr  error
 	natT      bool // Protected by remoteMu; retained across peer port changes.
+
+	// [dev] debug-field counters for sampled outer-socket logs.
+	devUnknownSource, devSendErrors, devKeepalives atomic.Uint64
 }
 
 // NewSocketManager resolves remote, binds local, and prepares a transport.
