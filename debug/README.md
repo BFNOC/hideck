@@ -63,7 +63,7 @@ grep -h 'debug-field build' /root/hideck/logs/app-*.log | tail -1
 
 ## 六、收集和回传
 
-在 HiDeck 所在的机器上执行。`--since` 填部署调试版的时间，或者问题出现前半小时：
+在 HiDeck 所在的机器上用 root 执行（抓包目录只有 root 能读）。`--since` 填部署调试版的时间，或者问题出现前半小时，**按 HiDeck 日志里显示的时间填**（Docker 里的时区可能和宿主机不同）：
 
 ```sh
 sh debug/collect.sh --since "2026-11-04 08:00"
