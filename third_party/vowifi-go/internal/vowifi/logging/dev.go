@@ -21,8 +21,9 @@ var (
 	// goes too.
 	devSIPUserPattern = regexp.MustCompile(`(?i)\b(sips?:)[^@\s<>"]+@`)
 	devTelPattern     = regexp.MustCompile(`(?i)\b(tel:)[^\s<>";,]+`)
-	// A quoted display name in front of an address, anywhere.
-	devDisplayNamePattern = regexp.MustCompile(`"[^"\r\n]*"(\s*<)`)
+	// A quoted display name in front of an address: at the start of a header
+	// value or of a list item, not a quoted parameter such as +sip.instance.
+	devDisplayNamePattern = regexp.MustCompile(`(^|[:,]\s*)"[^"\r\n]*"(\s*<)`)
 	// An unquoted display name in an address header value.
 	devTokenDisplayNamePattern = regexp.MustCompile(`(^|,)(\s*)([^<>",]*[^<>",\s])(\s*<)`)
 	devReginfoDisplayName      = regexp.MustCompile(`(?i)(<display-name[^>]*>)[^<]*(</display-name>)`)
@@ -112,7 +113,7 @@ func devRedactSIPLine(line string, address bool) string {
 	redacted = devWLANNodeIDPattern.ReplaceAllString(redacted, `${1}"<masked>"`)
 	redacted = devSIPUserPattern.ReplaceAllString(redacted, "${1}<masked>@")
 	redacted = devTelPattern.ReplaceAllString(redacted, "${1}<masked>")
-	redacted = devDisplayNamePattern.ReplaceAllString(redacted, `"<masked>"${1}`)
+	redacted = devDisplayNamePattern.ReplaceAllString(redacted, `${1}"<masked>"${2}`)
 	redacted = devReginfoDisplayName.ReplaceAllString(redacted, "${1}<masked>${2}")
 	if address {
 		name, value, _ := strings.Cut(redacted, ":")
