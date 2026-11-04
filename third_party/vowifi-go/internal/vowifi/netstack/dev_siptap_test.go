@@ -44,6 +44,10 @@ func TestDevSIPMessageSizeWaitsForTheBody(t *testing.T) {
 	if _, complete, valid := devSIPMessageSize([]byte(head + "abc")); complete || !valid {
 		t.Fatal("incomplete body reported complete")
 	}
+	folded := "SIP/2.0 200 OK\r\nContent-Length:\r\n 5\r\n\r\n"
+	if size, complete, valid := devSIPMessageSize([]byte(folded + "abcde")); !complete || !valid || size != len(folded)+5 {
+		t.Fatalf("folded Content-Length: size = %d, %t, %t", size, complete, valid)
+	}
 	if size, complete, valid := devSIPMessageSize([]byte(head + "abcdeNEXT")); !complete || !valid || size != len(head)+5 {
 		t.Fatalf("size = %d, %t, %t", size, complete, valid)
 	}
