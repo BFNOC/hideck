@@ -57,6 +57,7 @@ type SocketManager struct {
 
 	// [dev] debug-field counters for sampled outer-socket logs.
 	devUnknownSource, devSendErrors, devKeepalives atomic.Uint64
+	devSendFailing                                 atomic.Bool
 }
 
 // NewSocketManager resolves remote, binds local, and prepares a transport.

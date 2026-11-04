@@ -1253,10 +1253,18 @@ func (s *Session) scheduleDPD(every, delay time.Duration) {
 			s.scheduleDPD(every, every-idle)
 			return
 		}
+		idle := s.inboundIdleDuration()
+		s.devLogger().Info("[dev] DPD probe sending", zap.String("session", fmt.Sprintf("%p", s)),
+			zap.Duration("inbound_idle", idle), zap.Duration("interval", every))
+		started := time.Now()
 		if err := s.DPDProbe(); err != nil {
+			s.devLogger().Info("[dev] DPD probe failed", zap.String("session", fmt.Sprintf("%p", s)),
+				zap.Duration("elapsed", time.Since(started)), zap.Error(err))
 			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
 			return
 		}
+		s.devLogger().Info("[dev] DPD probe answered", zap.String("session", fmt.Sprintf("%p", s)),
+			zap.Duration("elapsed", time.Since(started)))
 		s.scheduleDPD(every, every)
 	})
 }
