@@ -8,7 +8,7 @@ import (
 func TestDevRedactSIPMasksIdentities(t *testing.T) {
 	raw := "REGISTER sip:ims.mnc002.mcc262.3gppnetwork.org SIP/2.0\r\n" +
 		"From: \"Alice Example\" <sip:262021234567897@ims.mnc002.mcc262.3gppnetwork.org>;tag=1\r\n" +
-		"Contact: <sip:u@[2a00::1]:5060>;+sip.instance=\"<urn:gsma:imei:86034905-086973-4>\"\r\n" +
+		"Contact: <sip:u@[2a00::1]:5060>;+g.3gpp.accesstype=\"wlan1\";+sip.instance=\"<urn:gsma:imei:86034905-086973-4>\"\r\n" +
 		"Path: <sip:[2a01::5]:6000;lr;imei:86034905-086973-4>\r\n" +
 		"P-Associated-URI: <tel:+49-151-1234567>, <sip:alice.example@ims.example>\r\n" +
 		"P-Charging-Vector: icid-value=\"x\";bidx=27123464\r\n" +
@@ -29,7 +29,7 @@ func TestDevRedactSIPMasksIdentities(t *testing.T) {
 			t.Fatalf("%q survived redaction:\n%s", secret, redacted)
 		}
 	}
-	for _, kept := range []string{"country=DE", "REGISTER sip:ims.mnc002.mcc262.3gppnetwork.org", "[2a00::1]:5060",
+	for _, kept := range []string{"country=DE", `+g.3gpp.accesstype="wlan1";+sip.instance="<urn:gsma:imei:<masked>>"`, "REGISTER sip:ims.mnc002.mcc262.3gppnetwork.org", "[2a00::1]:5060",
 		"[2a01::5]:6000", "spi-c=8232471; spi-s=8232470; port-c=32821", "realm=\"ims.example\"",
 		"algorithm=AKAv1-MD5", "<reginfo>"} {
 		if !strings.Contains(redacted, kept) {
