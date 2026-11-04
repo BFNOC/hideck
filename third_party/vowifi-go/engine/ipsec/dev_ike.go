@@ -16,6 +16,14 @@ var devIKEExchanges = map[byte]string{
 	34: "IKE_SA_INIT", 35: "IKE_AUTH", 36: "CREATE_CHILD_SA", 37: "INFORMATIONAL", 38: "IKE_SESSION_RESUME",
 }
 
+// devSampled is true for the 1st, 10th, 100th, ... occurrence.
+func devSampled(count uint64) bool {
+	for count >= 10 && count%10 == 0 {
+		count /= 10
+	}
+	return count == 1
+}
+
 func devLogIKE(direction, local, remote string, packet []byte) {
 	if len(packet) < 28 {
 		logInfo("[dev] IKE packet too short", zap.String("dir", direction), zap.Int("bytes", len(packet)))
