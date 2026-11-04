@@ -57,10 +57,11 @@ func main() {
 	cfg := config.GetConfig()
 
 	// 2. 初始化日志
-	// [dev] debug-field: always log at Debug, whatever server.debug says;
-	// server.debug keeps its other effects.
+	// [dev] debug-field keeps server.debug as configured: global Debug also
+	// prints SMS text and lightly redacted SIP, so what the debug run needs
+	// from Debug lines is copied into [dev] lines instead.
 	logger.Setup(logger.LogConfig{
-		Debug:    true,
+		Debug:    cfg.Server.Debug,
 		Filename: "logs/app.log",
 	})
 	// 将内置 slog 重定向到已就绪的系统日志框架

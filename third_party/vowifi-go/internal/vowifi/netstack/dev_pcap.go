@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,11 @@ import (
 const (
 	devPcapDirEnv     = "HIDECK_DEV_PCAP_DIR"
 	devPcapDefaultDir = "logs/dev-pcap"
-	devPcapMaxBytes   = 64 << 20
+	// Each file rotates at devPcapMaxBytes; the directory keeps the newest
+	// devPcapKeepFiles files, so a busy call cannot stop the capture or fill
+	// the disk.
+	devPcapMaxBytes  = 32 << 20
+	devPcapKeepFiles = 24
 	// Queued blocks before record starts dropping instead of blocking.
 	devPcapQueueDepth = 4096
 	devPcapMaxComment = 512
@@ -46,6 +51,7 @@ var (
 )
 
 type devPcap struct {
+	dir   string
 	path  string
 	file  *os.File
 	queue chan []byte
@@ -71,30 +77,63 @@ func openDevPcap() *devPcap {
 	case "off":
 		return nil
 	}
-	name := fmt.Sprintf("ims-inner-%s-%d.pcapng", time.Now().Format("20060102-150405"), devPcapSeq.Add(1))
-	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		logging.Info("[dev] IMS inner pcap unavailable", "path", path, "err", err)
-		return nil
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, path, written, err := createDevPcapFile(dir)
 	if err != nil {
-		logging.Info("[dev] IMS inner pcap unavailable", "path", path, "err", err)
-		return nil
-	}
-	header := append(pcapngSectionHeader(), pcapngInterfaceDescription()...)
-	if _, err := file.Write(header); err != nil {
-		_ = file.Close()
-		logging.Info("[dev] IMS inner pcap unavailable", "path", path, "err", err)
+		logging.Info("[dev] IMS inner pcap unavailable", "dir", dir, "err", err)
 		return nil
 	}
 	p := &devPcap{
-		path: path, file: file, written: int64(len(header)),
+		dir: dir, path: path, file: file, written: written,
 		queue: make(chan []byte, devPcapQueueDepth), done: make(chan struct{}),
 	}
 	go p.writeLoop()
 	logging.Info("[dev] IMS inner pcap opened", "path", path)
 	return p
+}
+
+// createDevPcapFile starts a new capture file named by its start time, which
+// is HiDeck's clock like the log lines.
+func createDevPcapFile(dir string) (*os.File, string, int64, error) {
+	name := fmt.Sprintf("ims-inner-%s-%d.pcapng", time.Now().Format("20060102-150405"), devPcapSeq.Add(1))
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, path, 0, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, path, 0, err
+	}
+	header := append(pcapngSectionHeader(), pcapngInterfaceDescription()...)
+	if _, err := file.Write(header); err != nil {
+		_ = file.Close()
+		return nil, path, 0, err
+	}
+	return file, path, int64(len(header)), nil
+}
+
+// rotate closes the full file, opens the next one and prunes the oldest
+// files beyond devPcapKeepFiles.
+func (p *devPcap) rotate() bool {
+	old := p.path
+	_ = p.file.Close()
+	file, path, written, err := createDevPcapFile(p.dir)
+	if err != nil {
+		logging.Info("[dev] IMS inner pcap rotation failed; capture stopped", "path", old, "err", err)
+		p.file = nil
+		p.full.Store(true)
+		return false
+	}
+	p.file, p.path, p.written = file, path, written
+	logging.Info("[dev] IMS inner pcap rotated", "from", old, "to", path, "packets_so_far", p.packets)
+	names, _ := filepath.Glob(filepath.Join(p.dir, "ims-inner-*.pcapng"))
+	sort.Strings(names)
+	for len(names) > devPcapKeepFiles {
+		if err := os.Remove(names[0]); err == nil {
+			logging.Info("[dev] IMS inner pcap pruned", "path", names[0])
+		}
+		names = names[1:]
+	}
+	return true
 }
 
 // record queues one packet; a full queue drops it rather than delay the
@@ -129,11 +168,7 @@ func (p *devPcap) writeLoop() {
 		if p.file == nil {
 			continue
 		}
-		if p.written+int64(len(block)) > devPcapMaxBytes {
-			if !p.full.Swap(true) {
-				logging.Info("[dev] IMS inner pcap reached its size cap; capture stopped",
-					"path", p.path, "bytes", p.written, "packets", p.packets)
-			}
+		if p.written+int64(len(block)) > devPcapMaxBytes && !p.rotate() {
 			continue
 		}
 		if _, err := p.file.Write(block); err != nil {

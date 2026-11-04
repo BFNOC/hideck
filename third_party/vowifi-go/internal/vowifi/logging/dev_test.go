@@ -38,6 +38,25 @@ func TestDevRedactSIPMasksIdentities(t *testing.T) {
 	}
 }
 
+func TestDevRedactSIPMasksAuthenticationInfoAndSDPKeys(t *testing.T) {
+	raw := "SIP/2.0 200 OK\r\n" +
+		"Authentication-Info: nextnonce=\"n3xt\", rspauth=\"r5p\", qop=auth\r\n" +
+		"WWW-Authenticate: Digest realm=\"x\", nonce=\"abc\", ck=\"c0ffee\", ik=\"beef\"\r\n" +
+		"Content-Type: application/sdp\r\n\r\n" +
+		"v=0\r\nk=base64:secretkey\r\na=key-mgmt:mikey AQAFsecret\r\n" +
+		"a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9CnVubGVz|2^20|1:4\r\n" +
+		"m=audio 49170 RTP/AVP 0\r\n"
+	redacted := DevRedactSIP(raw)
+	for _, secret := range []string{"n3xt", "r5p", "c0ffee", "beef", "secretkey", "AQAFsecret", "WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9CnVubGVz"} {
+		if strings.Contains(redacted, secret) {
+			t.Fatalf("%q survived redaction:\n%s", secret, redacted)
+		}
+	}
+	if !strings.Contains(redacted, "m=audio 49170 RTP/AVP 0") || !strings.Contains(redacted, "AES_CM_128_HMAC_SHA1_80 inline:<masked>") {
+		t.Fatalf("SDP lost too much:\n%s", redacted)
+	}
+}
+
 func TestDevRedactSIPOmitsSMSBodies(t *testing.T) {
 	for _, raw := range []string{
 		"MESSAGE sip:u@[2a00::1]:5060 SIP/2.0\r\nCall-ID: m1\r\nContent-Type: application/vnd.3gpp.sms\r\n" +

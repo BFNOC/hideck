@@ -160,7 +160,7 @@ func (s *SocketManager) SendNATKeepalive() error {
 		return err
 	}
 	if count := s.devKeepalives.Add(1); devSampled(count) {
-		logInfo("[dev] NAT-T keepalive sent", zap.String("destination", destination.String()), zap.Uint64("count", count))
+		logInfo("[dev] NAT-T keepalive attempted", zap.String("destination", destination.String()), zap.Uint64("count", count))
 	}
 	return s.writeDatagram([]byte{0xff}, destination)
 }

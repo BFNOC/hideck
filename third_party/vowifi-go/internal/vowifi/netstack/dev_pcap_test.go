@@ -224,3 +224,25 @@ func TestDevPcapRecordAfterCloseIsDropped(t *testing.T) {
 	p.record(time.Now(), devTestIPv6(17, make([]byte, 8)), "in plaintext")
 	p.Close()
 }
+
+func TestDevPcapRotatesAndKeepsTheNewestFiles(t *testing.T) {
+	dir := t.TempDir()
+	file, path, written, err := createDevPcapFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &devPcap{dir: dir, path: path, file: file, written: written}
+	for i := 0; i < devPcapKeepFiles+5; i++ {
+		if !p.rotate() {
+			t.Fatalf("rotation %d failed", i)
+		}
+	}
+	defer p.file.Close()
+	names, _ := filepath.Glob(filepath.Join(dir, "ims-inner-*.pcapng"))
+	if len(names) != devPcapKeepFiles {
+		t.Fatalf("kept %d files, want %d", len(names), devPcapKeepFiles)
+	}
+	if _, err := os.Stat(p.path); err != nil || p.full.Load() {
+		t.Fatalf("current file %s missing or capture stopped: %v", p.path, err)
+	}
+}

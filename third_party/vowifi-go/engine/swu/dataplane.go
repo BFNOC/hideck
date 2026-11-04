@@ -97,6 +97,8 @@ func (s *Session) installInitialESPAssociations(
 	s.childSAMu.Unlock()
 	logger.Info("initial CHILD_SA installed",
 		zap.Uint32("local_spi", localSPI), zap.Uint32("remote_spi", remoteSPI))
+	s.devLogChildSA("installed", zap.String("path", "initial"),
+		zap.String("local_spi", fmt.Sprintf("%08x", localSPI)), zap.String("remote_spi", fmt.Sprintf("%08x", remoteSPI)))
 }
 
 func (s *Session) newESPAssociation(spi uint32, keys childDirectionKeys) (*ipsec.SecurityAssociation, error) {

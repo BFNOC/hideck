@@ -28,7 +28,9 @@ var (
 	devTokenDisplayNamePattern = regexp.MustCompile(`(^|,)(\s*)([^<>",]*[^<>",\s])(\s*<)`)
 	devReginfoDisplayName      = regexp.MustCompile(`(?i)(<display-name[^>]*>)[^<]*(</display-name>)`)
 	// nonce carries RAND and AUTN; username carries the IMPI.
-	devDigestParamPattern = regexp.MustCompile(`(?i)\b(nonce|cnonce|response|username|auts)\s*=\s*("[^"]*"|[^,\s]+)`)
+	devDigestParamPattern = regexp.MustCompile(`(?i)\b(nonce|nextnonce|cnonce|response|rspauth|username|auts|ck|ik)\s*=\s*("[^"]*"|[^,\s]+)`)
+	// SDP keying material (RFC 4568 a=crypto inline keys, k=, key-mgmt).
+	devSDPInlineKey = regexp.MustCompile(`(?i)(inline:)[^\s|;]+`)
 	// Headers whose values are addresses that may carry a display name.
 	devAddressHeaders = map[string]bool{
 		"from": true, "f": true, "to": true, "t": true, "contact": true, "m": true,
@@ -70,7 +72,8 @@ func DevRedactSIP(raw string) string {
 			contentType = strings.ToLower(strings.TrimSpace(value))
 		}
 		switch {
-		case isHeader && (name == "authorization" || name == "proxy-authorization"):
+		case isHeader && (name == "authorization" || name == "proxy-authorization" ||
+			name == "authentication-info" || name == "proxy-authentication-info"):
 			lines[index] = strings.TrimSpace(strings.SplitN(line, ":", 2)[0]) + ": [REDACTED]"
 			if strings.HasSuffix(line, "\r") {
 				lines[index] += "\r"
@@ -93,12 +96,24 @@ func DevRedactSIP(raw string) string {
 		if strings.HasPrefix(contentType, kind) {
 			bodyLines := strings.Split(body, "\n")
 			for index, line := range bodyLines {
-				bodyLines[index] = devRedactSIPLine(line, false)
+				bodyLines[index] = devRedactBodyLine(line)
 			}
 			return out + devBodySeparator(head) + strings.Join(bodyLines, "\n")
 		}
 	}
 	return out + devBodySeparator(head) + fmt.Sprintf("<body omitted: %q, %d bytes>", contentType, len(body))
+}
+
+// devRedactBodyLine masks identities and any SDP keying material.
+func devRedactBodyLine(line string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(line))
+	switch {
+	case strings.HasPrefix(trimmed, "k="):
+		return "k=<masked>"
+	case strings.HasPrefix(trimmed, "a=key-mgmt:"):
+		return "a=key-mgmt:<masked>"
+	}
+	return devRedactSIPLine(devSDPInlineKey.ReplaceAllString(line, "${1}<masked>"), false)
 }
 
 // DevRedactText masks identities in free text such as a JSON status dump.
