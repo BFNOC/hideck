@@ -46,13 +46,24 @@ mask() { sed -E 's/[0-9]{11,}/<masked>/g; s/(imei:)[0-9A-Fa-f-]+/\1<masked>/g'; 
 for file in "$LOGS"/app-*.log; do
 	day=$(basename "$file" .log | sed 's/^app-//')
 	if expr "x$day" \< "x$SINCE_DAY" >/dev/null; then continue; fi
-	awk -v since="$(date -d "$SINCE" '+[%Y-%m-%d %H:%M:%S]')" 'substr($0,1,21) >= since || started { started=1; print }' "$file" |
+	# Timestamped lines decide; untimestamped lines (stack traces, the startup
+	# banner) follow the line before them.
+	awk -v since="$(date -d "$SINCE" '+[%Y-%m-%d %H:%M:%S]')" '
+		/^\[[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { keep = substr($0, 1, 21) >= since }
+		keep { print }' "$file" |
 		mask >"$OUT/logs/$(basename "$file")"
 done
 
-# Inner IMS captures: headers only, but inner IPv6 addresses are kept.
+# Inner IMS captures: headers only, but inner IPv6 addresses are kept. Pick
+# them by the time in the file name, which is HiDeck's clock like the logs.
+SINCE_STAMP=$(date -d "$SINCE" +%Y%m%d-%H%M%S)
 if [ -d "$LOGS/dev-pcap" ]; then
-	find "$LOGS/dev-pcap" -name '*.pcapng' -newermt "$SINCE" -exec cp {} "$OUT/pcap/" \;
+	for file in "$LOGS"/dev-pcap/ims-inner-*.pcapng; do
+		[ -f "$file" ] || continue
+		stamp=$(basename "$file" | cut -d- -f3-4)
+		if expr "x$stamp" \< "x$SINCE_STAMP" >/dev/null; then continue; fi
+		cp "$file" "$OUT/pcap/"
+	done
 fi
 
 {
