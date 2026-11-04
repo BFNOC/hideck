@@ -59,3 +59,18 @@ func TestDevSampled(t *testing.T) {
 		}
 	}
 }
+
+func TestDevRedactTextMasksAStatusDump(t *testing.T) {
+	raw := `{"impi":"262021234567897@ims.mnc002.mcc262.3gppnetwork.org","impu":"sip:+491511234567@ims.example",` +
+		`"impus":["tel:+491511234567"],"associated_msisdn":"491511234567",` +
+		`"path":"<sip:[2a01::5]:6000;lr;imei:86034905-086973-4>","registrar":"[2a01::5]:6000"}`
+	redacted := DevRedactText(raw)
+	for _, secret := range []string{"262021", "1234567", "086973"} {
+		if strings.Contains(redacted, secret) {
+			t.Fatalf("%q survived redaction: %s", secret, redacted)
+		}
+	}
+	if !strings.Contains(redacted, `"registrar":"[2a01::5]:6000"`) {
+		t.Fatalf("registrar was masked: %s", redacted)
+	}
+}

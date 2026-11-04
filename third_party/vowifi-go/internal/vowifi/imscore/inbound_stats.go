@@ -69,6 +69,7 @@ func (s *Service) stopInboundStatsLoggerLocked() {
 func (s *Service) logInboundStats(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var ticks uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,6 +78,8 @@ func (s *Service) logInboundStats(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			s.logInboundStatsSnapshot(s.captureInboundStats())
+			ticks++
+			s.devLogStateSnapshot(ticks)
 		}
 	}
 }
