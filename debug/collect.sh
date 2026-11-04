@@ -78,14 +78,15 @@ for overrides in "$(dirname "$LOGS")/config/carrier_overrides.yaml" ./config/car
 done
 
 # Summary: counts and a timeline of the lines that usually matter.
-count() { cat "$OUT"/logs/*.log | grep -c -- "$1" || true; }
+count() { cat "$OUT"/logs/*.log | grep -cF -- "$1" || true; }
 {
 	echo "== counts since $SINCE"
 	for pattern in \
 		'IMS REGISTER succeeded' 'IMS REGISTER failed' 'IMS SIP tx' 'IMS SIP rx' \
 		'IMS conn opened' 'IMS conn read failed' 'IMS conn closed' \
 		'port-s lifecycle' 'peer_reset' 'SUBSCRIBE(reg)' 'SUBSCRIBE(mwi)' \
-		'peer deleted' 'IKE_SA' 'CHILD_SA' \
+		'peer deleted' 'IKE_SA' 'CHILD_SA' '[dev] IKE rx' '[dev] IKE tx' \
+		'[dev] AT command' '[dev] QMI SetOperatingMode' \
 		'Timeout storm detected' 'USB 控制面' '清理 Worker' 'panic' ' ERROR '; do
 		printf '%8s  %s\n' "$(count "$pattern")" "$pattern"
 	done
