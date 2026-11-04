@@ -61,7 +61,10 @@ func (p *Pool) ExecuteATContext(ctx context.Context, request ATRequest) (string,
 		return "", fmt.Errorf("%w: 设备正在停止", ErrATUnavailable)
 	default:
 	}
-	return p.executeWorkerAT(ctx, worker, request)
+	started := time.Now()
+	response, err := p.executeWorkerAT(ctx, worker, request)
+	devLogAT(worker.ID, request.Command, response, err, time.Since(started))
+	return response, err
 }
 
 func (p *Pool) executeWorkerAT(ctx context.Context, worker *Worker, request ATRequest) (string, error) {
