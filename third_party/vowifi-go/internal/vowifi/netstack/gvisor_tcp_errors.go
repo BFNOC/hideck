@@ -30,7 +30,9 @@ type imsTCPConn struct {
 func newIMSTCPConn(queue *waiter.Queue, endpoint tcpip.Endpoint, remote tcpip.FullAddress, origin string) *imsTCPConn {
 	conn := gonet.NewTCPConn(queue, endpoint)
 	peer := tcpAddress(remote)
-	return &imsTCPConn{TCPConn: conn, remote: peer, dev: newDevConnTrace("tcp", origin, conn.LocalAddr(), peer)}
+	trace := newDevConnTrace("tcp", origin, conn.LocalAddr(), peer)
+	trace.endpoint = endpoint
+	return &imsTCPConn{TCPConn: conn, remote: peer, dev: trace}
 }
 
 func (c *imsTCPConn) RemoteAddr() net.Addr { return c.remote }

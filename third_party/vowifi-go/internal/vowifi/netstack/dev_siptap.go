@@ -19,7 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
@@ -48,6 +50,10 @@ type devConnTrace struct {
 
 	txMu, rxMu sync.Mutex
 	tx, rx     []byte
+
+	// endpoint is the gVisor TCP endpoint, for retransmission and RTT state
+	// when the connection fails or closes; nil for UDP.
+	endpoint tcpip.Endpoint
 }
 
 func newDevConnTrace(proto, origin string, local, remote net.Addr) *devConnTrace {
@@ -192,10 +198,33 @@ func (t *devConnTrace) stats() []any {
 	t.rxMu.Lock()
 	pendingRx := len(t.rx)
 	t.rxMu.Unlock()
-	return []any{"conn", t.id, "proto", t.proto, "origin", t.origin, "local", t.local, "remote", t.remote,
+	fields := []any{"conn", t.id, "proto", t.proto, "origin", t.origin, "local", t.local, "remote", t.remote,
 		"age", now.Sub(t.opened).Round(time.Millisecond).String(),
 		"tx_bytes", t.txBytes.Load(), "rx_bytes", t.rxBytes.Load(),
 		"since_tx", since(t.lastTx.Load()), "since_rx", since(t.lastRx.Load()), "pending_rx_bytes", pendingRx}
+	return append(fields, devTCPEndpointFields(t.endpoint)...)
+}
+
+// devTCPEndpointFields reports gVisor's view of the connection: segments,
+// retransmissions, RTO timeouts, RTT and state.
+func devTCPEndpointFields(endpoint tcpip.Endpoint) []any {
+	if endpoint == nil {
+		return nil
+	}
+	var fields []any
+	if stats, ok := endpoint.Stats().(*tcp.Stats); ok && stats != nil {
+		fields = append(fields, "tcp_segments_rx", stats.SegmentsReceived.Value(),
+			"tcp_segments_tx", stats.SegmentsSent.Value(),
+			"tcp_retransmits", stats.SendErrors.Retransmits.Value(),
+			"tcp_fast_retransmits", stats.SendErrors.FastRetransmit.Value(),
+			"tcp_rto_timeouts", stats.SendErrors.Timeouts.Value())
+	}
+	var info tcpip.TCPInfoOption
+	if err := endpoint.GetSockOpt(&info); err == nil {
+		fields = append(fields, "tcp_state", tcp.EndpointState(info.State).String(), "tcp_rtt", info.RTT.String(),
+			"tcp_rto", info.RTO.String(), "tcp_cwnd", info.SndCwnd)
+	}
+	return fields
 }
 
 // devUDPConn traces each SIP datagram of an IMS UDP socket; RTP, STUN and
