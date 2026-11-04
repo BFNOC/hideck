@@ -123,10 +123,11 @@ type devOuterCounters interface {
 func devOuterFields(transport any) zap.Field {
 	counters, ok := transport.(devOuterCounters)
 	if !ok {
-		return zap.Skip()
+		return zap.String("outer", fmt.Sprintf("transport=%T,counters=unavailable", transport))
 	}
 	keepalives, failures, unknown := counters.DevOuterCounters()
-	return zap.String("outer", fmt.Sprintf("nat_keepalives=%d,send_failures=%d,unknown_sources=%d", keepalives, failures, unknown))
+	return zap.String("outer", fmt.Sprintf("transport=%T,nat_keepalives_attempted=%d,send_failures=%d,unknown_sources=%d",
+		transport, keepalives, failures, unknown))
 }
 
 func (s *Session) devLogChildSA(event string, fields ...zap.Field) {
@@ -145,6 +146,18 @@ var devIKEPayloadNames = map[ikev2.PayloadType]string{
 // devLogIKEPayloads summarizes one protected IKE message after decryption or
 // before encryption.
 func (s *Session) devLogIKEPayloads(direction string, header *ikev2.IKEHeader, msgID uint32, payloads []ikev2.Payload) {
+	// An inbound response is opened twice (dispatch authentication, then the
+	// waiting exchange); log it once.
+	if direction == "rx" && header != nil {
+		key := fmt.Sprintf("%016x/%016x/%d/%d/%02x", header.SPIi, header.SPIr, msgID, header.ExchangeType, header.Flags)
+		s.devRxMu.Lock()
+		repeated := s.devLastRx == key
+		s.devLastRx = key
+		s.devRxMu.Unlock()
+		if repeated {
+			return
+		}
+	}
 	names := make([]string, 0, len(payloads))
 	var notifies, deletes, proposals, selectors []string
 	for _, payload := range payloads {

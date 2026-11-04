@@ -242,6 +242,25 @@ func TestDevPcapRotatesAndKeepsTheNewestFiles(t *testing.T) {
 	if len(names) != devPcapKeepFiles {
 		t.Fatalf("kept %d files, want %d", len(names), devPcapKeepFiles)
 	}
+	// Another tunnel's older file that is still open is never pruned.
+	devPcapActiveMu.Lock()
+	devPcapActive[names[0]] = true
+	devPcapActiveMu.Unlock()
+	other, otherPath, _, err := createDevPcapFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	for i := 0; i < 3; i++ {
+		p.rotate()
+	}
+	if _, err := os.Stat(names[0]); err != nil {
+		t.Fatalf("an open capture was pruned: %v", err)
+	}
+	if _, err := os.Stat(otherPath); err != nil {
+		t.Fatalf("the other tunnel's current capture was pruned: %v", err)
+	}
+	devPcapReleased(names[0])
 	if _, err := os.Stat(p.path); err != nil || p.full.Load() {
 		t.Fatalf("current file %s missing or capture stopped: %v", p.path, err)
 	}

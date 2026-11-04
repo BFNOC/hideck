@@ -45,7 +45,11 @@ const (
 )
 
 var (
-	devPcapSeq        atomic.Uint64
+	devPcapSeq atomic.Uint64
+	// devPcapActive holds the files still being written by any tunnel, so
+	// pruning never removes one of them.
+	devPcapActiveMu   sync.Mutex
+	devPcapActive     = map[string]bool{}
 	devSIPMethodToken = regexp.MustCompile(`^[A-Z]{3,10}$`)
 	devSIPCSeqValue   = regexp.MustCompile(`^[0-9]{1,10} [A-Z]{3,10}$`)
 )
@@ -108,7 +112,34 @@ func createDevPcapFile(dir string) (*os.File, string, int64, error) {
 		_ = file.Close()
 		return nil, path, 0, err
 	}
+	devPcapActiveMu.Lock()
+	devPcapActive[path] = true
+	devPcapActiveMu.Unlock()
+	pruneDevPcaps(dir)
 	return file, path, int64(len(header)), nil
+}
+
+func devPcapReleased(path string) {
+	devPcapActiveMu.Lock()
+	delete(devPcapActive, path)
+	devPcapActiveMu.Unlock()
+}
+
+// pruneDevPcaps removes the oldest closed captures beyond devPcapKeepFiles;
+// files still being written are kept and counted.
+func pruneDevPcaps(dir string) {
+	names, _ := filepath.Glob(filepath.Join(dir, "ims-inner-*.pcapng"))
+	sort.Strings(names)
+	devPcapActiveMu.Lock()
+	defer devPcapActiveMu.Unlock()
+	for index := 0; index < len(names) && len(names)-index > devPcapKeepFiles; index++ {
+		if devPcapActive[names[index]] {
+			continue
+		}
+		if err := os.Remove(names[index]); err == nil {
+			logging.Info("[dev] IMS inner pcap pruned", "path", names[index])
+		}
+	}
 }
 
 // rotate closes the full file, opens the next one and prunes the oldest
@@ -116,6 +147,7 @@ func createDevPcapFile(dir string) (*os.File, string, int64, error) {
 func (p *devPcap) rotate() bool {
 	old := p.path
 	_ = p.file.Close()
+	devPcapReleased(old)
 	file, path, written, err := createDevPcapFile(p.dir)
 	if err != nil {
 		logging.Info("[dev] IMS inner pcap rotation failed; capture stopped", "path", old, "err", err)
@@ -125,14 +157,6 @@ func (p *devPcap) rotate() bool {
 	}
 	p.file, p.path, p.written = file, path, written
 	logging.Info("[dev] IMS inner pcap rotated", "from", old, "to", path, "packets_so_far", p.packets)
-	names, _ := filepath.Glob(filepath.Join(p.dir, "ims-inner-*.pcapng"))
-	sort.Strings(names)
-	for len(names) > devPcapKeepFiles {
-		if err := os.Remove(names[0]); err == nil {
-			logging.Info("[dev] IMS inner pcap pruned", "path", names[0])
-		}
-		names = names[1:]
-	}
 	return true
 }
 
@@ -174,6 +198,7 @@ func (p *devPcap) writeLoop() {
 		if _, err := p.file.Write(block); err != nil {
 			logging.Info("[dev] IMS inner pcap write failed; capture stopped", "path", p.path, "err", err)
 			_ = p.file.Close()
+			devPcapReleased(p.path)
 			p.file = nil
 			p.full.Store(true)
 			continue
@@ -201,7 +226,8 @@ func (p *devPcap) Close() {
 		err = p.file.Close()
 		p.file = nil
 	}
-	logging.Info("[dev] IMS inner pcap closed", "path", p.path, "bytes", p.written,
+	devPcapReleased(p.path)
+	logging.Info("[dev] IMS inner pcap closed", "path", p.path, "last_file_bytes", p.written,
 		"packets", p.packets, "dropped", p.dropped.Load(), "err", err)
 }
 

@@ -47,7 +47,7 @@ func TestDevSIPMessageSizeWaitsForTheBody(t *testing.T) {
 	if size, complete, valid := devSIPMessageSize([]byte(head + "abcdeNEXT")); !complete || !valid || size != len(head)+5 {
 		t.Fatalf("size = %d, %t, %t", size, complete, valid)
 	}
-	for _, length := range []string{"9223372036854775807", "99999999999999999999", "300000"} {
+	for _, length := range []string{"9223372036854775807", "99999999999999999999", "300000", "-1", "abc", "", "1x", "+5", "5\r\nContent-Length: 6"} {
 		if _, _, valid := devSIPMessageSize([]byte("SIP/2.0 200 OK\r\nContent-Length: " + length + "\r\n\r\n")); valid {
 			t.Fatalf("Content-Length %s accepted", length)
 		}

@@ -110,8 +110,9 @@ func (s *Session) logDataPlaneStats(
 	for {
 		select {
 		case <-ctx.Done():
-			// [dev] the last counters before the data plane goes away.
-			s.devLogESPSummary("final", stats.snapshot())
+			// [dev] counters when the data plane is told to stop; a few packets
+			// may still pass after this snapshot.
+			s.devLogESPSummary("shutdown", stats.snapshot())
 			return
 		case <-ticker.C:
 			s.logDataPlaneStatsSnapshot(mode, stats.snapshot())

@@ -2,6 +2,7 @@ package swu
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -413,6 +414,10 @@ type Session struct {
 	Logger  *zap.Logger
 	// devESP counts ESP packets per SPI for the [dev] debug-field logs.
 	devESP devESPStats
+	// devLastRx suppresses the second [dev] summary of the same inbound
+	// IKE message.
+	devRxMu   sync.Mutex
+	devLastRx string
 
 	// --- IKE_SA_INIT proposal negotiation ---
 	ikeProfileOffset         int
@@ -1253,24 +1258,42 @@ func (s *Session) scheduleDPD(every, delay time.Duration) {
 			s.scheduleDPD(every, every-idle)
 			return
 		}
-		idle := s.inboundIdleDuration()
-		s.devLogger().Info("[dev] DPD probe sending", zap.String("session", fmt.Sprintf("%p", s)),
-			zap.Duration("inbound_idle", idle), zap.Duration("interval", every))
-		started := time.Now()
+		s.devLogDPDDue("timer", every)
 		if err := s.DPDProbe(); err != nil {
-			s.devLogger().Info("[dev] DPD probe failed", zap.String("session", fmt.Sprintf("%p", s)),
-				zap.Duration("elapsed", time.Since(started)), zap.Error(err))
 			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
 			return
 		}
-		s.devLogger().Info("[dev] DPD probe answered", zap.String("session", fmt.Sprintf("%p", s)),
-			zap.Duration("elapsed", time.Since(started)))
 		s.scheduleDPD(every, every)
 	})
 }
 
+// devLogDPDDue records why a DPD probe is about to run; the probe may still
+// wait for the IKE exchange lock before "[dev] DPD probe sent".
+func (s *Session) devLogDPDDue(trigger string, interval time.Duration) {
+	s.devLogger().Info("[dev] DPD probe due", zap.String("session", fmt.Sprintf("%p", s)), zap.String("trigger", trigger),
+		zap.Duration("inbound_idle", s.inboundIdleDuration()), zap.Duration("interval", interval))
+}
+
 // DPDProbe sends an INFORMATIONAL request to verify the peer is alive.
 func (s *Session) DPDProbe() error {
+	// [dev] one result line per probe, whichever path started it:
+	// answered, failed (no valid answer after all retries or a bad answer) or
+	// interrupted (the session was torn down while waiting).
+	started := time.Now()
+	err := s.dpdProbe()
+	result := "answered"
+	switch {
+	case err != nil && s.ctx.Err() != nil:
+		result = "interrupted"
+	case err != nil:
+		result = "failed"
+	}
+	s.devLogger().Info("[dev] DPD probe "+result, zap.String("session", fmt.Sprintf("%p", s)),
+		zap.Duration("elapsed", time.Since(started)), zap.Error(err))
+	return err
+}
+
+func (s *Session) dpdProbe() error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
 	if s.transport() == nil {
@@ -1279,6 +1302,8 @@ func (s *Session) DPDProbe() error {
 	s.mu.Lock()
 	s.lastDPDAt = time.Now()
 	s.mu.Unlock()
+	s.devLogger().Info("[dev] DPD probe sent", zap.String("session", fmt.Sprintf("%p", s)),
+		zap.String("ike_spi_i", fmt.Sprintf("%016x", binary.BigEndian.Uint64(s.spiI[:]))))
 	response, err := s.sendEncryptedWithRetry(nil, ikev2.INFORMATIONAL)
 	if err != nil {
 		return err
