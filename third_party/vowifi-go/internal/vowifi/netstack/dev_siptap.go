@@ -33,6 +33,7 @@ var (
 	devSIPStartLine     = regexp.MustCompile(`^(SIP/2\.0 [0-9]{3}|[A-Z]{3,10} \S+ SIP/2\.0)`)
 	devContentLengthHdr = regexp.MustCompile(`(?im)^(?:content-length|l)[ \t]*:([^\n]*)`)
 	devDigitsOnly       = regexp.MustCompile(`^[0-9]+$`)
+	devHeaderFold       = regexp.MustCompile(`\r?\n[ \t]+`)
 )
 
 type devConnTrace struct {
@@ -130,7 +131,9 @@ func devSIPMessageSize(buffer []byte) (size int, complete, valid bool) {
 	// Every Content-Length must be the same plain number; anything else
 	// (negative, empty, trailing junk, conflicting copies) loses framing.
 	length, seen := 0, false
-	for _, match := range devContentLengthHdr.FindAllSubmatch(buffer[:end], -1) {
+	// Unfold continuation lines (RFC 3261 §7.3.1) before reading the value.
+	head := devHeaderFold.ReplaceAll(buffer[:end], []byte(" "))
+	for _, match := range devContentLengthHdr.FindAllSubmatch(head, -1) {
 		value := strings.TrimSpace(string(match[1]))
 		parsed, err := strconv.Atoi(value)
 		if err != nil || !devDigitsOnly.MatchString(value) || parsed > devSIPStreamLimit || (seen && parsed != length) {

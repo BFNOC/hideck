@@ -136,11 +136,13 @@ func pruneDevPcaps(dir string) {
 	sort.Strings(names)
 	devPcapActiveMu.Lock()
 	defer devPcapActiveMu.Unlock()
-	for index := 0; index < len(names) && len(names)-index > devPcapKeepFiles; index++ {
+	remaining := len(names)
+	for index := 0; index < len(names) && remaining > devPcapKeepFiles; index++ {
 		if devPcapActive[names[index]] {
 			continue
 		}
 		if err := os.Remove(names[index]); err == nil {
+			remaining--
 			logging.Info("[dev] IMS inner pcap pruned", "path", names[index])
 		}
 	}

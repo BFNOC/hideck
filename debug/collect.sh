@@ -61,7 +61,10 @@ done
 # away during the copy is skipped and listed.
 if [ -d "$LOGS/dev-pcap" ]; then
 	for file in "$LOGS"/dev-pcap/ims-inner-*.pcapng; do
-		[ -e "$file" ] || continue
+		if [ ! -e "$file" ]; then
+			[ "$file" = "$LOGS/dev-pcap/ims-inner-*.pcapng" ] || echo "$(basename "$file"): gone before the copy" >>"$OUT/pcap-skipped.txt"
+			continue
+		fi
 		if ! err=$(cp "$file" "$OUT/pcap/" 2>&1); then
 			rm -f "$OUT/pcap/$(basename "$file")"
 			echo "$(basename "$file"): $err" >>"$OUT/pcap-skipped.txt"
@@ -124,16 +127,17 @@ fi
 	echo "pcap files: $(ls "$OUT"/pcap | wc -l) ($(du -sh "$OUT"/pcap | cut -f1))"
 	ls "$OUT"/pcap | sed 's/^/  /'
 	[ "$(ls "$OUT"/pcap | wc -l)" -gt 0 ] || echo "WARNING: no pcap collected; check that logs/dev-pcap exists and is readable (run as root)"
-	echo "network events: $(grep -vc '^(host journal\|^journal earliest\|^active network' "$OUT/network.txt" 2>/dev/null || echo 0) lines (0 can mean no events or no journal records; see network.txt header)"
+	events=$(grep -vc '^(host journal\|^journal earliest\|^active network' "$OUT/network.txt" 2>/dev/null) || true
+	echo "network events: ${events:-0} lines (best effort from the host journal; 0 can mean no events or no records, see the journal earliest entry at the top of network.txt)"
 	[ -f "$OUT/pcap-skipped.txt" ] && echo "pcap skipped (rotated during copy): $(wc -l <"$OUT/pcap-skipped.txt")"
 	echo "pcap health:"
 	grep -h '\[dev\] IMS inner pcap' "$OUT"/logs/*.log | grep -vE 'pcap (opened|closed)' | cut -c1-200 | tail -20 || true
 	grep -h '\[dev\] IMS inner pcap closed' "$OUT"/logs/*.log | grep -oE '"dropped": [1-9][0-9]*' | sort | uniq -c || true
 	echo "transport_timeout since --since:"
 	grep -h 'port-s lifecycle' "$OUT"/logs/*.log | grep transport_timeout | grep -oE '^\[[^]]+\]' || true
-	echo "DPD results since --since:"
-	grep -hE '\[dev\] DPD probe (answered|timeout|interrupted|bad_response|error|failed)' "$OUT"/logs/*.log | grep -oE '^\[[^]]+\]|DPD probe [a-z]+' | paste - - | tail -20 || true
-	echo "rekey failures (CHILD_SA or IKE SA; rejected or timed out, see err) since --since:"
+	echo "DPD results since --since (last 20):"
+	grep -hE '\[dev\] DPD probe (answered|timeout|interrupted|bad_response|error)' "$OUT"/logs/*.log | grep -oE '^\[[^]]+\]|DPD probe [a-z_]+|"trigger": "[a-z_]+"|"error": "[^"]{0,80}' | paste - - - - | tail -20 || true
+	echo "rekey failures (CHILD_SA or IKE SA; rejected or timed out, see the error field) since --since:"
 	grep -hE 'rekey attempt failed|"notify": "([^"]* )?(3[5-9]|1[47]|43)\(' "$OUT"/logs/*.log | cut -c1-200 | tail -10 || true
 	echo
 	echo "== counts since $SINCE"
@@ -145,8 +149,8 @@ fi
 		'[dev] AT command' '[dev] QMI SetOperatingMode' \
 		'[dev] CHILD_SA installed' '[dev] CHILD_SA peer delete' '[dev] CHILD_SA delete sending' \
 		'[dev] IKE open failed' 'transport_timeout' 'context deadline exceeded' \
-		'[dev] DPD probe due' '[dev] DPD probe sent' '[dev] DPD probe answered' '[dev] DPD probe failed' \
-		'[dev] DPD probe interrupted' '[dev] DPD probe timeout' 'rekey attempt failed' \
+		'[dev] DPD probe due' '[dev] DPD probe locked' '[dev] DPD probe answered' '[dev] DPD probe timeout' \
+		'[dev] DPD probe interrupted' '[dev] DPD probe bad_response' '[dev] DPD probe error' 'rekey attempt failed' \
 		'Timeout storm detected' 'USB 控制面' '清理 Worker' 'panic' ' ERROR '; do
 		printf '%8s  %s\n' "$(count "$pattern")" "$pattern"
 	done
