@@ -9,7 +9,7 @@
 先确认现在的版本没有打开 Debug 日志，打开时日志里会有短信正文：
 
 ```sh
-grep -nE '^\s*debug:' /root/hideck/config/config.yaml || echo "没有 debug 这一行（默认关闭）"   # 应为 debug: false，或者没有这一行
+grep -nE '^\s*debug:' /root/hideck/config/config.yaml; [ $? -eq 1 ] && echo "没有 debug 这一行（默认关闭）"   # 应为 debug: false，或者没有这一行；如果报文件不存在，先确认路径
 ```
 
 如果是 `debug: true`，**先别导出**，在 #90 告诉我们。否则继续：在**换版本之前**，取出 11-04 两次 `transport_timeout` 前后的完整日志，所有行都要：
@@ -50,12 +50,12 @@ arm64 设备把 `GOARCH=amd64` 换成 `GOARCH=arm64`。后面的步骤都在这�
 
 ### 3.1 临时把 Vodafone DE 的 DPD 间隔调到 40 秒（这一轮专用，会改变行为）
 
-DPD 是 IKE 层的存活探测：隧道里一段时间收不到任何包，就发一次探测，然后每隔几秒重发，最多等约 165 秒。Vodafone DE 预设是 120 秒才探测，而上一轮的中断在几十秒到几分钟内就会被隧道重建打断，探测来不及发。调到 40 秒后：
+DPD 是 IKE 层的存活探测：连续一段时间没有收到认证通过的入向 IKE 或 ESP 包，就发一次探测，然后每隔几秒重发，最多等约 165 秒。Vodafone DE 预设是 120 秒才探测，而上一轮的中断在几十秒到几分钟内就会被隧道重建打断，探测来不及发。调到 40 秒后：
 
 - **探测得到回应**：只说明那一刻 IKE 往返是通的；ESP 仍可能在外层被单独丢掉，要结合同一时间的 ESP 收发计数一起看
 - **到隧道重建为止一直没有回应**：外层路径丢包和 ePDG 不回应都有可能，单凭这一点分不开
 - **代价**：在默认重传设置、没有被别的 IKE 交换挡住的情况下，中断持续超过约 3.5 分钟（40 + 165 秒）时 DPD 会先判定超时、拆掉隧道重建，这种情况下可能看不到 `transport_timeout`，看到的是 `[dev] DPD probe timeout` 加一次重建。这也算目标事件。探测本身也可能让中断更早结束或更不容易出现
-- 平时隧道里有流量（port-s 每 30 秒左右就有保活），不会多发探测；port-s 断开到重新注册之间会每 40 秒探一次，这是正常的
+- 平时隧道里有入向流量（port-s 每 30 秒左右就有保活），不会多发探测；入向流量少的时候（比如 port-s 断开到重新注册之间）会多探几次，这是正常的
 
 先备份 `config/carrier_overrides.yaml`，备份成功后才写入。下面的写法假设文件现在是 `carrier_overrides: {}`；如果里面已经有别的运营商条目，不要整份覆盖，只在 `carrier_overrides:` 下加 `"262-02"` 这一段；如果文件不存在，跳过 `cat` 和 `cp`，直接用 `cat > "$CFG"` 那一段新建：
 
@@ -117,7 +117,7 @@ sh debug/since.sh "$DEPLOY" | grep 'rekey attempt failed' | tail -3
 - 出现**至少 1 次**目标事件，并且之后已经恢复（日志里重新出现 `IMS REGISTER succeeded`），再等 5 分钟，然后做第六步
 - 如果 48 小时都没出现，也做第六步，同样有用
 - 期间如果方便，做一次主动短信测试：用别的手机给这张卡发一条，再用这张卡发一条出去。分别记下发送时间、是否收到、收到时间
-- 磁盘占用：日志约每天 20–50 MB；抓包 32 MB 一个文件，目录里最多保留 24 个（含正在写的，平时约每天 15 MB）
+- 磁盘占用：日志约每天 20–50 MB；抓包 32 MB 一个文件，已关闭的旧文件会清理到总数 24 个左右（正在写的不删，所以偶尔会多一两个；平时约每天 15 MB）
 
 ## 第六步：收集
 
@@ -127,7 +127,9 @@ sh debug/since.sh "$DEPLOY" | grep 'rekey attempt failed' | tail -3
 sh debug/collect.sh --since "$DEPLOY"
 ```
 
-脚本默认从 systemd 的工作目录里找 `logs/`，找不到时加 `--logs /root/hideck/logs`。最后会打印 `written: .../hideck-debug-时间.tar.gz` 和摘要。摘要开头的 coverage 段会列出：时间范围、启动过的版本和 `server_debug`、override 是否加载、抓包文件清单和健康情况、宿主机 journal 的覆盖范围、每次 `transport_timeout`、每次 DPD 结果、换密钥失败。
+脚本默认从 systemd 的工作目录里找 `logs/`，找不到时加 `--logs /root/hideck/logs`。最后会打印 `written: .../hideck-debug-时间.tar.gz` 和摘要。摘要开头的 coverage 段会列出：日志时间范围、启动过的版本和 `server_debug`、override 是否加载、抓包文件清单和健康情况、每次 `transport_timeout`、最近 20 次 DPD 结果、换密钥失败。宿主机网络事件是尽力从 journal 回查的，最早能查到的时间写在 `network.txt` 开头，可能覆盖不到整个实验。
+
+收集成功不代表抓包一定覆盖了故障那段：抓包队列满时会丢包（关闭时才在日志里报 `dropped`），正在写的文件末尾可能不完整。我们拿到后会自己核对。
 
 如果打印"unmasked digit runs remain"并退出，说明发现了没打码的长数字，把这条提示贴给我们，不要上传压缩包。
 
@@ -146,8 +148,8 @@ sh debug/collect.sh --since "$DEPLOY"
 | 内容 | 日志行 | 用来看什么 |
 |---|---|---|
 | 每 30 秒，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 断的时候是收方向先停，还是发方向先停，停在哪个 SA；还有 SA 查找失败、解封装错误、NAT-T 保活尝试次数；隧道拆掉前再打一次（`"kind": "shutdown"`） |
-| DPD 探测 | `[dev] DPD probe due` → `locked` → 结果 | 同一次探测的几行带同一个 `probe` 编号和 `trigger`（timer、nat_keepalive、network_event）。`due` 是该探测了，可能还在排队等别的 IKE 交换；`locked` 是拿到交换、交给发送；结果是 `answered`（有回应）、`timeout`（重发到上限都没有回应）、`interrupted`（还在等时隧道被拆，不能当作"没回应"）、`bad_response`（回应打不开或内容不对）、`error`（本机出错，例如没有可用传输）。`network_event` 触发的探测失败不会拆隧道 |
-| 换密钥失败 | `CHILD_SA rekey attempt failed` / `IKE SA rekey attempt failed`，配合 `[dev] IKE payloads rx` 里的 `notify` | 看 `err`：有对应的 notify 行是对方拒绝（原因码在 notify 里），`timeout reached max retries` 是一直没回应 |
+| DPD 探测 | `[dev] DPD probe due` → `locked` → 结果 | 同一次探测的几行带同一个 `probe` 编号和 `trigger`（timer、nat_keepalive、network_event）。`due` 是该探测了，可能还在排队等别的 IKE 交换；`locked` 是拿到交换、交给发送；结果是 `answered`（有回应）、`timeout`（重发到上限都没有完成有效回应，也包括本机每次都没发出去的情况：`error` 里带 `last send failed` 就是发不出去，要结合 `[dev] IKE tx`、`[dev] outer UDP send failed` 一起看）、`interrupted`（还在等时隧道被拆，不能当作"没回应"）、`bad_response`（回应内容不对；认证不过的回应在更早一层就被丢了，会记成 `[dev] IKE open failed`）、`error`（本机出错，例如没有可用传输）。`network_event` 触发的探测失败不会拆隧道 |
+| 换密钥失败 | `CHILD_SA rekey attempt failed` / `IKE SA rekey attempt failed`，配合 `[dev] IKE payloads rx` 里的 `notify` | 看 `error` 字段：有对应的 notify 行是对方拒绝（原因码在 notify 里），`timeout reached max retries` 是一直没回应 |
 | 每 30 秒的内层统计 | `[dev] IMS inbound stats` | 内层 IMS SA（3GPP IPsec）的收发、重放拒绝、未知 SPI，以及 gVisor 协议栈的丢包、RST、重传计数 |
 | CHILD_SA 建立、删除、退役 | `[dev] CHILD_SA installed`（`path` 为 initial/rekey/peer_pending）/ `delete sending` / `peer delete` / `inbound retired` | 和断开是否在同一时刻、换密钥后旧 SA 是否被提前删掉 |
 | 每个 IKE 消息的头部和解密后的载荷摘要 | `[dev] IKE rx/tx`、`[dev] IKE payloads rx/tx` | 换密钥、DPD、对方发来的 Delete；身份、EAP、密钥内容不记。按包计数以 `[dev] IKE rx/tx` 为准 |
