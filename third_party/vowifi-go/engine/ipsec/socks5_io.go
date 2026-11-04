@@ -52,6 +52,7 @@ func (t *Socks5Transport) Stop() {
 }
 
 func (t *Socks5Transport) SendIKE(packet []byte) error {
+	devLogIKE("tx", t.LocalAddrString(), t.RemoteAddrString(), packet)
 	if t.natTEnabled() {
 		marked := make([]byte, 4, len(packet)+4)
 		packet = append(marked, packet...)
@@ -125,6 +126,7 @@ func (t *Socks5Transport) processSocks5Datagram(raw []byte) {
 		fromPort = datagram.DstAddr.Port
 	}
 	if ike, ok := parseIKEPayload(payload, cap(payload), t.natTEnabled() || fromPort == 4500); ok {
+		devLogIKE("rx", t.LocalAddrString(), t.RemoteAddrString(), ike)
 		t.deliverSocks5Packet(ike, packetDelivery{
 			channel: t.ikeChan, received: &t.receivedIKE, dropped: &t.droppedIKE, label: "IKE",
 		})

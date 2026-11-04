@@ -76,6 +76,7 @@ func (s *SocketManager) dispatchDatagram(packet []byte, fromPort int) {
 		return
 	}
 	if ike, ok := parseIKEPayload(packet, cap(packet), s.natTEnabled() || fromPort == 4500); ok {
+		devLogIKE("rx", s.LocalAddrString(), s.RemoteAddrString(), ike)
 		s.deliverPacket(ike, packetDelivery{
 			channel: s.IKEChan, received: &s.receivedIKE, dropped: &s.droppedIKE, label: "IKE",
 		})
@@ -113,6 +114,7 @@ func (s *SocketManager) SendIKE(packet []byte) error {
 	if err != nil {
 		return err
 	}
+	devLogIKE("tx", s.LocalAddrString(), destination.String(), packet)
 	if s.natTEnabled() {
 		marked := make([]byte, 4, len(packet)+4)
 		packet = append(marked, packet...)
