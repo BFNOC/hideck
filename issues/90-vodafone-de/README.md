@@ -14,7 +14,7 @@ for w in "08:46:00 08:53:00" "17:52:00 17:59:00"; do
   set -- $w
   awk -v a="2026-11-04 $1" -v b="2026-11-04 $2" \
     '/^\[[0-9][0-9][0-9][0-9]-/ { t = substr($0, 2, 19); keep = (t >= a && t <= b) } keep' \
-    "$LOGS/app-2026-11-04.log" | sed -E 's/\x1b\[[0-9;]*m//g; s/[0-9]{11,}/<masked>/g' > "issue90-old-$1.log"
+    "$LOGS/app-2026-11-04.log" | sed -E 's/\x1b\[[0-9;]*m//g; s/[0-9]{11,}/<masked>/g; s/(imei:)[0-9A-Fa-f-]+/\1<masked>/g' > "issue90-old-$1.log"
   wc -l "issue90-old-$1.log"
 done
 ```
@@ -38,31 +38,57 @@ arm64 设备把 `GOARCH=amd64` 换成 `GOARCH=arm64`。
 
 ## 第三步：部署
 
-需要 root，在构建目录里执行，`/root/hideck/hideck` 换成实际路径。任何一步失败都会停下来；备份文件名带时间，不会覆盖之前的备份：
+### 3.1 临时把 DPD 间隔调到 40 秒（只为这一轮）
+
+断的时候，要靠一次 IKE 存活探测（DPD）的结果，来区分是外层网络断了，还是只有隧道里的 ESP 停了。Vodafone DE 预设的 DPD 是 120 秒，而一次中断在 75 秒左右就会触发隧道重建，探测赶不上。把 DPD 调到 40 秒后，在隧道里收不到任何包 40 秒时就会发一次探测：对方有回应说明外层通，没有回应说明外层也断了。平时有流量时不会多发。这一轮结束后改回去。
+
+把 `config/carrier_overrides.yaml`（在 HiDeck 工作目录下，现在内容是 `carrier_overrides: {}`）先备份，再改成下面这样：
 
 ```sh
-BIN=/root/hideck/hideck; BAK="$BIN.before-issue90-debug-$(date +%Y%m%d-%H%M%S)"; \
-test -x hideck-issue90 && cp "$BIN" "$BAK" && echo "backup: $BAK" && \
-systemctl stop hideck && install -m 755 hideck-issue90 "$BIN" && systemctl start hideck && date '+部署时间 %F %T'
+CFG=/root/hideck/config/carrier_overrides.yaml   # 换成实际路径
+cp "$CFG" "$CFG.before-issue90-debug-$(date +%Y%m%d-%H%M%S)"
+cat > "$CFG" <<'YAML'
+carrier_overrides:
+  "262-02":
+    # hideck#90 debug run only: DPD after 40 s of inbound silence. Remove afterwards.
+    dpd_interval_seconds: 40
+YAML
 ```
 
-记下打印出来的部署时间，第六步要用。
+### 3.2 换二进制
+
+需要 root，在构建目录里执行，`/root/hideck/hideck` 换成实际路径。部署时间在停服务**之前**记录。任何一步失败都会停下来；备份文件名带时间，不会覆盖之前的备份：
+
+```sh
+DEPLOY="$(date '+%F %T')"; echo "部署时间 $DEPLOY"; \
+BIN=/root/hideck/hideck; BAK="$BIN.before-issue90-debug-$(date +%Y%m%d-%H%M%S)"; \
+test -x hideck-issue90 && cp "$BIN" "$BAK" && echo "backup: $BAK" && \
+systemctl stop hideck && install -m 755 hideck-issue90 "$BIN" && systemctl start hideck
+```
+
+记下打印出来的部署时间，第四到第六步都要用。
 
 - 不需要任何环境变量或 systemd 附加设置；`/etc/systemd/system/hideck.service.d/` 里不要有 `issue90.conf`
-- `config/carrier_overrides.yaml` 保持 `{}`，「语音信箱提示」保持「自动」
-- 回滚：`systemctl stop hideck && cp <上面打印的 backup 路径> /root/hideck/hideck && systemctl start hideck`。不改数据库，回滚不用处理数据库
+- 「语音信箱提示」保持「自动」
+- 回滚：`systemctl stop hideck && cp <上面打印的 backup 路径> /root/hideck/hideck`，再把 `carrier_overrides.yaml` 换回备份，然后 `systemctl start hideck`。不改数据库，回滚不用处理数据库
 
 ## 第四步：确认调试日志已生效（部署后 5 分钟内）
 
+下面只统计部署之后的行，`DEPLOY` 填第三步打印的部署时间：
+
 ```sh
-LOGS=/root/hideck/logs; F="$LOGS/app-$(date +%F).log"
-grep 'debug-field build' "$F" | tail -1          # 1 行，version 为 v2.1.38-issue90-debug
-grep -c 'SUBSCRIBE(mwi) skipped' "$F"            # 每次注册 1 次，大于 0
-grep -c 'SUBSCRIBE(mwi) starting' "$F"           # 应为 0
-grep -c '\[dev\] SWu ESP per SA' "$F"            # 每 30 秒 1 行，持续增加
-grep -c '\[dev\] IMS SIP' "$F"                   # 大于 0
-ls "$LOGS/dev-pcap/"                             # 有 ims-inner-*.pcapng（root 才能读）
+LOGS=/root/hideck/logs; DEPLOY="2026-11-05 10:00:00"
+since() { awk -v a="$DEPLOY" '/^\[[0-9][0-9][0-9][0-9]-/ { keep = substr($0, 2, 19) >= a } keep' "$LOGS"/app-*.log; }
+since | grep 'debug-field build' | tail -1             # 1 行，version 为 v2.1.38-issue90-debug
+since | grep -c 'SUBSCRIBE(mwi) skipped'               # 每次注册 1 次，大于 0
+since | grep -c 'SUBSCRIBE(mwi) starting'              # 应为 0
+since | grep -c '\[dev\] SWu ESP per SA'               # 每 30 秒 1 行，持续增加
+since | grep -c '\[dev\] IMS SIP'                      # 大于 0
+since | grep -c '\[dev\] DPD probe'                    # 空闲时会有，0 也正常
+sudo ls -l "$LOGS/dev-pcap/" | tail -3                 # 有部署之后创建的 ims-inner-*.pcapng
 ```
+
+`since` 这个函数下面几步也会用到。
 
 日志时间现在精确到毫秒，例如 `[2026-11-05 01:28:21.504]`，这是正常的。
 
@@ -71,13 +97,13 @@ ls "$LOGS/dev-pcap/"                             # 有 ims-inner-*.pcapng（root
 不用盯着，正常使用即可。用下面这条命令可以随时看是否已经出现：
 
 ```sh
-grep 'port-s lifecycle' /root/hideck/logs/app-*.log | grep transport_timeout | tail -3
+since | grep 'port-s lifecycle' | grep transport_timeout | tail -3
 ```
 
 - **至少等到出现 1 次 `transport_timeout`**，并且之后已经恢复（日志里重新出现 `IMS REGISTER succeeded`），再等 5 分钟，然后做第六步
 - 如果 48 小时都没出现，也做第六步，同样有用
 - 期间如果方便，做一次主动短信测试：用别的手机给这张卡发一条，再用这张卡发一条出去。分别记下发送时间、是否收到、收到时间
-- 磁盘占用：日志约每天 60–100 MB，抓包约每天 15 MB
+- 磁盘占用：日志约每天 20–50 MB；抓包 32 MB 一个文件、最多保留 24 个（平时约每天 15 MB）
 
 ## 第六步：收集
 
@@ -87,7 +113,7 @@ grep 'port-s lifecycle' /root/hideck/logs/app-*.log | grep transport_timeout | t
 sudo sh debug/collect.sh --since "2026-11-05 10:00"
 ```
 
-脚本默认从 systemd 的工作目录里找 `logs/`，找不到时加 `--logs /实际路径/logs`。最后会打印 `written: .../hideck-debug-时间.tar.gz` 和摘要。如果打印"unmasked digit runs remain"并退出，说明发现了没打码的长数字，把这条提示贴给我们，不要上传压缩包。
+脚本默认从 systemd 的工作目录里找 `logs/`，找不到时加 `--logs /实际路径/logs`。最后会打印 `written: .../hideck-debug-时间.tar.gz` 和摘要，摘要开头的 coverage 段会列出时间范围、启动过的版本、抓包文件数和健康情况、期间每次 `transport_timeout` 的时间。如果打印"unmasked digit runs remain"并退出，说明发现了没打码的长数字，把这条提示贴给我们，不要上传压缩包。
 
 ## 第七步：回传
 
@@ -102,14 +128,18 @@ sudo sh debug/collect.sh --since "2026-11-05 10:00"
 
 | 内容 | 日志行 | 用来看什么 |
 |---|---|---|
-| 每 30 秒，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 断的时候是收方向先停，还是发方向先停，停在哪个 SA |
+| 每 30 秒，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 断的时候是收方向先停，还是发方向先停，停在哪个 SA；还有 SA 查找失败、解封装错误、NAT-T 保活次数；隧道拆掉前再打一次 `kind=final` |
+| DPD 探测 | `[dev] DPD probe sending/answered/failed` | 断的时候外层 IKE 通不通（配合 3.1 的 40 秒设置） |
+| 每 30 秒的内层统计 | `[dev] IMS inbound stats` | 内层 IMS SA（3GPP IPsec）的收发、重放拒绝、未知 SPI，以及 gVisor 协议栈的丢包、RST、重传计数 |
 | CHILD_SA 建立、删除、退役 | `[dev] CHILD_SA installed` / `delete sending` / `peer delete` / `inbound retired` | 和断开是否在同一时刻、换密钥后旧 SA 是否被提前删掉 |
 | 每个 IKE 消息的头部和解密后的载荷摘要 | `[dev] IKE rx/tx`、`[dev] IKE payloads rx/tx` | 换密钥、DPD、对方发来的 Delete；身份、EAP、密钥内容不记 |
 | 每条 SIP 消息（打码） | `[dev] IMS SIP rx/tx` | REGISTER 刷新发出去后有没有回应 |
 | 每条 IMS 连接的建立、读失败、关闭 | `[dev] IMS conn opened/read failed/closed` | 断开前各方向静默了多久，TCP 重传、RTO 超时次数、RTT |
-| 外层 UDP 发送失败、未知来源的包、NAT-T 保活 | `[dev] outer UDP ...`、`[dev] NAT-T keepalive sent` | 外层路径是否出过错 |
+| 外层 UDP 发送失败和恢复、未知来源的包 | `[dev] outer UDP send failed/recovered`、`[dev] outer UDP datagram from an unexpected source dropped` | 外层路径是否出过错 |
 | 每 5 分钟的 IMS 状态快照 | `[dev] IMS state snapshot` | 当时的注册、port-s、安全关联状态 |
 | 内层抓包（只有包头） | `logs/dev-pcap/*.pcapng` | 隧道里的包有没有发出、有没有回来 |
 | 宿主机网络事件 | 压缩包里的 `network.txt` | 当时有没有 Wi-Fi 断开、DHCP 续租等 |
 
-打码规则：`[dev]` 日志里的号码、IMSI、IMPI、IMEI、显示名、AP 的 MAC、鉴权信息、digest nonce 都已遮掉，短信正文不记。收集脚本会把所有文本里 11 位以上的连续数字再遮一遍。**抓包和日志里保留了内层 IPv6 地址和 Call-ID**，所以请放私有仓库。
+SWu 的 `[dev]` 行里 SPI 是十六进制，原有日志行里是十进制；IMS（3GPP）SA 的 SPI 和 SIP 头里一样用十进制。
+
+这一版保持 `server.debug` 原样，不会强制打开 Debug。打码规则：`[dev]` 日志里的号码、IMSI、IMPI、IMEI、显示名、AP 的 MAC、鉴权信息、digest nonce/rspauth/ck/ik、SDP 密钥都已遮掉，AT 命令只记命令名，短信正文不记；收集包里的宿主机网络日志会把 MAC、SSID 和连接名遮掉。收集脚本会把所有文本里 11 位以上的连续数字再遮一遍。**抓包和日志里保留了内层 IPv6 地址和 Call-ID**，所以请放私有仓库。
