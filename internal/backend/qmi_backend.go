@@ -917,7 +917,12 @@ func (q *QMIBackend) DeleteAllSMS(ctx context.Context) error {
 // OperatingModeController 实现
 // ============================================================================
 
-func (q *QMIBackend) SetOperatingMode(ctx context.Context, mode OperatingMode) error {
+func (q *QMIBackend) SetOperatingMode(ctx context.Context, mode OperatingMode) (err error) {
+	started := time.Now()
+	defer func() {
+		// [dev] debug-field: every QMI operating-mode request and its outcome.
+		logger.Info("[dev] QMI SetOperatingMode", "mode", int(mode), "elapsed", time.Since(started).String(), "err", err)
+	}()
 	var qmiMode qmi.OperatingMode
 	switch mode {
 	case ModeOnline:
