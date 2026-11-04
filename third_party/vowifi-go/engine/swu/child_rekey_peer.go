@@ -609,6 +609,8 @@ func (s *Session) retireDeletedChildSAs(spis []byte) []uint32 {
 	for _, localSPI := range retiredLocalSPIs {
 		s.retireKernelInboundChildSA(localSPI)
 	}
+	s.devLogChildSA("peer delete", zap.String("retired_local_spis", fmt.Sprintf("%08x", retiredLocalSPIs)),
+		zap.String("answered_spis", fmt.Sprintf("%08x", responseSPIs)))
 	return responseSPIs
 }
 

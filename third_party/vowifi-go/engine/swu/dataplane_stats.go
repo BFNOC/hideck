@@ -113,6 +113,7 @@ func (s *Session) logDataPlaneStats(
 			return
 		case <-ticker.C:
 			s.logDataPlaneStatsSnapshot(mode, stats.snapshot())
+			s.devLogESPSummary()
 		}
 	}
 }
