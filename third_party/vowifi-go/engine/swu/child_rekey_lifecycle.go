@@ -87,8 +87,13 @@ func (s *Session) activateChildSARuntime(runtime *childSARuntime) error {
 
 func (s *Session) installChildSARuntime(runtime *childSARuntime) {
 	s.childSAMu.Lock()
+	oldLocal, oldRemote := s.espLocalSPI, s.espRemoteSPI
 	s.installChildSARuntimeLocked(runtime)
 	s.childSAMu.Unlock()
+	s.devLogChildSA("installed", zap.String("local_spi", fmt.Sprintf("%08x", runtime.localSPI)),
+		zap.String("remote_spi", fmt.Sprintf("%08x", runtime.remoteSPI)),
+		zap.String("replaced_local_spi", fmt.Sprintf("%08x", oldLocal)),
+		zap.String("replaced_remote_spi", fmt.Sprintf("%08x", oldRemote)))
 	s.logChildKeys(childKeysFromRuntime(runtime))
 }
 
@@ -121,6 +126,8 @@ func (s *Session) deleteOldChildSA(remoteSPI, localSPI uint32) error {
 		return errors.New("swu: old CHILD_SA SPIs must be non-zero")
 	}
 	// RFC 7296 1.4.1: a Delete lists our inbound SPI; the reply lists the peer's.
+	s.devLogChildSA("delete sending", zap.String("local_spi", fmt.Sprintf("%08x", localSPI)),
+		zap.String("remote_spi", fmt.Sprintf("%08x", remoteSPI)))
 	response, err := s.sendEncryptedWithRetry([]ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 		ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(localSPI),
 	}}, ikev2.INFORMATIONAL)
@@ -174,6 +181,8 @@ func (s *Session) retireInboundChildSA(localSPI uint32) {
 	delete(s.espInboundSAs, localSPI)
 	delete(s.retiredChildSAs, localSPI)
 	s.childSAMu.Unlock()
+	s.devLogChildSA("inbound retired", zap.String("local_spi", fmt.Sprintf("%08x", localSPI)),
+		zap.Bool("was_installed", retired != nil))
 	wipeESPAssociation(retired)
 	s.retireKernelInboundChildSA(localSPI)
 }

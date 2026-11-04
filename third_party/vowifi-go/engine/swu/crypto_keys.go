@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"go.uber.org/zap"
+
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
@@ -31,6 +33,7 @@ func (s *Session) encryptAndWrapWithKeys(
 	if keys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
+	s.devLogIKEPayloads("tx", packetIKEHeader(pkt), msgID, pkt.Payloads)
 	encKey, integKey := ikeProtectionKeysFor(keys, packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
@@ -119,6 +122,7 @@ func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) (
 		default:
 			err = fmt.Errorf("%w: %w", errUnauthenticatedIKE, err)
 		}
+		s.devLogger().Info("[dev] IKE open failed", zap.Error(err))
 		if header := packetIKEHeader(pkt); header != nil {
 			return nil, fmt.Errorf("%w: exchange %d flags 0x%02x msg_id %d spi %016x/%016x payloads %s",
 				err, header.ExchangeType, header.Flags, header.MessageID,
@@ -128,6 +132,9 @@ func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) (
 	}
 	// Only an authenticated message proves the peer is alive (DPD).
 	s.markInboundActivity()
+	if header := packetIKEHeader(pkt); header != nil {
+		s.devLogIKEPayloads("rx", header, header.MessageID, payloads)
+	}
 	return payloads, nil
 }
 

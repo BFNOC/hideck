@@ -411,6 +411,8 @@ type Session struct {
 	debugMu sync.Mutex
 	debug   *WiresharkDebugger
 	Logger  *zap.Logger
+	// devESP counts ESP packets per SPI for the [dev] debug-field logs.
+	devESP devESPStats
 
 	// --- IKE_SA_INIT proposal negotiation ---
 	ikeProfileOffset         int

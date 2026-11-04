@@ -2,6 +2,7 @@ package swu
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"sync"
 
@@ -104,8 +105,14 @@ func (e *userspaceInnerPacketEndpoint) WritePacket(ctx context.Context, packet [
 		e.stats.espSendError.Add(1)
 		return errors.New("userspace data plane socket is nil")
 	}
+	outSPI := uint32(0)
+	if len(lease.data) >= 4 {
+		outSPI = binary.BigEndian.Uint32(lease.data[:4])
+	}
 	err = transport.SendESP(lease.data)
+	size := len(lease.data)
 	lease.Release()
+	e.session.devESP.record(true, outSPI, size, err != nil)
 	if err != nil {
 		e.stats.espSendError.Add(1)
 		return err
@@ -186,6 +193,7 @@ func (e *userspaceInnerPacketEndpoint) readOuterESP() {
 func (e *userspaceInnerPacketEndpoint) handleOuterESP(packet []byte) {
 	e.stats.espIn.Add(1)
 	inner, spi, err := e.session.decapsulateOuterESP(packet)
+	e.session.devESP.record(false, spi, len(packet), err != nil)
 	e.stats.lastInSPI.Store(spi)
 	if err != nil {
 		e.recordDecapsulationError(err)
