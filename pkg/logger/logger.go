@@ -198,7 +198,7 @@ func filterDeviceFields(fields []zapcore.Field) []zapcore.Field {
 
 func Setup(cfg LogConfig) {
 	consoleEncoderConfig := zap.NewDevelopmentEncoderConfig()
-	consoleEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05]")
+	consoleEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05.000]") // [dev] debug-field: milliseconds
 	consoleEncoderConfig.EncodeLevel = fixedWidthColorLevelEncoder
 	consoleEncoderConfig.EncodeCaller = func(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
 		const width = 28
@@ -211,7 +211,7 @@ func Setup(cfg LogConfig) {
 	consoleEncoderConfig.ConsoleSeparator = " "
 
 	fileEncoderConfig := zap.NewDevelopmentEncoderConfig()
-	fileEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05]")
+	fileEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("[2006-01-02 15:04:05.000]") // [dev] debug-field: milliseconds
 	fileEncoderConfig.EncodeLevel = fixedWidthLevelEncoder
 	fileEncoderConfig.EncodeCaller = func(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
 		const width = 28

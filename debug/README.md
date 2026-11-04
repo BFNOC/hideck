@@ -9,11 +9,16 @@
 | 每条 IMS SIP 消息，收发两个方向 | `logs/app-日期.log`，以 `[dev] IMS SIP rx` / `tx` 开头 | 完整头部，打码后保留；带连接编号、本端和对端地址 |
 | 每条 IMS TCP 连接的建立、读失败（EOF、RST、超时）、关闭 | `[dev] IMS conn opened` / `read failed` / `closed` | 带收发字节数，以及关闭前各方向静默了多久 |
 | 每 5 分钟一次 IMS 状态快照 | `[dev] IMS state snapshot` | 注册状态、P-CSCF、port-s、安全关联等，打码后保留 |
-| 每个 IKE 包的头部，收发两个方向 | `[dev] IKE rx` / `tx` | 交换类型、请求/响应、消息 ID、SPI、长度；载荷是加密的，不记 |
+| 每个 IKE 包的头部，收发两个方向 | `[dev] IKE rx` / `tx` | 交换类型、请求/响应、消息 ID、SPI、长度 |
+| 每个 IKE 消息解密后的载荷摘要 | `[dev] IKE payloads rx` / `tx` | 载荷类型、notify 类型、Delete 的 SPI、SA 提议的 SPI、流量选择器；身份、EAP、密钥、nonce、配置内容不记 |
+| CHILD_SA 的建立、删除和退役 | `[dev] CHILD_SA installed` / `delete sending` / `peer delete` / `inbound retired` | 新旧 SPI、当前收发 SPI |
+| 每 30 秒一次，每个 SPI 的 ESP 收发包数 | `[dev] SWu ESP per SA` | 累计和本次新增的包数、字节数、错误数、最后一个包距今多久 |
+| IMS TCP 连接断开时 gVisor 的 TCP 状态 | 随 `[dev] IMS conn read failed` / `closed` 一起打 | 收发段数、重传、RTO 超时次数、RTT、RTO、拥塞窗口 |
 | 每条经 AT 口排队执行的 AT 命令 | `[dev] AT command` | 命令、响应、耗时、错误；11 位以上数字打码 |
 | 每次 QMI 设置射频模式 | `[dev] QMI SetOperatingMode` | 请求的模式、结果、耗时 |
 | 内层 IMS 抓包（只有包头） | `logs/dev-pcap/*.pcapng` | 只保留 IP 和 TCP/UDP 头，不含 SIP 正文；可以用 Wireshark 打开 |
-| 正式版的 Debug 级日志 | `logs/app-日期.log` | 不用打开 `server.debug` |
+| 正式版的 Debug 级日志（含每 30 秒一次的 SWu 数据面统计） | `logs/app-日期.log` | 不用打开 `server.debug`；时间精确到毫秒 |
+| 宿主机网络事件 | 收集包里的 `network.txt` | NetworkManager、wpa_supplicant 等服务和内核的 Wi-Fi、链路、DHCP 记录；MAC 和 SSID 打码 |
 
 ## 二、隐私
 
