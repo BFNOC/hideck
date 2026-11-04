@@ -110,10 +110,12 @@ func (s *Session) logDataPlaneStats(
 	for {
 		select {
 		case <-ctx.Done():
+			// [dev] the last counters before the data plane goes away.
+			s.devLogESPSummary("final", stats.snapshot())
 			return
 		case <-ticker.C:
 			s.logDataPlaneStatsSnapshot(mode, stats.snapshot())
-			s.devLogESPSummary()
+			s.devLogESPSummary("periodic", stats.snapshot())
 		}
 	}
 }

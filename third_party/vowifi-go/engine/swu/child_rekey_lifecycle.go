@@ -90,7 +90,7 @@ func (s *Session) installChildSARuntime(runtime *childSARuntime) {
 	oldLocal, oldRemote := s.espLocalSPI, s.espRemoteSPI
 	s.installChildSARuntimeLocked(runtime)
 	s.childSAMu.Unlock()
-	s.devLogChildSA("installed", zap.String("local_spi", fmt.Sprintf("%08x", runtime.localSPI)),
+	s.devLogChildSA("installed", zap.String("path", "rekey"), zap.String("local_spi", fmt.Sprintf("%08x", runtime.localSPI)),
 		zap.String("remote_spi", fmt.Sprintf("%08x", runtime.remoteSPI)),
 		zap.String("replaced_local_spi", fmt.Sprintf("%08x", oldLocal)),
 		zap.String("replaced_remote_spi", fmt.Sprintf("%08x", oldRemote)))

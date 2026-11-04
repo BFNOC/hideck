@@ -41,11 +41,26 @@ func TestDevSIPStreamSplitsMessagesAcrossReads(t *testing.T) {
 
 func TestDevSIPMessageSizeWaitsForTheBody(t *testing.T) {
 	head := "SIP/2.0 200 OK\r\nl: 5\r\n\r\n"
-	if _, ok := devSIPMessageSize([]byte(head + "abc")); ok {
+	if _, complete, valid := devSIPMessageSize([]byte(head + "abc")); complete || !valid {
 		t.Fatal("incomplete body reported complete")
 	}
-	if size, ok := devSIPMessageSize([]byte(head + "abcdeNEXT")); !ok || size != len(head)+5 {
-		t.Fatalf("size = %d, %t", size, ok)
+	if size, complete, valid := devSIPMessageSize([]byte(head + "abcdeNEXT")); !complete || !valid || size != len(head)+5 {
+		t.Fatalf("size = %d, %t, %t", size, complete, valid)
+	}
+	for _, length := range []string{"9223372036854775807", "99999999999999999999", "300000"} {
+		if _, _, valid := devSIPMessageSize([]byte("SIP/2.0 200 OK\r\nContent-Length: " + length + "\r\n\r\n")); valid {
+			t.Fatalf("Content-Length %s accepted", length)
+		}
+	}
+}
+
+func TestDevSIPStreamDropsAHugeContentLengthWithoutPanicking(t *testing.T) {
+	output := captureDevLog(t)
+	trace := &devConnTrace{id: 9, proto: "tcp"}
+	trace.stream("rx", []byte("SIP/2.0 200 OK\r\nContent-Length: 9223372036854775807\r\n\r\nsecret"))
+	if len(trace.rx) != 0 || !strings.Contains(output.String(), "bad_content_length=true") ||
+		strings.Contains(output.String(), "secret") {
+		t.Fatalf("rx=%q log=%s", trace.rx, output.String())
 	}
 }
 

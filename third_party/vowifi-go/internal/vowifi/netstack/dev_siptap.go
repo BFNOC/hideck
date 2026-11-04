@@ -98,13 +98,15 @@ func (t *devConnTrace) stream(direction string, data []byte) {
 			*buffer = nil
 			return
 		}
-		size, ok := devSIPMessageSize(*buffer)
-		if !ok {
-			if len(*buffer) > devSIPStreamLimit {
-				logging.DevLog("IMS conn stream not parsable as SIP; buffer dropped", "conn", t.id,
-					"dir", direction, "bytes", len(*buffer), "head", strconv.Quote(devHead(*buffer)))
-				*buffer = nil
-			}
+		size, complete, valid := devSIPMessageSize(*buffer)
+		if !valid || (!complete && len(*buffer) > devSIPStreamLimit) {
+			// Only the size goes to the log: unparsed bytes are not redacted.
+			logging.DevLog("IMS conn stream not parsable as SIP; buffer dropped", "conn", t.id,
+				"dir", direction, "bytes", len(*buffer), "bad_content_length", !valid)
+			*buffer = nil
+			return
+		}
+		if !complete {
 			return
 		}
 		t.logSIP(direction, string((*buffer)[:size]))
@@ -112,22 +114,28 @@ func (t *devConnTrace) stream(direction string, data []byte) {
 	}
 }
 
-// devSIPMessageSize returns the length of the first complete message, using
-// Content-Length (RFC 3261 §18.3) and 0 when a stream message omits it.
-func devSIPMessageSize(buffer []byte) (int, bool) {
+// devSIPMessageSize returns the length of the first message, using
+// Content-Length (RFC 3261 §18.3) and 0 when a stream message omits it;
+// complete reports whether all of it is buffered, valid whether the
+// Content-Length is a sane number.
+func devSIPMessageSize(buffer []byte) (size int, complete, valid bool) {
 	end, separator := bytes.Index(buffer, []byte("\r\n\r\n")), 4
 	if bare := bytes.Index(buffer, []byte("\n\n")); end < 0 || (bare >= 0 && bare < end) {
 		end, separator = bare, 2
 	}
 	if end < 0 {
-		return 0, false
+		return 0, false, true
 	}
 	length := 0
 	if match := devContentLengthHdr.FindSubmatch(buffer[:end]); match != nil {
-		length, _ = strconv.Atoi(string(match[1]))
+		parsed, err := strconv.Atoi(string(match[1]))
+		if err != nil || parsed < 0 || parsed > devSIPStreamLimit {
+			return 0, false, false
+		}
+		length = parsed
 	}
-	size := end + separator + length
-	return size, size <= len(buffer)
+	size = end + separator + length
+	return size, size <= len(buffer), true
 }
 
 func (t *devConnTrace) logSIP(direction, message string) {
@@ -136,20 +144,13 @@ func (t *devConnTrace) logSIP(direction, message string) {
 	if !devSIPStartLine.MatchString(firstLine) {
 		if count := t.nonSIP.Add(1); logging.DevSampled(count) {
 			logging.DevLog("IMS conn non-SIP data", "conn", t.id, "proto", t.proto, "dir", direction,
-				"bytes", len(message), "count", count, "head", strconv.Quote(devHead([]byte(message))))
+				"bytes", len(message), "count", count)
 		}
 		return
 	}
 	logging.DevLog("IMS SIP "+direction, "conn", t.id, "proto", t.proto, "origin", t.origin,
 		"local", t.local, "remote", t.remote, "bytes", len(message),
 		"first_line", logging.DevRedactSIP(firstLine), "sip", logging.DevRedactSIP(message))
-}
-
-func devHead(data []byte) string {
-	if len(data) > 48 {
-		data = data[:48]
-	}
-	return logging.RedactSIPRaw(string(data))
 }
 
 func (t *devConnTrace) wrote(data []byte, n int) {

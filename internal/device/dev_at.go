@@ -1,7 +1,8 @@
 package device
 
-// [dev] debug-field: every AT command run through the Pool's AT gate, with
-// its response (11+ digit runs masked: IMSI, ICCID, IMEI) and timing.
+// [dev] debug-field: every AT command run through the Pool's AT gate, by
+// command name only (no arguments) with the final result, response size and
+// timing. Responses can carry IMSI, ICCID, keys or SMS, so they are not logged.
 
 import (
 	"regexp"
@@ -11,10 +12,30 @@ import (
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
-var devATLongDigits = regexp.MustCompile(`[0-9]{11,}`)
+var (
+	devATCommandName = regexp.MustCompile(`^(?i)AT[+$^%&]?[A-Z0-9]*[?]?`)
+	devATLongDigits  = regexp.MustCompile(`[0-9]{8,}`)
+)
 
 func devLogAT(deviceID, command, response string, err error, elapsed time.Duration) {
-	logger.Info("[dev] AT command", "device", deviceID, "command", devATLongDigits.ReplaceAllString(command, "<masked>"),
-		"response", devATLongDigits.ReplaceAllString(strings.TrimSpace(response), "<masked>"),
-		"elapsed", elapsed.String(), "err", err)
+	result := "none"
+	for _, line := range strings.Split(response, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "OK" || line == "ERROR" || strings.HasPrefix(line, "+CME ERROR") || strings.HasPrefix(line, "+CMS ERROR") {
+			result = line
+			break
+		}
+	}
+	if strings.HasPrefix(result, "+CM") {
+		result = result[:len("+CME ERROR")]
+	}
+	logger.Info("[dev] AT command", "device", deviceID, "command", devATCommandName.FindString(strings.TrimSpace(command)),
+		"result", result, "response_bytes", len(response), "elapsed", elapsed.String(), "err", devATError(err))
+}
+
+func devATError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return devATLongDigits.ReplaceAllString(err.Error(), "<masked>")
 }

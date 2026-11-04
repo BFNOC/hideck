@@ -102,9 +102,13 @@ func (s *Session) devLogger() *zap.Logger {
 	return logger.L()
 }
 
-func (s *Session) devLogESPSummary() {
+func (s *Session) devLogESPSummary(kind string, totals dataPlaneStatsSnapshot) {
 	snapshot := s.captureChildSASnapshot()
-	s.devLogger().Info("[dev] SWu ESP per SA",
+	s.devLogger().Info("[dev] SWu ESP per SA", zap.String("kind", kind), zap.String("session", fmt.Sprintf("%p", s)),
+		zap.Uint64("esp_in", totals.espIn), zap.Uint64("esp_send", totals.espSend),
+		zap.Uint64("esp_send_error", totals.espSendError), zap.Uint64("esp_out_sa_miss", totals.espOutSAMiss),
+		zap.Uint64("esp_encap_error", totals.espEncapError), zap.Uint64("esp_in_sa_miss", totals.espInSAMiss),
+		zap.Uint64("esp_decap_error", totals.espDecapError), zap.Uint64("tun_write_error", totals.tunWriteError),
 		zap.String("current_local_spi", fmt.Sprintf("%08x", snapshot.localSPI)),
 		zap.String("current_remote_spi", fmt.Sprintf("%08x", snapshot.remoteSPI)),
 		zap.String("inbound_spis", snapshot.inboundSPIText()),
@@ -113,7 +117,7 @@ func (s *Session) devLogESPSummary() {
 
 func (s *Session) devLogChildSA(event string, fields ...zap.Field) {
 	snapshot := s.captureChildSASnapshot()
-	s.devLogger().Info("[dev] CHILD_SA "+event, append(fields,
+	s.devLogger().Info("[dev] CHILD_SA "+event, append(fields, zap.String("session", fmt.Sprintf("%p", s)),
 		zap.String("current_local_spi", fmt.Sprintf("%08x", snapshot.localSPI)),
 		zap.String("current_remote_spi", fmt.Sprintf("%08x", snapshot.remoteSPI)),
 		zap.String("inbound_spis", snapshot.inboundSPIText()))...)
@@ -174,7 +178,10 @@ func (s *Session) devLogIKEPayloads(direction string, header *ikev2.IKEHeader, m
 	}
 	fields := []zap.Field{zap.Uint32("msg_id", msgID), zap.String("payloads", strings.Join(names, ","))}
 	if header != nil {
-		fields = append(fields, zap.Uint8("exchange", uint8(header.ExchangeType)),
+		fields = append(fields, zap.String("session", fmt.Sprintf("%p", s)),
+			zap.String("ike_spi_i", fmt.Sprintf("%016x", header.SPIi)),
+			zap.String("ike_spi_r", fmt.Sprintf("%016x", header.SPIr)),
+			zap.Uint8("exchange", uint8(header.ExchangeType)),
 			zap.Bool("response", header.Flags&0x20 != 0), zap.Bool("initiator", header.Flags&0x08 != 0))
 	}
 	if len(notifies) > 0 {

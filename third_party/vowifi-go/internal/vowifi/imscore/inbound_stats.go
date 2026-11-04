@@ -86,6 +86,15 @@ func (s *Service) logInboundStats(ctx context.Context, interval time.Duration) {
 
 func (s *Service) logInboundStatsSnapshot(stats inboundStatsSnapshot) {
 	status := s.receiverStatus()
+	// [dev] debug-field runs at Info, so the same counters (including the
+	// 3GPP IMS SA flow, replay and unknown-SPI counts under network) are
+	// repeated as a [dev] line.
+	logging.DevLog("IMS inbound stats",
+		"device", s.DeviceID(), "transport", status.Transport,
+		"udp_socket_reads", stats.UDPSocketReads, "tcp_accepts", stats.TCPAccepts,
+		"tcp_socket_reads", stats.TCPSocketReads, "tcp_socket_bytes", stats.TCPSocketBytes,
+		"sip_parsed_messages", stats.SIPParsedMessages, "ports_since_last_read", s.portSSinceLastRead(),
+		"network", s.networkDiagnostics())
 	logging.Debug("IMS inbound stats",
 		"device", s.DeviceID(), "transport", status.Transport,
 		"local_address", status.LocalAddress, "local_port", s.cfg.LocalPort,

@@ -55,8 +55,10 @@ for file in "$LOGS"/app-*.log; do
 done
 
 # Inner IMS captures: headers only, but inner IPv6 addresses are kept. Pick
-# them by the time in the file name, which is HiDeck's clock like the logs.
-SINCE_STAMP=$(date -d "$SINCE" +%Y%m%d-%H%M%S)
+# them by the start time in the file name, which is HiDeck's clock like the
+# logs. A file started up to a day before --since can still cover it (one
+# file per tunnel, rotated at 32 MB), so those come too.
+SINCE_STAMP=$(date -d "$SINCE 24 hours ago" +%Y%m%d-%H%M%S)
 if [ -d "$LOGS/dev-pcap" ]; then
 	for file in "$LOGS"/dev-pcap/ims-inner-*.pcapng; do
 		[ -f "$file" ] || continue
@@ -70,6 +72,7 @@ fi
 	echo "collected: $(date '+%F %T %z')"
 	echo "since: $SINCE"
 	echo "logs: $LOGS"
+	echo "host timezone: $(date +%Z%z)"
 	uname -a
 	grep -h 'debug-field build' "$OUT"/logs/*.log | tail -1 || true
 	echo
@@ -90,7 +93,8 @@ if command -v journalctl >/dev/null; then
 	{
 		journalctl --since "$SINCE" --no-pager -u NetworkManager -u wpa_supplicant -u systemd-networkd -u dhcpcd -u iwd 2>/dev/null
 		journalctl -k --since "$SINCE" --no-pager 2>/dev/null | grep -iE 'wlan|wifi|link (is )?(up|down)|carrier|deauth|disassoc|eth[0-9]|enp|wlp'
-	} | mask | sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/<mac>/g; s/(SSID|ssid)([=: ]+)("[^"]*"|'"'"'[^'"'"']*'"'"'|[^ ,]+)/\1\2<ssid>/g' >"$OUT/network.txt" || true
+	} | mask | sed -E 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/<mac>/g; s/([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}/<mac>/g; s/(SSID|ssid)([=: ]+)[^ ,]+/\1\2<ssid>/g; s/'"'"'[^'"'"']*'"'"'/<name>/g; s/"[^"]*"/<name>/g' >"$OUT/network.txt" || true
+	echo "(host journal, host clock $(date +%Z%z); app logs use HiDeck's clock)" >>"$OUT/network.txt"
 fi
 
 for overrides in "$(dirname "$LOGS")/config/carrier_overrides.yaml" ./config/carrier_overrides.yaml; do
@@ -99,7 +103,25 @@ done
 
 # Summary: counts and a timeline of the lines that usually matter.
 count() { cat "$OUT"/logs/*.log | grep -cF -- "$1" || true; }
+lines=$(cat "$OUT"/logs/*.log 2>/dev/null | wc -l)
+if [ "$lines" -eq 0 ]; then
+	echo "no app log lines since $SINCE in $LOGS; check --since and --logs" >&2
+	exit 1
+fi
 {
+	echo "== coverage"
+	echo "log lines: $lines"
+	echo "first: $(cat "$OUT"/logs/*.log | grep -m1 -oE '^\[[0-9-]+ [0-9:.]+\]')"
+	echo "last:  $(cat "$OUT"/logs/*.log | grep -oE '^\[[0-9-]+ [0-9:.]+\]' | tail -1)"
+	echo "builds started:"
+	grep -h 'debug-field build' "$OUT"/logs/*.log | grep -oE '^\[[^]]+\]|"version": "[^"]*"' | paste - - || true
+	echo "pcap files: $(ls "$OUT"/pcap | wc -l)"
+	echo "pcap health:"
+	grep -h '\[dev\] IMS inner pcap' "$OUT"/logs/*.log | grep -vE 'pcap (opened|closed)' | cut -c1-200 | tail -20 || true
+	grep -h '\[dev\] IMS inner pcap closed' "$OUT"/logs/*.log | grep -oE '"dropped": [1-9][0-9]*' | sort | uniq -c || true
+	echo "transport_timeout since --since:"
+	grep -h 'port-s lifecycle' "$OUT"/logs/*.log | grep transport_timeout | grep -oE '^\[[^]]+\]' || true
+	echo
 	echo "== counts since $SINCE"
 	for pattern in \
 		'IMS REGISTER succeeded' 'IMS REGISTER failed' 'IMS SIP tx' 'IMS SIP rx' \
