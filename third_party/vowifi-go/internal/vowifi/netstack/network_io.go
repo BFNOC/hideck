@@ -46,7 +46,11 @@ func (n *Network) DialContext(
 		return nil, err
 	}
 	if strings.HasPrefix(network, "udp") {
-		return gonet.DialUDP(n.stack, &local, &remote, protocol)
+		conn, err := gonet.DialUDP(n.stack, &local, &remote, protocol)
+		if err != nil {
+			return nil, err
+		}
+		return newDevUDPConn(conn, "dial"), nil
 	}
 	if !strings.HasPrefix(network, "tcp") {
 		return nil, fmt.Errorf("netstack: unsupported dial network %q", network)
@@ -92,7 +96,11 @@ func (n *Network) ListenPacket(
 	if err != nil {
 		return nil, err
 	}
-	return gonet.DialUDP(n.stack, &local, nil, protocol)
+	conn, err := gonet.DialUDP(n.stack, &local, nil, protocol)
+	if err != nil {
+		return nil, err
+	}
+	return newDevUDPConn(conn, "listen"), nil
 }
 
 func (n *Network) fullAddressFromRemote(

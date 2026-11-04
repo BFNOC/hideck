@@ -70,7 +70,7 @@ func dialTCPWithMSS(ctx context.Context, networkStack *stack.Stack, cfg tcpDialC
 		endpoint.Close()
 		return nil, err
 	}
-	return newIMSTCPConn(&queue, endpoint, cfg.remote), nil
+	return newIMSTCPConn(&queue, endpoint, cfg.remote, "dial"), nil
 }
 
 func configureIMSTCPKeepalive(endpoint tcpip.Endpoint) error {
@@ -199,7 +199,7 @@ func (l *imsTCPListener) acceptTCP() (net.Conn, tcpip.Endpoint, error) {
 		n.Close()
 		return nil, nil, kaErr
 	}
-	return newIMSTCPConn(wq, n, peer), n, nil
+	return newIMSTCPConn(wq, n, peer, "accept"), n, nil
 }
 
 func tcpAddress(address tcpip.FullAddress) *net.TCPAddr {

@@ -22,22 +22,36 @@ import (
 type imsTCPConn struct {
 	*gonet.TCPConn
 	remote net.Addr
+	dev    *devConnTrace
 }
 
-func newIMSTCPConn(queue *waiter.Queue, endpoint tcpip.Endpoint, remote tcpip.FullAddress) *imsTCPConn {
-	return &imsTCPConn{TCPConn: gonet.NewTCPConn(queue, endpoint), remote: tcpAddress(remote)}
+// newIMSTCPConn wraps a gonet connection; origin ("dial" or "accept") goes
+// into the [dev] trace.
+func newIMSTCPConn(queue *waiter.Queue, endpoint tcpip.Endpoint, remote tcpip.FullAddress, origin string) *imsTCPConn {
+	conn := gonet.NewTCPConn(queue, endpoint)
+	peer := tcpAddress(remote)
+	return &imsTCPConn{TCPConn: conn, remote: peer, dev: newDevConnTrace("tcp", origin, conn.LocalAddr(), peer)}
 }
 
 func (c *imsTCPConn) RemoteAddr() net.Addr { return c.remote }
 
 func (c *imsTCPConn) Read(buffer []byte) (int, error) {
 	n, err := c.TCPConn.Read(buffer)
-	return n, normalizeGonetTCPError(err)
+	err = normalizeGonetTCPError(err)
+	c.dev.read(buffer, n, err)
+	return n, err
 }
 
 func (c *imsTCPConn) Write(buffer []byte) (int, error) {
 	n, err := c.TCPConn.Write(buffer)
+	c.dev.wrote(buffer, n)
 	return n, normalizeGonetTCPError(err)
+}
+
+func (c *imsTCPConn) Close() error {
+	err := c.TCPConn.Close()
+	c.dev.close(err)
+	return err
 }
 
 func normalizeGonetTCPError(err error) error {
