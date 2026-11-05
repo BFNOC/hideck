@@ -141,7 +141,13 @@ sh debug/collect.sh --since "$DEPLOY"
    - 每次目标事件的时间，以及你当时有没有做什么（重启 Wi-Fi、切卡、重启模组等）
    - 主动短信测试的记录
    - `summary.txt` 开头的 coverage 和计数部分
-3. 把 `carrier_overrides.yaml` 换回备份（或者删掉 `"262-02"` 那一段），然后 `systemctl restart hideck`。想同时停掉调试日志和抓包，就按 3.2 的回滚把二进制也换回去
+3. **把 DPD 改回去**：这个设置写在配置文件里，换回正式版二进制也不会自己消失。把 `carrier_overrides.yaml` 换回备份（或者删掉 `"262-02"` 那一段），然后 `systemctl restart hideck`，再确认一下：
+
+   ```sh
+   cat /root/hideck/config/carrier_overrides.yaml   # 不应再有 dpd_interval_seconds: 40
+   ```
+
+   想同时停掉调试日志和抓包，就按 3.2 的回滚把二进制也换回去
 
 ## 这一版多记了什么
 
