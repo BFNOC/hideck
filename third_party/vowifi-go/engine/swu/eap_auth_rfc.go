@@ -18,6 +18,7 @@ func (s *Session) handleRFCEAP(data []byte) error {
 	if err != nil || len(payloads) == 0 {
 		return err
 	}
+	s.devLogEAPPayloads("tx", payloads)
 	return s.sendIKEAuthRequest(payloads)
 }
 
@@ -25,6 +26,7 @@ func (s *Session) handleRFCEAP(data []byte) error {
 // message and returns the IKE payloads to send. The IKE_AUTH state machine owns
 // transport and retransmission.
 func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
+	s.devLogEAP("rx", data)
 	packet, err := eapaka.ParsePacket(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse EAP: %w", err)

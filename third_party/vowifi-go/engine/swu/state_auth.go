@@ -530,6 +530,7 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			if err != nil {
 				return "", err
 			}
+			s.devLogEAPPayloads("tx", response)
 			if s.stage == stageFinal {
 				return "final", nil
 			}
