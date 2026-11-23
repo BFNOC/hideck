@@ -1043,20 +1043,36 @@ func (p *Pool) restorePostSwitchConnectivity(deviceID string, worker *Worker, sn
 		}
 		if restoreGateErr != nil {
 			if markDegraded {
-				p.markESIMSwitchPhase(deviceID, esim.SwitchPhaseDegraded)
+				p.markESIMSwitchPhaseIfToken(deviceID, snapshot.SwitchToken, esim.SwitchPhaseDegraded)
 			}
 			logger.Warn("切卡后跳过 VoWiFi 恢复：恢复门控未通过",
 				"device", deviceID,
 				"reason", "post_switch_finalize",
 				"err", restoreGateErr)
-		} else {
-			p.clearDesiredVoWiFiRecoverState(deviceID)
-			if err := p.voWiFiHost().SwitchEnd(context.Background(), deviceID, true); err != nil {
-				p.markESIMSwitchPhase(deviceID, esim.SwitchPhaseDegraded)
-				logger.Error("切卡后恢复 VoWiFi 失败", "device", deviceID, "err", err)
-			} else {
+			// The snapshot's radio/data would land on a newer switch.
+			if !p.switchTokenStillCurrent(deviceID, snapshot.SwitchToken, "vowifi_restore_gate") {
+				logger.Info("切卡后恢复门控失败时已有新的切卡，不做射频/数据兜底",
+					"device", deviceID,
+					"switch_token", snapshot.SwitchToken)
 				return
 			}
+		} else {
+			p.clearDesiredVoWiFiRecoverState(deviceID)
+			err := p.voWiFiHost().SwitchEnd(context.Background(), deviceID, true)
+			if err == nil {
+				return
+			}
+			// A newer switch's SwitchBegin cancels this restore; the degraded mark and
+			// the snapshot's radio/data would then land on the newer switch.
+			if errors.Is(err, context.Canceled) || !p.switchTokenStillCurrent(deviceID, snapshot.SwitchToken, "vowifi_restore_result") {
+				logger.Info("切卡后 VoWiFi 恢复已取消或已被新的切卡取代，不标记降级、不做射频/数据兜底",
+					"device", deviceID,
+					"switch_token", snapshot.SwitchToken,
+					"err", err)
+				return
+			}
+			p.markESIMSwitchPhaseIfToken(deviceID, snapshot.SwitchToken, esim.SwitchPhaseDegraded)
+			logger.Error("切卡后恢复 VoWiFi 失败", "device", deviceID, "err", err)
 		}
 	}
 	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "post_switch_finalize", worker.Config.ESIMSwitch.RadioCycle)
