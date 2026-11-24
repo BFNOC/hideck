@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yibaiba/hideck/internal/backend"
@@ -22,6 +23,25 @@ var postSwitchSIMAuthRecoveryDelays = []time.Duration{
 }
 
 var postSwitchSIMAuthReadyWaitTimeout = 30 * time.Second
+
+// postSwitchVoWiFiRestoreWait bounds how long the device stays in the switching
+// state while the restored VoWiFi start retries. After it the switch finishes and
+// the start continues in the background like any other start, which Disable,
+// another switch or device delete cancel through the lifecycle controller.
+var postSwitchVoWiFiRestoreWait = 40 * time.Second
+
+// postSwitchBackgroundRestores counts the goroutines that still have to handle
+// the result of a restore left running. Tests wait on it before they swap the
+// global logger.
+var postSwitchBackgroundRestores sync.WaitGroup
+
+// postSwitchModeRetryDelays are the waits between operating mode retries after a
+// QMI stall during the snapshot radio restore.
+var postSwitchModeRetryDelays = []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second}
+
+// errPostSwitchRestoreSuperseded stops the snapshot radio restore between retries
+// once a newer switch, a rebuilt worker or a stopping pool owns the device.
+var errPostSwitchRestoreSuperseded = errors.New("post-switch restore superseded")
 
 const (
 	postSwitchSIMAuthUSIMAID = "A0000000871002"
@@ -144,6 +164,16 @@ func (p *Pool) beginESIMSwitchForWorkerLocked(
 		return esimSwitchContext{}
 	}
 	transition.switchEpoch++
+	// The token is taken before the snapshot reads the modem, so a late restore
+	// of an older switch already sees this one while the read runs.
+	p.switchMu.Lock()
+	if p.latestSwitchTokens == nil {
+		p.latestSwitchTokens = make(map[string]uint64)
+	}
+	p.switchSeq++
+	switchToken := p.switchSeq
+	p.latestSwitchTokens[deviceID] = switchToken
+	p.switchMu.Unlock()
 	snapshot := p.captureESIMSwitchContext(deviceID, targetICCID)
 	p.switchMu.Lock()
 	if p.switchingDevices == nil {
@@ -155,8 +185,7 @@ func (p *Pool) beginESIMSwitchForWorkerLocked(
 	if p.switchTokens == nil {
 		p.switchTokens = make(map[string]uint64)
 	}
-	p.switchSeq++
-	snapshot.SwitchToken = p.switchSeq
+	snapshot.SwitchToken = switchToken
 	snapshot.Phase = esim.SwitchPhasePrepare
 	snapshot.PhaseUpdatedAt = time.Now()
 	p.switchingDevices[deviceID] = true
@@ -1022,23 +1051,31 @@ func (p *Pool) restorePostSwitchConnectivity(deviceID string, worker *Worker, sn
 		logger.Info("切卡后跳过 VoWiFi 恢复：Lebara 清污维护锁",
 			"device", deviceID,
 			"reason", "post_switch_finalize")
-		p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "post_switch_finalize", worker.Config.ESIMSwitch.RadioCycle)
+		p.restoreRadioDataUnlessSuperseded(deviceID, worker, snapshot, "lebara_recover_lock")
 		return
 	}
 	if worker.Config.VoWiFiEnabled {
+		var identityErr error
 		if restoreGateErr == nil && p.shouldWaitLebaraUKHomeIdentity(worker, snapshot) {
-			if err := p.waitLebaraUKHomeIdentity(context.Background(), worker, snapshot.TargetICCID); err != nil {
-				restoreGateErr = err
-				if errors.Is(err, ErrLebaraUKFlippedIMSI) {
-					p.launchLebaraUKIdentityRecover(worker, snapshot.TargetICCID, false, true)
-				}
+			identityErr = p.waitLebaraUKHomeIdentity(context.Background(), worker, snapshot.TargetICCID)
+		}
+		// The Lebara wait can take up to lebaraUKIdentityWaitTimeout after the
+		// caller's last check. A superseded restore stops before it starts a Lebara
+		// recover, clears the desired recover state or submits SwitchEnd.
+		if p.leavePostSwitchRestore(deviceID, worker, snapshot, "vowifi_restore_begin", errors.Join(restoreGateErr, identityErr)) {
+			return
+		}
+		if identityErr != nil {
+			restoreGateErr = identityErr
+			if errors.Is(identityErr, ErrLebaraUKFlippedIMSI) {
+				p.launchLebaraUKIdentityRecover(worker, snapshot.TargetICCID, false, true)
 			}
 		}
 		if p.lebaraUKRecoverBlocksVoWiFi(deviceID) {
 			logger.Info("切卡后跳过 VoWiFi 恢复：Lebara 清污维护锁",
 				"device", deviceID,
 				"reason", "post_switch_finalize")
-			p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "post_switch_finalize", worker.Config.ESIMSwitch.RadioCycle)
+			p.restoreRadioDataUnlessSuperseded(deviceID, worker, snapshot, "lebara_identity_wait")
 			return
 		}
 		if restoreGateErr != nil {
@@ -1048,34 +1085,181 @@ func (p *Pool) restorePostSwitchConnectivity(deviceID string, worker *Worker, sn
 			logger.Warn("切卡后跳过 VoWiFi 恢复：恢复门控未通过",
 				"device", deviceID,
 				"reason", "post_switch_finalize",
+				"switch_token", snapshot.SwitchToken,
 				"err", restoreGateErr)
-			// The snapshot's radio/data would land on a newer switch.
-			if !p.switchTokenStillCurrent(deviceID, snapshot.SwitchToken, "vowifi_restore_gate") {
-				logger.Info("切卡后恢复门控失败时已有新的切卡，不做射频/数据兜底",
-					"device", deviceID,
-					"switch_token", snapshot.SwitchToken)
-				return
-			}
 		} else {
 			p.clearDesiredVoWiFiRecoverState(deviceID)
-			err := p.voWiFiHost().SwitchEnd(context.Background(), deviceID, true)
-			if err == nil {
-				return
+			if finished, err := p.switchEndWithinRestoreWait(deviceID, worker, snapshot); finished && err != nil {
+				p.failPostSwitchRestore(deviceID, worker, snapshot, "vowifi_restore_result", err)
 			}
-			// A newer switch's SwitchBegin cancels this restore; the degraded mark and
-			// the snapshot's radio/data would then land on the newer switch.
-			if errors.Is(err, context.Canceled) || !p.switchTokenStillCurrent(deviceID, snapshot.SwitchToken, "vowifi_restore_result") {
-				logger.Info("切卡后 VoWiFi 恢复已取消或已被新的切卡取代，不标记降级、不做射频/数据兜底",
-					"device", deviceID,
-					"switch_token", snapshot.SwitchToken,
-					"err", err)
-				return
-			}
-			p.markESIMSwitchPhaseIfToken(deviceID, snapshot.SwitchToken, esim.SwitchPhaseDegraded)
-			logger.Error("切卡后恢复 VoWiFi 失败", "device", deviceID, "err", err)
+			return
 		}
 	}
-	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "post_switch_finalize", worker.Config.ESIMSwitch.RadioCycle)
+	p.restoreRadioDataUnlessSuperseded(deviceID, worker, snapshot, "radio_data_fallback")
+}
+
+const postSwitchRestoreLeftMsg = "切卡后恢复不再继续（新的切卡、worker 已替换或服务停止），不恢复 VoWiFi、不标记降级、不做射频/数据兜底"
+
+// postSwitchRestoreSupersededReason says what took deviceID from the restore of
+// snapshot: a switch begun after it, a rebuilt worker, or a pool that is
+// stopping. A switch record the watchdog cleared is no newer owner: that switch
+// is still the last one begun, so its restore goes on as main's does.
+func (p *Pool) postSwitchRestoreSupersededReason(deviceID string, worker *Worker, snapshot esimSwitchContext) string {
+	switch {
+	case p.ctx != nil && p.ctx.Err() != nil:
+		return "pool_stopped"
+	case snapshot.SwitchToken != 0 && p.latestSwitchToken(deviceID) > snapshot.SwitchToken:
+		return "newer_switch"
+	case !p.esimSwitchOwnerCurrent(deviceID, worker, snapshot):
+		return "worker_changed"
+	}
+	return ""
+}
+
+// leavePostSwitchRestore reports whether the restore of snapshot is superseded
+// and logs where it stops. A superseded restore changes nothing: SwitchEnd, the
+// degraded mark, the snapshot radio/data and its Lebara radio guard would all
+// land on the switch or worker that took over. A real error it drops stays a
+// warning.
+func (p *Pool) leavePostSwitchRestore(deviceID string, worker *Worker, snapshot esimSwitchContext, stage string, err error) bool {
+	reason := p.postSwitchRestoreSupersededReason(deviceID, worker, snapshot)
+	if reason == "" {
+		return false
+	}
+	fields := []interface{}{
+		"device", deviceID,
+		"switch_token", snapshot.SwitchToken,
+		"latest_switch_token", p.latestSwitchToken(deviceID),
+		"current_switch_token", p.currentSwitchToken(deviceID),
+		"reason", reason,
+		"stage", stage,
+		"err", err,
+	}
+	if err == nil || errors.Is(err, context.Canceled) || reason == "pool_stopped" {
+		logger.Info(postSwitchRestoreLeftMsg, fields...)
+	} else {
+		logger.Warn(postSwitchRestoreLeftMsg, fields...)
+	}
+	return true
+}
+
+// failPostSwitchRestore handles a SwitchEnd that failed or was canceled within
+// the wait, or failed in the background, the way main does: degraded mark, then
+// the snapshot radio/data, whose first step is main's Lebara radio-off guard.
+// Once the switch has finished its record is gone and the mark changes nothing.
+func (p *Pool) failPostSwitchRestore(deviceID string, worker *Worker, snapshot esimSwitchContext, stage string, err error) {
+	if p.leavePostSwitchRestore(deviceID, worker, snapshot, stage, err) {
+		return
+	}
+	p.markESIMSwitchPhaseIfToken(deviceID, snapshot.SwitchToken, esim.SwitchPhaseDegraded)
+	logger.Error("切卡后恢复 VoWiFi 失败",
+		"device", deviceID,
+		"switch_token", snapshot.SwitchToken,
+		"stage", stage,
+		"err", err)
+	p.restoreRadioDataUnlessSuperseded(deviceID, worker, snapshot, stage)
+}
+
+// restoreRadioDataUnlessSuperseded applies the snapshot's radio/data as main
+// does unless the restore is superseded, as the snapshot would then overwrite
+// the radio/data of the switch or worker that took over. Ownership is checked
+// again before each mode retry and before the data step: a newer switch can
+// begin during the retry waits.
+func (p *Pool) restoreRadioDataUnlessSuperseded(deviceID string, worker *Worker, snapshot esimSwitchContext, stage string) {
+	if p.leavePostSwitchRestore(deviceID, worker, snapshot, stage, nil) {
+		return
+	}
+	owned := func() bool {
+		return !p.leavePostSwitchRestore(deviceID, worker, snapshot, stage+"_during_fallback", nil)
+	}
+	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "post_switch_finalize", worker.Config.ESIMSwitch.RadioCycle, owned)
+}
+
+// currentSwitchToken returns the token of the switch deviceID is in, or 0 once
+// its switch record is cleared (finished, watchdog, device removal).
+func (p *Pool) currentSwitchToken(deviceID string) uint64 {
+	p.switchMu.Lock()
+	defer p.switchMu.Unlock()
+	return p.switchTokens[deviceID]
+}
+
+// latestSwitchToken returns the token of the last switch begun on deviceID,
+// which stays after its switch record is cleared.
+func (p *Pool) latestSwitchToken(deviceID string) uint64 {
+	p.switchMu.Lock()
+	defer p.switchMu.Unlock()
+	return p.latestSwitchTokens[deviceID]
+}
+
+// switchEndWithinRestoreWait runs the post-switch SwitchEnd and waits at most
+// postSwitchVoWiFiRestoreWait. finished=false means the start was left running
+// and the switch finishes without it; a later failure goes through
+// failPostSwitchRestore like one within the wait, a later cancel is left to
+// whatever canceled it. SwitchEnd runs on the Pool context, so stopping the
+// pool also cancels a start left running.
+func (p *Pool) switchEndWithinRestoreWait(deviceID string, worker *Worker, snapshot esimSwitchContext) (finished bool, err error) {
+	switchToken := snapshot.SwitchToken
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	start := time.Now()
+	result := make(chan error, 1)
+	go func() {
+		result <- p.voWiFiHost().SwitchEnd(ctx, deviceID, true)
+	}()
+	wait := postSwitchVoWiFiRestoreWait
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	if finished, runErr := restoreResultBy(result, timer.C); finished {
+		return true, runErr
+	}
+	logger.Warn("切卡后 VoWiFi 恢复超过等待上限，结束切卡，恢复转入后台继续",
+		"device", deviceID,
+		"switch_token", switchToken,
+		"waited_ms", time.Since(start).Milliseconds(),
+		"limit_ms", wait.Milliseconds())
+	postSwitchBackgroundRestores.Add(1)
+	go func() {
+		defer postSwitchBackgroundRestores.Done()
+		runErr := <-result
+		elapsedMS := time.Since(start).Milliseconds()
+		switch {
+		case runErr == nil:
+			logger.Info("切卡后后台 VoWiFi 恢复完成", "device", deviceID, "switch_token", switchToken, "elapsed_ms", elapsedMS)
+		case errors.Is(runErr, context.Canceled):
+			// The switch is over, so a disable, reconnect, card policy restart, SIM
+			// change, cellular idle stop, newer switch, device removal or pool stop
+			// canceled it. That operation owns the radio/data now; the snapshot
+			// fallback would race its own projection. In main most of them are
+			// refused while the switch runs; a card policy restart and the cellular
+			// idle stop are not, and a cancel within the wait still gets main's
+			// fallback here as in main.
+			logger.Info("切卡后后台 VoWiFi 恢复已被其他操作取消，交给该操作处理，不标记降级、不做射频/数据兜底",
+				"device", deviceID, "switch_token", switchToken, "elapsed_ms", elapsedMS, "err", runErr)
+		default:
+			logger.Warn("切卡后后台 VoWiFi 恢复失败", "device", deviceID, "switch_token", switchToken, "elapsed_ms", elapsedMS, "err", runErr)
+			p.failPostSwitchRestore(deviceID, worker, snapshot, "background_restore", runErr)
+		}
+	}()
+	return false, nil
+}
+
+// restoreResultBy waits for result until expired fires. A result already
+// waiting when expired fires still counts, so a restore that ends right at the
+// limit is handled as finished instead of being left to the background.
+func restoreResultBy(result <-chan error, expired <-chan time.Time) (finished bool, err error) {
+	select {
+	case err := <-result:
+		return true, err
+	case <-expired:
+	}
+	select {
+	case err := <-result:
+		return true, err
+	default:
+		return false, nil
+	}
 }
 
 func (p *Pool) shouldWaitLebaraUKHomeIdentity(worker *Worker, snapshot esimSwitchContext) bool {
@@ -1089,15 +1273,23 @@ func (p *Pool) shouldWaitLebaraUKHomeIdentity(worker *Worker, snapshot esimSwitc
 	return err == nil && class.IsLebara
 }
 
-func (p *Pool) setOperatingModeWithRetry(worker *Worker, mode backend.OperatingMode) error {
-	delays := []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second}
+// owned, when set, is checked after each retry wait; once it reports false the
+// retries stop with errPostSwitchRestoreSuperseded.
+func (p *Pool) setOperatingModeWithRetry(worker *Worker, mode backend.OperatingMode, owned func() bool) error {
+	delays := postSwitchModeRetryDelays
 	var lastErr error
 	for i := 0; i <= len(delays); i++ {
 		if i > 0 {
 			select {
 			case <-p.ctx.Done():
+				if owned != nil && !owned() {
+					return errPostSwitchRestoreSuperseded
+				}
 				return lastErr
 			case <-time.After(delays[i-1]):
+			}
+			if owned != nil && !owned() {
+				return errPostSwitchRestoreSuperseded
 			}
 		}
 		lastErr = worker.Backend.SetOperatingMode(p.ctx, mode)
@@ -1111,7 +1303,9 @@ func (p *Pool) setOperatingModeWithRetry(worker *Worker, mode backend.OperatingM
 	return lastErr
 }
 
-func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker, snapshot esimSwitchContext, reason string, radioCycleAlreadyDone bool) {
+// owned, when set, is checked between the hardware steps; see
+// restoreRadioDataUnlessSuperseded.
+func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker, snapshot esimSwitchContext, reason string, radioCycleAlreadyDone bool, owned func() bool) {
 	if worker != nil && worker.Backend != nil && resolvedBackendMode(worker.Config) == backend.BackendPCSC {
 		return
 	}
@@ -1120,9 +1314,14 @@ func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker
 	}
 	if snapshot.FlightModeBefore {
 		if worker.Backend != nil {
-			if err := p.setOperatingModeWithRetry(worker, backend.ModeRFOff); err != nil {
+			if err := p.setOperatingModeWithRetry(worker, backend.ModeRFOff, owned); errors.Is(err, errPostSwitchRestoreSuperseded) {
+				return
+			} else if err != nil {
 				logger.Warn("切卡后维持飞行模式失败", "device", deviceID, "reason", reason, "err", err)
 			}
+		}
+		if owned != nil && !owned() {
+			return
 		}
 		if nc := worker.NetworkController(); nc != nil && nc.IsConnected() {
 			if err := worker.StopNetwork(); err != nil {
@@ -1134,9 +1333,14 @@ func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker
 
 	// 如果 RadioCycle 已经在 bringRadioOnlineAfterSwitch 中处理过，不再重复设置在线模式。
 	if !radioCycleAlreadyDone && worker.Backend != nil {
-		if err := p.setOperatingModeWithRetry(worker, backend.ModeOnline); err != nil {
+		if err := p.setOperatingModeWithRetry(worker, backend.ModeOnline, owned); errors.Is(err, errPostSwitchRestoreSuperseded) {
+			return
+		} else if err != nil {
 			logger.Warn("切卡后恢复在线模式失败", "device", deviceID, "reason", reason, "err", err)
 		}
+	}
+	if owned != nil && !owned() {
+		return
 	}
 
 	if err := p.applyNetworkPreferenceForSwitchSnapshot(worker, snapshot); err != nil {
@@ -1192,7 +1396,7 @@ func (p *Pool) handleESIMSwitchFailed(deviceID string, token uint64) {
 		"network_enabled_before", snapshot.NetworkEnabledBefore)
 	worker.restoreSIMIdentityAfterTransitionFailure(snapshot.ICCIDBefore, snapshot.IMSIBefore, "esim_switch_failed")
 	worker.setCellularRadioSuppressed(shouldSuppressCellularRadio(worker.Config))
-	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "switch_failed", false)
+	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "switch_failed", false, nil)
 	p.broadcastVoWiFiStateChange(deviceID)
 }
 
@@ -1357,6 +1561,15 @@ func (p *Pool) handleESIMSwitchAfter(deviceID string, token uint64) {
 		return
 	}
 	p.restorePostSwitchConnectivity(deviceID, worker, snapshot, restoreGateErr, true)
+	if reason := p.postSwitchRestoreSupersededReason(deviceID, worker, snapshot); reason != "" {
+		logger.Info("切卡后恢复返回时设备已有新的切卡、worker 已替换或服务停止，跳过 eSIM 总览预热和收尾",
+			"device", deviceID,
+			"switch_token", snapshot.SwitchToken,
+			"latest_switch_token", p.latestSwitchToken(deviceID),
+			"current_switch_token", p.currentSwitchToken(deviceID),
+			"reason", reason)
+		return
+	}
 
 	// 切卡过程中 SIM power cycle 会导致 overview 缓存被清空且重载失败（模组正在重置），
 	// 此处模组已恢复，触发一次 overview 重新加载以恢复 profile 列表。

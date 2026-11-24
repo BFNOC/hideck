@@ -245,6 +245,11 @@ type Pool struct {
 	switchContexts   map[string]esimSwitchContext
 	switchTokens     map[string]uint64
 	switchSeq        uint64
+	// latestSwitchTokens holds the token of the last switch begun on each device.
+	// Unlike switchTokens it outlives the switch record (finish, watchdog,
+	// failure, removal), so a late post-switch restore can tell a newer switch
+	// from a record the watchdog cleared. Entries stay, one per device ID.
+	latestSwitchTokens map[string]uint64
 
 	lebaraRecoverMu sync.Mutex
 	lebaraRecover   map[string]*lebaraUKIdentityRecoverState
@@ -304,6 +309,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		switchingDevices:       make(map[string]bool),
 		switchContexts:         make(map[string]esimSwitchContext),
 		switchTokens:           make(map[string]uint64),
+		latestSwitchTokens:     make(map[string]uint64),
 		lebaraRecover:          make(map[string]*lebaraUKIdentityRecoverState),
 		lifecycle:              newLifecycleCoordinator(),
 		smsIdentities:          databaseSMSIdentityStore{},
