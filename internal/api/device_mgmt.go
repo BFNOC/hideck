@@ -1687,9 +1687,17 @@ func (s *Server) useDeviceMgmtUpdateDevice(c businessContext) {
 	}
 
 	// 检测 VoWiFi 状态变化，仅对于由关到开执行热拉起
+	vowifiPending := false
 	if newCfg.VoWiFiEnabled && !oldCfg.VoWiFiEnabled {
 		logger.Info("配置保存触发 VoWiFi 启动", "device", id)
-		if err := s.pool.EnableVoWiFi(id); err != nil {
+		start, err := s.pool.PrepareVoWiFiEnable(id)
+		if err == nil && start != nil {
+			vowifiPending, err = awaitVoWiFiStart(id, "device_update", start)
+		}
+		if vowifiPending {
+			warningMessage = joinWarningMessages(warningMessage, "VoWiFi 正在连接，结果请看设备概览")
+		}
+		if err != nil {
 			logger.Error("VoWiFi 启动失败", "device", id, "err", err)
 			c.JSON(http.StatusOK, gin.H{
 				"status":           "ok",
@@ -1708,11 +1716,15 @@ func (s *Server) useDeviceMgmtUpdateDevice(c businessContext) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"status":           "ok",
 		"requires_restart": requiresRestart,
 		"warning":          warningMessage,
-	})
+	}
+	if vowifiPending {
+		response["vowifi_pending"] = true
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
@@ -2947,6 +2959,10 @@ func (s *Server) useDeviceMgmtSetFlightMode(c businessContext) {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切卡，请稍后再切换飞行模式"})
 		return
 	}
+	if s.pool.IsVoWiFiStarting(id) {
+		rejectWhileVoWiFiStarting(c, id, "flight_mode")
+		return
+	}
 	if !req.Enabled {
 		class, classifyErr := s.classifyLebaraUKForDevice(businessRequestContext(c), id)
 		if rejectLebaraUKRFUnlock(c, class, classifyErr) {
@@ -3140,8 +3156,13 @@ func (s *Server) useDeviceMgmtReconnectVoWiFi(c businessContext) {
 		return
 	}
 
-	if err := s.pool.RestartVoWiFi(id); err != nil {
+	pending, err := awaitVoWiFiStart(id, "reconnect", func() error { return s.pool.RestartVoWiFi(id) })
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "VoWiFi 重连失败: " + err.Error()})
+		return
+	}
+	if pending {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "pending": true, "message": "已触发 VoWiFi 重连，正在连接，结果请看设备概览"})
 		return
 	}
 

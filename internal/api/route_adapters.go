@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -49,6 +50,10 @@ func (s *Server) useDeviceNetworkPatch(c businessContext) {
 	defer releaseMutation()
 	if s.pool.IsESIMSwitching(deviceID) {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切换 SIM，暂不能修改网络"})
+		return
+	}
+	if s.pool.IsVoWiFiStarting(deviceID) {
+		rejectWhileVoWiFiStarting(c, deviceID, "network")
 		return
 	}
 
@@ -129,6 +134,22 @@ func (s *Server) useDeviceVoWiFiPatch(c businessContext) {
 
 	if *req.Enabled {
 		w := s.pool.GetWorker(deviceID)
+		// A start left running in the background keeps the mode and data
+		// strategy it began with: a change waits until it is up or VoWiFi is
+		// turned off. A repeated enable submits no new start; it saves the card
+		// policy below only when that changes: an explicit mode or data strategy
+		// other than the saved one, or the enable intent when the running start
+		// came from elsewhere (cellular dial, recover) while VoWiFi was still off.
+		starting := s.pool.IsVoWiFiStarting(deviceID)
+		currentMode, currentStrategy := "wifi", "on_demand"
+		if w != nil {
+			if w.Config.PhoneMode != "" {
+				currentMode = w.Config.PhoneMode
+			}
+			if w.Config.DataStrategy != "" {
+				currentStrategy = w.Config.DataStrategy
+			}
+		}
 		var mode, strategy string
 		if _, _, err := s.patchCardPolicyForDeviceChecked(deviceID, func(p *db.CardPolicy) error {
 			db.NormalizeCardPolicy(p)
@@ -171,6 +192,18 @@ func (s *Server) useDeviceVoWiFiPatch(c businessContext) {
 			if req.DataStrategy != nil {
 				strategy = normalizeDataStrategy(req.DataStrategy)
 			}
+			if starting {
+				if mode != currentMode || strategy != currentStrategy {
+					return errVoWiFiStartingChange
+				}
+				// Only what the request names counts: the projection below also
+				// rewrites flight and data, which the card can hold on their own.
+				explicitChange := (req.Mode != nil && !keepSavedMode && mode != p.PhoneMode) ||
+					(req.DataStrategy != nil && strategy != p.DataStrategy)
+				if !explicitChange && p.VoWiFiEnabled && w != nil && w.Config.VoWiFiEnabled {
+					return errVoWiFiStartingRepeat
+				}
+			}
 			if !keepSavedMode {
 				p.PhoneMode = mode
 			}
@@ -178,7 +211,14 @@ func (s *Server) useDeviceVoWiFiPatch(c businessContext) {
 			applyVoWiFiEnableToCardPolicy(p, mode)
 			return nil
 		}); err != nil {
-			writeCardPolicyMutationError(c, err)
+			switch {
+			case errors.Is(err, errVoWiFiStartingChange):
+				rejectWhileVoWiFiStarting(c, deviceID, "vowifi_mode")
+			case errors.Is(err, errVoWiFiStartingRepeat):
+				answerVoWiFiStartPending(c, deviceID, false)
+			default:
+				writeCardPolicyMutationError(c, err)
+			}
 			return
 		}
 		// 同步 w.Config，使概览即时切到 VoWiFi 模式面板（EnableVoWiFi 不碰 Config）。
@@ -193,10 +233,21 @@ func (s *Server) useDeviceVoWiFiPatch(c businessContext) {
 			if prevStrategy == "" {
 				prevStrategy = "on_demand"
 			}
-			w.Config.PhoneMode = mode
-			w.Config.DataStrategy = strategy
+			// A running start reads these without a lock; they already match it.
+			if !starting {
+				w.Config.PhoneMode = mode
+				w.Config.DataStrategy = strategy
+			}
 		}
-		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
+		// The running start reads the worker without a lock; only an enable
+		// intent it is missing is written to it.
+		if !starting || w == nil || !w.Config.VoWiFiEnabled {
+			s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
+		}
+		if starting {
+			answerVoWiFiStartPending(c, deviceID, true)
+			return
+		}
 		if w := s.pool.GetWorker(deviceID); w != nil && device.IsModemVoiceMode(w.Config.PhoneMode) {
 			if err := s.pool.ApplyCurrentCardPolicy(deviceID, "api_enable_modem_voice"); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
@@ -240,10 +291,22 @@ func (s *Server) useDeviceVoWiFiPatch(c businessContext) {
 		modeChanged := mode != prevMode
 		strategyChanged := strategy != prevStrategy
 		if s.pool.IsVoWiFiActive(deviceID) && (modeChanged || strategyChanged) {
-			if err := s.pool.RestartVoWiFi(deviceID); err != nil {
+			pending, err := awaitVoWiFiStart(deviceID, "mode_change_restart", func() error {
+				return s.pool.RestartVoWiFi(deviceID)
+			})
+			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"status":  "error",
 					"message": "切换通话模式失败: " + err.Error(),
+					"device":  deviceID,
+				})
+				return
+			}
+			if pending {
+				c.JSON(http.StatusOK, gin.H{
+					"status":  "ok",
+					"pending": true,
+					"message": "通话模式已切换，VoWiFi 正在重连，结果请看设备概览",
 					"device":  deviceID,
 				})
 				return

@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -122,6 +123,9 @@ func (g MBNGateway) Open(ctx context.Context, id string, writable bool) (mbn.Ses
 		}
 		if p.modemVoiceCtl != nil && p.modemVoiceCtl.ActiveCall(id) != nil {
 			return nil, errors.New("通话中不能修改 MBN")
+		}
+		if p.IsVoWiFiStarting(id) {
+			return nil, fmt.Errorf("%w: VoWiFi 正在连接时不能修改 MBN", mbn.ErrConflict)
 		}
 	}
 	if writable {

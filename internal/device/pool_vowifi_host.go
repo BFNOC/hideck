@@ -11,3 +11,10 @@ func (p *Pool) voWiFiHost() *vowifihost.Manager {
 	}
 	return p.vowifiHost
 }
+
+// BeginVoWiFiStartForTest claims a VoWiFi start the way a lifecycle enable
+// does, for tests in other packages whose lifecycle run is replaced. Disable
+// and restart drop the claim when they invalidate the runtime.
+func (p *Pool) BeginVoWiFiStartForTest(deviceID string) {
+	p.voWiFiHost().BeginStart(deviceID)
+}

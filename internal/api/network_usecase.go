@@ -104,10 +104,24 @@ func (s *Server) useVoWiFiEnableLocked(c businessContext, deviceID string) {
 		return
 	}
 
-	if err := s.pool.EnableVoWiFi(deviceID); err != nil {
+	start, err := s.pool.PrepareVoWiFiEnable(deviceID)
+	pending := false
+	if err == nil && start != nil {
+		pending, err = awaitVoWiFiStart(deviceID, "enable", start)
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "VoWiFi 启用失败: " + err.Error(),
+			"device":  deviceID,
+		})
+		return
+	}
+	if pending {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"pending": true,
+			"message": "VoWiFi 正在连接，结果请看设备概览",
 			"device":  deviceID,
 		})
 		return

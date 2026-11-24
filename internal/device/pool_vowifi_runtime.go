@@ -198,49 +198,74 @@ func (p *Pool) EnableVoWiFi(deviceID string) error {
 	return p.enableVoWiFi(deviceID, 0)
 }
 
+// PrepareVoWiFiEnable runs the synchronous checks and modem steps of
+// EnableVoWiFi and returns the lifecycle start that remains, or nil when the
+// enable already finished without one. start waits until the SWu tunnel is up
+// and the runtime keeps retrying while the ePDG rejects it, so API callers must
+// not hold device locks across it.
+func (p *Pool) PrepareVoWiFiEnable(deviceID string) (func() error, error) {
+	return p.prepareVoWiFiEnable(deviceID, 0)
+}
+
 func (p *Pool) enableVoWiFi(deviceID string, lifecycleGeneration uint64) error {
-	if err := p.CheckMBNIdle(deviceID); err != nil {
+	start, err := p.prepareVoWiFiEnable(deviceID, lifecycleGeneration)
+	if err != nil || start == nil {
 		return err
 	}
+	return start()
+}
+
+func (p *Pool) prepareVoWiFiEnable(deviceID string, lifecycleGeneration uint64) (func() error, error) {
+	if err := p.CheckMBNIdle(deviceID); err != nil {
+		return nil, err
+	}
 	if p.IsESIMSwitching(deviceID) {
-		return fmt.Errorf("设备 %s 正在切卡，暂不允许启动 VoWiFi", deviceID)
+		return nil, fmt.Errorf("设备 %s 正在切卡，暂不允许启动 VoWiFi", deviceID)
 	}
 	if w := p.GetWorker(deviceID); w != nil {
 		if err := w.CheckPhoneModeSupported(w.Config.PhoneMode); err != nil {
-			return err
+			return nil, err
 		}
 		if IsNativeVoLTEMode(w.Config.PhoneMode) {
-			return p.EnableNativeVoLTE(deviceID)
+			return nil, p.EnableNativeVoLTE(deviceID)
 		}
 		if IsModemVoiceMode(w.Config.PhoneMode) {
-			return fmt.Errorf("设备 %s: %w", deviceID, ErrModemVoiceSoftwareIMS)
+			return nil, fmt.Errorf("设备 %s: %w", deviceID, ErrModemVoiceSoftwareIMS)
 		}
 	}
 	p.stopNativeVoLTE(deviceID, "enable_vowifi")
 	if err := p.stopModemVoice(deviceID); err != nil {
-		return err
+		return nil, err
 	}
 	if w := p.GetWorker(deviceID); w != nil && w.Config.PhoneMode == "cellular" {
 		if w.Config.AirplaneEnabled {
 			logger.Info("蜂窝飞行：待机不建 SWu 隧道", "device", deviceID)
-			return p.StopVoWiFiRuntimeForCellularIdle(deviceID)
+			return nil, p.StopVoWiFiRuntimeForCellularIdle(deviceID)
 		}
 		if w.Config.DataStrategy != "always" {
 			if nc := w.NetworkController(); nc == nil || !nc.IsConnected() {
 				logger.Info("蜂窝 on_demand：待机不建 SWu 隧道，拨号时再连数据", "device", deviceID)
-				return p.StopVoWiFiRuntimeForCellularIdle(deviceID)
+				return nil, p.StopVoWiFiRuntimeForCellularIdle(deviceID)
 			}
 		} else if err := p.EnsureCellularData(p.ctx, deviceID); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if lifecycleGeneration == 0 {
-		return p.voWiFiHost().Enable(p.ctx, deviceID)
+		return func() error { return p.voWiFiHost().Enable(p.ctx, deviceID) }, nil
 	}
-	return p.voWiFiHost().SubmitLifecycle(p.ctx, vowifihost.LifecycleCommand{
-		DeviceID:   deviceID,
-		Kind:       vowifihost.LifecycleCommandEnable,
-		Reason:     "enable_when_ready",
-		Generation: lifecycleGeneration,
-	})
+	return func() error {
+		return p.voWiFiHost().SubmitLifecycle(p.ctx, vowifihost.LifecycleCommand{
+			DeviceID:   deviceID,
+			Kind:       vowifihost.LifecycleCommandEnable,
+			Reason:     "enable_when_ready",
+			Generation: lifecycleGeneration,
+		})
+	}, nil
+}
+
+// SetVoWiFiLifecycleRunForTest replaces the VoWiFi lifecycle run for tests in
+// other packages.
+func (p *Pool) SetVoWiFiLifecycleRunForTest(run func(context.Context, vowifihost.LifecycleCommand) error) {
+	p.voWiFiHost().SetLifecycleRunForTest(run)
 }

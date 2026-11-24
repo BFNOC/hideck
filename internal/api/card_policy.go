@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -285,24 +286,66 @@ func (s *Server) usePutCardPolicy(c businessContext) {
 		}
 	}
 
-	if proxyChanged {
-		if err := s.restartVoWiFiForCardPolicy(pol.ICCID); err != nil {
+	// Both steps run as one bounded task, so the MWI redetect still follows the
+	// proxy reconnect when that reconnect outlasts the wait. A pending task
+	// still answers with the saved policy; the overview shows how it ends.
+	if proxyChanged || redetectMWI {
+		op := "card_policy_mwi_redetect"
+		if proxyChanged {
+			op = "card_policy_proxy_restart"
+			if redetectMWI {
+				op += "+mwi_redetect"
+			}
+		}
+		// Read only after a synchronous error, which the result channel orders.
+		failedStep := ""
+		_, err := awaitVoWiFiStart(s.cardPolicyDeviceIDs(pol.ICCID), op, func() error {
+			if proxyChanged {
+				failedStep = "proxy_changed"
+				if err := s.restartVoWiFiForCardPolicy(pol.ICCID); err != nil {
+					return err
+				}
+			}
+			// The card's local MWI backoff is cleared in the host-held state before an
+			// MWI reconnect, so the new runtime starts from it; after a proxy reconnect
+			// the wake reaches the new runtime. A network wait or MWI stop state still
+			// applies.
+			if redetectMWI {
+				failedStep = "redetect_mwi"
+				return s.redetectMWIForCardPolicy(pol.ICCID, mwiReconnect)
+			}
+			return nil
+		})
+		if err != nil && failedStep == "proxy_changed" {
 			reconnectFailed(err, "upstream_proxy_id", pol.VowifiUpstreamProxyID, "proxy_changed", true)
 			return
 		}
-	}
-	// The card's local MWI backoff is cleared in the host-held state before an
-	// MWI reconnect, so the new runtime starts from it; after a proxy reconnect
-	// the wake reaches the new runtime. A network wait or MWI stop state still
-	// applies.
-	if redetectMWI {
-		if err := s.redetectMWIForCardPolicy(pol.ICCID, mwiReconnect); err != nil {
+		if err != nil {
 			reconnectFailed(err, "redetect_mwi", true)
 			return
 		}
 	}
 
 	c.JSON(http.StatusOK, pol)
+}
+
+// cardPolicyDeviceIDs labels card-policy restart logs with the devices that
+// hold iccid now, matched as acquireBusinessMutation matches them.
+func (s *Server) cardPolicyDeviceIDs(iccid string) string {
+	iccid = db.CanonicalICCID(iccid)
+	var ids []string
+	if s.pool != nil && iccid != "" {
+		for _, worker := range s.pool.GetAllWorkers() {
+			if db.CanonicalICCID(worker.CurrentICCID()) == iccid {
+				ids = append(ids, worker.ID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return "none"
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ",")
 }
 
 func (s *Server) restartVoWiFiForCardPolicy(iccid string) error {

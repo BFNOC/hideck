@@ -70,6 +70,13 @@ func (p *Pool) IsVoWiFiActive(deviceID string) bool {
 	return p.voWiFiHost().Active(deviceID)
 }
 
+// IsVoWiFiStarting reports whether a VoWiFi start claimed the device and has
+// neither brought the runtime up nor failed yet, including one an API request
+// left running in the background.
+func (p *Pool) IsVoWiFiStarting(deviceID string) bool {
+	return p.voWiFiHost().Starting(deviceID) && !p.IsVoWiFiActive(deviceID)
+}
+
 // SetVoWiFiSMSMemoryFull tells the IMS receiver whether the host can store MT SMS.
 func (p *Pool) SetVoWiFiSMSMemoryFull(deviceID string, full bool) {
 	if p == nil {

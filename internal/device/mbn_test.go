@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,4 +88,26 @@ func TestMBNRejectsReplacedWorkerAndChangedSIMGeneration(t *testing.T) {
 	if err := s.validateLocked(); !errors.Is(err, mbn.ErrOwnerChanged) {
 		t.Fatal(err)
 	}
+}
+
+func TestMBNWriteSessionRefusedWhileVoWiFiStarting(t *testing.T) {
+	w := &Worker{ID: "a", Backend: &workerStatusBackendStub{}, Modem: newWorkerModemWithIMEI(t, "imei"), stop: make(chan struct{})}
+	w.state.Identity = deviceIdentityState{IMEI: "imei", ICCID: "card", Generation: 1, Ready: true}
+	p := &Pool{ctx: context.Background(), workers: map[string]*Worker{"a": w}}
+	p.voWiFiHost().BeginStart("a")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	session, err := (MBNGateway{Pool: p}).Open(ctx, "a", true)
+	if session != nil {
+		_ = session.Close()
+	}
+	if !errors.Is(err, mbn.ErrConflict) || !strings.Contains(err.Error(), "VoWiFi 正在连接时不能修改 MBN") {
+		t.Fatalf("Open(write) err=%v, want the VoWiFi starting refusal as a conflict", err)
+	}
+	release, err := p.AcquireDeviceOperation("a")
+	if err != nil {
+		t.Fatalf("refused write session kept the device: %v", err)
+	}
+	release()
 }
